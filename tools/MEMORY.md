@@ -63,3 +63,31 @@ All definition types live in `wtd-core::workspace` (§9.1). Loader + validation 
 - SSH sessions do NOT get `TERM=xterm-256color` (remote negotiates TERM)
 - Env layer 2 applies global `default_profile`'s env (not the resolved profile's parent), allowing global baseline env
 - `%VAR%` expansion in cwd uses host_env map (no OS call)
+
+---
+
+## wintermdriver-mtz.2: VT screen buffer
+
+`ScreenBuffer` lives in `wtd-pty::screen`. Re-exported from `wtd_pty` root.
+
+**Key types:**
+- `ScreenBuffer` — owns primary/alternate `Grid`, scrollback `VecDeque<Vec<Cell>>`, `Cursor`, SGR pen, title
+- `Cell` — `character: char`, `fg/bg: Color`, `attrs: CellAttrs`, `wide: bool`, `wide_continuation: bool`
+- `Color` — `Default | Ansi(u8) | AnsiBright(u8) | Indexed(u8) | Rgb(u8,u8,u8)`
+- `CellAttrs` — bitfield `u16` with constants BOLD, DIM, ITALIC, UNDERLINE, BLINK, INVERSE, HIDDEN, STRIKETHROUGH
+
+**Public API:**
+- `ScreenBuffer::new(cols, rows, max_scrollback)` — create
+- `ScreenBuffer::advance(&mut self, bytes: &[u8])` — feed raw PTY bytes
+- `ScreenBuffer::cell(row, col) -> Option<&Cell>` — read a cell
+- `ScreenBuffer::visible_text() -> String` — full screen as newline-separated text
+- `ScreenBuffer::row_text(row) -> Option<String>`
+- `ScreenBuffer::scrollback_len()`, `scrollback_row(idx)`
+- `ScreenBuffer::cursor() -> &Cursor`, `ScreenBuffer::title: String`
+
+**Design notes:**
+- vte `Perform` is implemented directly on `ScreenBuffer`; parser is swapped out during `advance()` to avoid double-borrow
+- Alternate screen (DEC `?1049h/l`) clears on entry; primary is preserved untouched
+- Scrollback only accumulates from primary screen top-margin scrolls; alternate screen scrolls use a dummy sink
+- Wide-char detection uses a hand-rolled Unicode range table (no external dep); covers CJK, Hangul, fullwidth forms, emoji
+- Scroll region (DECSTBM `r`) is respected for cursor movement bounds and SU/SD
