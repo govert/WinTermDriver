@@ -43,3 +43,23 @@ All definition types live in `wtd-core::workspace` (§9.1). Loader + validation 
 **Public API:** `wtd_core::load_workspace_definition(file_path, content) -> Result<WorkspaceDefinition, LoadError>`
 
 **Validation:** `LoadError::Validation { errors: Vec<ValidationError> }` — each error has `.path` (dot-notation) and `.message`. Built-in profile names (`powershell`, `cmd`, `wsl`, `ssh`, `custom`) are always valid profile references.
+
+---
+
+## wintermdriver-u24.2: Profile resolver and GlobalSettings
+
+`GlobalSettings` lives in `wtd-core::global_settings`. Profile resolution in `wtd-core::profile_resolver`.
+
+**Key types:**
+- `GlobalSettings` — `default_profile: String` (default `"powershell"`), `profiles: HashMap<String, ProfileDefinition>`
+- `ResolvedLaunchSpec` — `executable`, `args`, `cwd: Option<String>`, `env: HashMap<String,String>`
+- `ResolveError` — `ProfileNotFound`, `CustomMissingExecutable`
+
+**Public API:** `wtd_core::resolve_launch_spec(session, workspace_def, global_settings, host_env, find_exe) -> Result<ResolvedLaunchSpec, ResolveError>`
+
+**Key design decisions:**
+- `find_exe: impl Fn(&str) -> bool` injectable — enables `pwsh.exe` → `powershell.exe` fallback testing without real PATH check
+- WSL `cwd` defaults to `None` (WSL determines its own home); all other types default to `%USERPROFILE%`
+- SSH sessions do NOT get `TERM=xterm-256color` (remote negotiates TERM)
+- Env layer 2 applies global `default_profile`'s env (not the resolved profile's parent), allowing global baseline env
+- `%VAR%` expansion in cwd uses host_env map (no OS call)
