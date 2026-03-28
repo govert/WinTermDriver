@@ -7,6 +7,7 @@
 pub mod error;
 pub mod global_settings;
 pub mod ids;
+pub mod layout;
 pub mod profile_resolver;
 pub mod workspace;
 pub mod workspace_loader;
