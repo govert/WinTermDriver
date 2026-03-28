@@ -1,0 +1,19 @@
+[package]
+name = "wtd-cli"
+description = "WinTermDriver controller CLI — sends commands to wtd-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wtd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+wtd-core = { workspace = true }
+wtd-ipc = { workspace = true }

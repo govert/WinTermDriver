@@ -1,0 +1,13 @@
+[package]
+name = "wtd-ipc"
+description = "IPC message types and transport helpers for WinTermDriver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+wtd-core = { workspace = true }

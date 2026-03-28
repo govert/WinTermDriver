@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wtd-core",
+    "crates/wtd-ipc",
+    "crates/wtd-pty",
+    "crates/wtd-host",
+    "crates/wtd-ui",
+    "crates/wtd-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# VT parsing
+vte = "0.13"
+
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# Windows APIs (ConPTY, named pipes, Win32) — Windows-only project
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
+
+# Internal crates
+wtd-core = { path = "crates/wtd-core" }
+wtd-ipc = { path = "crates/wtd-ipc" }
+wtd-pty = { path = "crates/wtd-pty" }
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = "thin"

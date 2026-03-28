@@ -1,0 +1,15 @@
+[package]
+name = "wtd-pty"
+description = "ConPTY pseudo-console management for WinTermDriver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true }
+wtd-core = { workspace = true }
+vte = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
