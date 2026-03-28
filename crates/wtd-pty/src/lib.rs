@@ -9,7 +9,9 @@ mod handle;
 pub mod error;
 pub mod job;
 pub mod pty;
+pub mod screen;
 
 pub use error::PtyError;
 pub use job::JobObject;
 pub use pty::{PtySession, PtySize};
+pub use screen::{Cell, CellAttrs, Color, Cursor, ScreenBuffer};
