@@ -69,7 +69,9 @@ while true; do
     | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d['issues'][0]['id'] if d.get('issues') else '')
+# br ready --json returns a plain array, br list --json returns {issues:[...]}
+items = d if isinstance(d, list) else d.get('issues', [])
+print(items[0]['id'] if items else '')
 " 2>/dev/null) || BEAD_ID=""
 
   if [[ -z "$BEAD_ID" ]]; then
@@ -142,26 +144,25 @@ print(d['issues'][0]['id'] if d.get('issues') else '')
   echo "[runner] Claude exited ($CLAUDE_EXIT) after ${ELAPSED}s"
 
   # ── Extract summary from log ───────────────────────────────────
-  python3 -c "
+  LOG_FILE="$LOG_FILE" python3 -c "
 import json, sys, os
 last_text = ''
-for line in open(os.environ['LOG_FILE']):
+log_path = os.environ['LOG_FILE']
+for line in open(log_path, encoding='utf-8', errors='replace'):
     line = line.strip()
     if not line:
         continue
     try:
         msg = json.loads(line)
-        if msg.get('type') == 'assistant':
+        if msg.get('type') == 'result':
+            last_text = msg.get('result', '')
+        elif msg.get('type') == 'assistant':
             for block in msg.get('message', {}).get('content', []):
                 if block.get('type') == 'text':
                     last_text = block['text']
-        elif msg.get('type') == 'result':
-            if msg.get('result', ''):
-                last_text = msg['result']
     except (json.JSONDecodeError, KeyError):
         pass
 if last_text:
-    # Show first 500 chars of the final output
     preview = last_text[:500]
     if len(last_text) > 500:
         preview += '...'
@@ -172,8 +173,13 @@ else:
 
   # ── Check bead status ──────────────────────────────────────────
   BEAD_STATUS=$(br show "$BEAD_ID" --json 2>/dev/null \
-    | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','unknown'))" \
-    2>/dev/null) || BEAD_STATUS="unknown"
+    | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+# br show --json returns a list with one element
+item = d[0] if isinstance(d, list) else d
+print(item.get('status', 'unknown'))
+" 2>/dev/null) || BEAD_STATUS="unknown"
 
   echo "[runner] Bead status: $BEAD_STATUS"
 
@@ -195,8 +201,9 @@ else:
       | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-for i in d.get('issues', []):
-    print(f\"  → {i['id']}: {i['title']}\")
+items = d if isinstance(d, list) else d.get('issues', [])
+for i in items:
+    print(f\"  -> {i['id']}: {i['title']}\")
 " 2>/dev/null) || NEWLY_READY=""
     if [[ -n "$NEWLY_READY" ]]; then
       echo "[runner] Ready beads:"
