@@ -27,3 +27,19 @@ Use `[target.'cfg(windows)'.dependencies]` in member crates when needed.
 **rust-toolchain.toml** pins `stable` with target `x86_64-pc-windows-msvc`.
 
 **serde_yaml 0.9** — `serde_yaml = "0.9"` resolves to 0.9.34+deprecated; this is the last stable serde_yaml release.
+
+---
+
+## wintermdriver-u24.1: WorkspaceDefinition types and loader
+
+All definition types live in `wtd-core::workspace` (§9.1). Loader + validation in `wtd-core::workspace_loader`.
+
+**Key types:**
+- `WorkspaceDefinition` — root struct; `windows` and `tabs` are both `Option<Vec<...>>` (mutually exclusive)
+- `PaneNode` — `#[serde(tag = "type", rename_all = "lowercase")]` enum: `Pane(PaneLeaf)` / `Split(SplitNode)`
+- `ActionReference` — `#[serde(untagged)]`: `Simple(String)` or `WithArgs { action, args }`
+- camelCase YAML fields use `#[serde(rename = "...")]` on snake_case Rust fields
+
+**Public API:** `wtd_core::load_workspace_definition(file_path, content) -> Result<WorkspaceDefinition, LoadError>`
+
+**Validation:** `LoadError::Validation { errors: Vec<ValidationError> }` — each error has `.path` (dot-notation) and `.message`. Built-in profile names (`powershell`, `cmd`, `wsl`, `ssh`, `custom`) are always valid profile references.
