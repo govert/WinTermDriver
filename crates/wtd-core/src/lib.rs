@@ -7,3 +7,6 @@
 pub mod error;
 pub mod ids;
 pub mod workspace;
+pub mod workspace_loader;
+
+pub use workspace_loader::{load_workspace_definition, LoadError, ValidationError};
