@@ -91,3 +91,37 @@ All definition types live in `wtd-core::workspace` (§9.1). Loader + validation 
 - Scrollback only accumulates from primary screen top-margin scrolls; alternate screen scrolls use a dummy sink
 - Wide-char detection uses a hand-rolled Unicode range table (no external dep); covers CJK, Hangul, fullwidth forms, emoji
 - Scroll region (DECSTBM `r`) is respected for cursor movement bounds and SU/SD
+
+---
+
+## wintermdriver-mtz.3: Binary pane layout tree
+
+`LayoutTree` lives in `wtd-core::layout`. Arena-based mutable binary tree for per-tab pane layouts.
+
+**Key types:**
+- `LayoutTree` — arena-backed binary tree; leaves are panes (`PaneId`), internal nodes are splits (`Orientation` + ratio)
+- `Rect` — `{x, y, width, height}` in character cells (`u16`)
+- `Direction` — `Up | Down | Left | Right` for spatial focus
+- `ResizeDirection` — `GrowRight | GrowDown | ShrinkRight | ShrinkDown`
+- `CloseResult` — `Closed { new_focus }` or `LastClosed`
+- `LayoutError` — `PaneNotFound(PaneId)`
+
+**Public API:**
+- `LayoutTree::new()` — single pane (`PaneId(1)`), focused
+- `split_right(target) -> Result<PaneId>` / `split_down(target) -> Result<PaneId>` — replace leaf with split + new pane
+- `close_pane(target) -> Result<CloseResult>` — remove leaf, promote sibling, update focus
+- `resize_pane(target, dir, cells, total_rect) -> Result<()>` — adjust nearest ancestor split ratio, clamped to min sizes
+- `focus()`, `set_focus(target)`, `focus_next()`, `focus_prev()`, `focus_direction(dir, total_rect)`
+- `toggle_zoom()`, `is_zoomed()`, `zoomed_pane()`
+- `compute_rects(total_rect) -> HashMap<PaneId, Rect>` — layout computation (zoomed pane fills entire area)
+- `panes() -> Vec<PaneId>` (depth-first order), `pane_count()`
+
+**Design decisions:**
+- Reuses `Orientation` from `wtd_core::workspace` (same enum for definition and runtime)
+- Arena with `Vec<Option<Node>>` + free list; nodes have parent pointers for O(depth) operations
+- Split inserts new split node at the original leaf's slot (preserves parent/root references without updating them)
+- PaneId generation is internal (counter starting at 1); downstream beads can map PaneIds to sessions
+- Resize finds nearest ancestor split with matching orientation; adjusts ratio accounting for which child the pane is in
+- Clamping uses recursive `min_dim()`: stacked same-orientation splits sum minimums, perpendicular splits take max
+- Min pane size: 2 cols × 1 row (§18.4); ratio additionally bounded to [0.1, 0.9] (§18.3)
+- Directional focus uses Euclidean distance² between geometric centres
