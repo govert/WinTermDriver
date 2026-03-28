@@ -15,4 +15,10 @@ pub enum PtyError {
 
     #[error("child process spawn failed: {0}")]
     SpawnFailed(String),
+
+    #[error("Win32 error: {0}")]
+    Win32(#[from] windows::core::Error),
+
+    #[error("job object error: {0}")]
+    JobObject(String),
 }
