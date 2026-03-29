@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
 use wtd_pty::ScreenBuffer;
+use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
+use wtd_ui::input::KeyName;
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
@@ -100,6 +102,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         status_bar.set_workspace_name("demo".to_string());
     }
 
+    // Create the command palette with default keybindings.
+    let bindings = wtd_core::global_settings::default_bindings();
+    let mut command_palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
+
     let mut window_width: f32 = 1000.0;
     let mut window_height: f32 = 600.0;
     tab_strip.layout(window_width);
@@ -133,6 +139,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         &layout_tree,
         &screens,
         &status_bar,
+        &command_palette,
+        window_width,
         window_height,
     )?;
 
@@ -280,9 +288,54 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // ── Process keyboard events ──────────────────────────────
         for event in window::drain_key_events() {
+            // When the command palette is visible, it consumes all keyboard input.
+            if command_palette.is_visible() {
+                match command_palette.on_key_event(&event) {
+                    PaletteResult::Dismissed => {
+                        needs_paint = true;
+                    }
+                    PaletteResult::Action(action_ref) => {
+                        let action_name = match &action_ref {
+                            wtd_core::workspace::ActionReference::Simple(n) => n.as_str(),
+                            wtd_core::workspace::ActionReference::WithArgs { action, .. } => {
+                                action.as_str()
+                            }
+                        };
+                        // Handle toggle-command-palette locally (palette already hidden).
+                        if action_name == "toggle-command-palette" {
+                            // Already dismissed by on_key_event, nothing more to do.
+                        } else if let Some(ref bridge) = bridge {
+                            if connected {
+                                let focused = layout_tree.focus();
+                                bridge.send_action(
+                                    action_name.to_string(),
+                                    Some(format!("{}", focused.0)),
+                                    serde_json::Value::Null,
+                                );
+                            }
+                        }
+                        needs_paint = true;
+                    }
+                    PaletteResult::Consumed => {
+                        needs_paint = true;
+                    }
+                }
+                continue;
+            }
+
+            // Check for Ctrl+Shift+Space to toggle the command palette.
+            if event.key == KeyName::Space
+                && event.modifiers.ctrl()
+                && event.modifiers.shift()
+            {
+                command_palette.toggle();
+                needs_paint = true;
+                continue;
+            }
+
+            // Normal keyboard handling — send raw bytes to focused session.
             if let Some(ref bridge) = bridge {
                 if connected {
-                    // Convert key event to raw bytes and send to focused pane's session.
                     let bytes = wtd_ui::input::key_event_to_bytes(&event);
                     if !bytes.is_empty() {
                         let focused = layout_tree.focus();
@@ -296,6 +349,38 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // ── Process mouse events ─────────────────────────────────
         for event in window::drain_mouse_events() {
+            // When the command palette is visible, clicks dismiss or select.
+            if command_palette.is_visible() {
+                if matches!(event.kind, MouseEventKind::LeftDown) {
+                    if let Some(result) =
+                        command_palette.on_click(event.x, event.y, window_width, window_height)
+                    {
+                        if let PaletteResult::Action(ref action_ref) = result {
+                            let action_name = match action_ref {
+                                wtd_core::workspace::ActionReference::Simple(n) => n.as_str(),
+                                wtd_core::workspace::ActionReference::WithArgs {
+                                    action, ..
+                                } => action.as_str(),
+                            };
+                            if action_name != "toggle-command-palette" {
+                                if let Some(ref bridge) = bridge {
+                                    if connected {
+                                        let focused = layout_tree.focus();
+                                        bridge.send_action(
+                                            action_name.to_string(),
+                                            Some(format!("{}", focused.0)),
+                                            serde_json::Value::Null,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        needs_paint = true;
+                    }
+                }
+                continue;
+            }
+
             // Tab strip area.
             if event.y < tab_strip.height() {
                 let action = match event.kind {
@@ -392,6 +477,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 &layout_tree,
                 &screens,
                 &status_bar,
+                &command_palette,
+                window_width,
                 window_height,
             )?;
         }
@@ -417,6 +504,8 @@ fn paint_all(
     layout_tree: &LayoutTree,
     screens: &HashMap<PaneId, ScreenBuffer>,
     status_bar: &StatusBar,
+    command_palette: &CommandPalette,
+    window_width: f32,
     window_height: f32,
 ) -> anyhow::Result<()> {
     renderer.begin_draw();
@@ -445,10 +534,15 @@ fn paint_all(
     let status_result =
         status_bar.paint(renderer.render_target(), window_height - status_bar.height());
 
+    // Command palette overlay (on top of everything else).
+    let palette_result =
+        command_palette.paint(renderer.render_target(), window_width, window_height);
+
     let end_result = renderer.end_draw();
     tab_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     layout_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     status_result.map_err(|e| anyhow::anyhow!("{e}"))?;
+    palette_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     end_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
