@@ -312,6 +312,9 @@ pub struct ScreenBuffer {
     /// SGR extended mouse format (DECSET 1006).
     sgr_mouse: bool,
 
+    /// Bracketed paste mode (DECSET 2004).
+    bracketed_paste: bool,
+
     /// VT parser.
     parser: vte::Parser,
 
@@ -344,6 +347,7 @@ impl ScreenBuffer {
             title: String::new(),
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
+            bracketed_paste: false,
             parser: vte::Parser::new(),
             _wide_pending: false,
         }
@@ -374,6 +378,9 @@ impl ScreenBuffer {
 
     /// Whether SGR extended mouse format (mode 1006) is active.
     pub fn sgr_mouse(&self) -> bool { self.sgr_mouse }
+
+    /// Whether bracketed paste mode (DECSET 2004) is active.
+    pub fn bracketed_paste(&self) -> bool { self.bracketed_paste }
 
     /// Cell at (row, col) in the visible screen (0-based).
     pub fn cell(&self, row: usize, col: usize) -> Option<&Cell> {
@@ -946,6 +953,7 @@ impl Perform for ScreenBuffer {
                         1002 => self.mouse_mode = MouseMode::ButtonEvent,
                         1003 => self.mouse_mode = MouseMode::AnyEvent,
                         1006 => self.sgr_mouse = true,
+                        2004 => self.bracketed_paste = true,
                         1049 => {
                             // Save primary cursor, enter alternate screen
                             self.save_cursor();
@@ -961,6 +969,7 @@ impl Perform for ScreenBuffer {
                         25 => self.cursor.visible = false,
                         1000 | 1002 | 1003 => self.mouse_mode = MouseMode::None,
                         1006 => self.sgr_mouse = false,
+                        2004 => self.bracketed_paste = false,
                         1049 => {
                             // Leave alternate screen, restore primary cursor
                             self.leave_alternate_screen();
@@ -995,6 +1004,7 @@ impl Perform for ScreenBuffer {
                 self.scroll_bottom = self.rows.saturating_sub(1);
                 self.mouse_mode = MouseMode::None;
                 self.sgr_mouse = false;
+                self.bracketed_paste = false;
             }
             _ => {}
         }
@@ -1411,5 +1421,24 @@ mod tests {
         assert_eq!(b.cursor().shape, CursorShape::Bar);
         feed(&mut b, "\x1b[2 q"); // block
         assert_eq!(b.cursor().shape, CursorShape::Block);
+    }
+
+    #[test]
+    fn bracketed_paste_mode_enable_disable() {
+        let mut b = buf(80, 24);
+        assert!(!b.bracketed_paste());
+        feed(&mut b, "\x1b[?2004h"); // enable
+        assert!(b.bracketed_paste());
+        feed(&mut b, "\x1b[?2004l"); // disable
+        assert!(!b.bracketed_paste());
+    }
+
+    #[test]
+    fn bracketed_paste_mode_resets_on_ris() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b[?2004h");
+        assert!(b.bracketed_paste());
+        feed(&mut b, "\x1bc"); // RIS
+        assert!(!b.bracketed_paste());
     }
 }

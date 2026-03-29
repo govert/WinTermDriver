@@ -6,6 +6,7 @@
 //!
 //! UI rendering technology is Win32 + DirectWrite. See spec §8.2 and §24.
 
+pub mod clipboard;
 pub mod input;
 pub mod mouse_handler;
 pub mod pane_layout;
