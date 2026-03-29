@@ -1,0 +1,11 @@
+version: 1
+name: gate-test
+description: "Integration test fixture: single pane with cmd.exe"
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: shell
+      session:
+        profile: cmd
+        startupCommand: "echo GATE_MARKER"

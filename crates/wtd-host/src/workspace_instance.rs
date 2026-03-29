@@ -273,6 +273,10 @@ impl WorkspaceInstance {
         &self.sessions
     }
 
+    pub fn sessions_mut(&mut self) -> &mut HashMap<SessionId, Session> {
+        &mut self.sessions
+    }
+
     pub fn pane_state(&self, id: &PaneId) -> Option<&PaneState> {
         self.panes.get(id).map(|r| &r.state)
     }

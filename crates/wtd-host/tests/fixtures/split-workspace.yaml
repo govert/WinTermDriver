@@ -1,0 +1,21 @@
+version: 1
+name: gate-split
+description: "Integration test fixture: two panes in a vertical split"
+tabs:
+  - name: dev
+    layout:
+      type: split
+      orientation: vertical
+      ratio: 0.5
+      children:
+        - type: pane
+          name: editor
+          session:
+            profile: cmd
+            startupCommand: "echo PANE_ONE"
+        - type: pane
+          name: terminal
+          session:
+            profile: cmd
+            startupCommand: "echo PANE_TWO"
+    focus: terminal
