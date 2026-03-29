@@ -853,3 +853,38 @@ renderer.end_draw()?;
 - `Win32_UI_Input_KeyboardAndMouse` feature added to wtd-ui for `GetKeyState`, `ToUnicode`, `GetKeyboardState`
 - Modifier-only key presses (VK_SHIFT, VK_CONTROL, VK_MENU) are filtered out in the wndproc
 - `KeyName::Char` stores uppercase-normalized letters; matching is case-insensitive via normalization
+
+---
+
+## wintermdriver-w0y.2: Prefix chord state machine
+
+`PrefixStateMachine` lives in `wtd_ui::prefix_state`. Wraps `InputClassifier` and manages prefix-active / idle transitions per §21.3 and §27.4.
+
+**Key types:**
+- `PrefixStateMachine` — stateful wrapper around `InputClassifier`; tracks active/idle state and timeout
+- `PrefixOutput` — enum: `DispatchAction(ActionReference) | SendToSession(Vec<u8>) | Consumed`
+
+**Public API:**
+- `PrefixStateMachine::new(classifier) -> Self` — create from classifier, pre-computes prefix key bytes and label
+- `process(&mut self, event) -> PrefixOutput` — classify event with state-aware transitions
+- `check_timeout(&mut self) -> bool` — returns true if timeout elapsed and state reset to idle
+- `is_prefix_active() -> bool` — for status bar indicator updates
+- `prefix_label() -> &str` — display label (e.g. "Ctrl+B") for status bar
+- `timeout() -> Duration` — configured timeout duration
+- `classifier() -> &InputClassifier` — access inner classifier
+
+**State transitions:**
+- Idle + prefix key → PrefixActive → `Consumed`
+- PrefixActive + chord → Idle → `DispatchAction(action)`
+- PrefixActive + prefix again → Idle → `SendToSession(prefix_bytes)` (literal prefix)
+- PrefixActive + Escape (no mods) → Idle → `Consumed`
+- PrefixActive + unbound key → Idle → `SendToSession(prefix_bytes + key_bytes)`
+- PrefixActive + timeout → Idle (via `check_timeout()`)
+
+**Design decisions:**
+- Double-prefix detected in state machine before calling classifier (classifier skips prefix check when `prefix_active=true`)
+- Escape cancel requires plain Escape (no modifiers); Ctrl+Escape is treated as unbound key
+- Prefix key bytes pre-computed at construction via `key_event_to_bytes` on a synthetic `KeyEvent`
+- State machine is stateless w.r.t. time source — uses `std::time::Instant`; tests use short timeouts
+- Caller responsible for updating status bar via `set_prefix_active()` / `set_prefix_label()` after each `process()` / `check_timeout()` call
+- When no prefix is configured, state machine never enters active state; all keys pass through as raw input or single-stroke bindings

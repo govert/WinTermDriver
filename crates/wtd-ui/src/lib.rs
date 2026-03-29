@@ -8,6 +8,7 @@
 
 pub mod input;
 pub mod pane_layout;
+pub mod prefix_state;
 pub mod renderer;
 pub mod status_bar;
 pub mod tab_strip;
