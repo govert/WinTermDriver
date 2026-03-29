@@ -1323,3 +1323,21 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 **CLI output:** `wtd-cli::output` handles `InvokeActionResult` type (displays result + pane ID when present).
 
 **Test:** `crates/wtd-host/tests/test_action_dispatch.rs` — 4 tests: split-right creates pane with session, close-pane removes pane and session, focus-next returns ok, unknown action returns error.
+
+---
+
+## wintermdriver-4xp.1: M7 Acceptance Gate
+
+`crates/wtd-host/tests/gate_m7_acceptance.rs` — dedicated M7 milestone acceptance gate (3 tests). Exercises the complete application lifecycle end-to-end with real `HostRequestHandler` + `output_broadcaster`.
+
+**Tests:**
+1. `m7_full_application_acceptance` — full lifecycle: open workspace from YAML → verify sessions running → send/capture I/O → UI client receives SessionOutput pushes → split-right action grows layout → close-pane shrinks it → inspect metadata → close workspace → verify no instances
+2. `m7_split_workspace_concurrent_sessions` — multi-pane YAML (horizontal split) → verify both panes have live ConPTY output → isolated I/O per pane → clean close
+3. `m7_error_paths` — TargetNotFound (send to nonexistent pane, capture nonexistent pane), workspace not found (bad file path), InvalidAction (bogus action name)
+
+**Test infrastructure pattern:**
+- `TestHost::start(yaml_path, pipe_name)` — creates `Arc<HostRequestHandler>` + `IpcServer::with_arc_handler` + `output_broadcaster::run` as concurrent tokio tasks
+- CLI client: raw named pipe with `ClientType::Cli` handshake
+- UI client: raw named pipe with `ClientType::Ui` handshake, split via `tokio::io::split` for push message reading
+- Unique pipe names via `AtomicU64` counter (base 21000) to avoid collisions with other gate tests
+- `#[tokio::test(flavor = "multi_thread")]` required for broadcaster push delivery
