@@ -413,12 +413,14 @@ impl HostRequestHandler {
     fn handle_attach_workspace(&self, id: &str, attach: &AttachWorkspace) -> Option<Envelope> {
         let state = self.state.lock().unwrap();
         match state.workspaces.get(&attach.workspace) {
-            Some(_inst) => {
-                // Full state population deferred to gp6.3
+            Some(inst) => {
+                let snapshot = inst.attach_snapshot();
+                let state_value = serde_json::to_value(&snapshot)
+                    .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
                 Some(Envelope::new(
                     id,
                     &AttachWorkspaceResult {
-                        state: Value::Object(serde_json::Map::new()),
+                        state: state_value,
                     },
                 ))
             }

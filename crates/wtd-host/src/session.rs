@@ -19,14 +19,18 @@ use crate::backoff::BackoffState;
 // ── Session state machine ────────────────────────────────────────────────────
 
 /// Session state per spec &sect;17.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum SessionState {
     /// Being set up (transient).
     Creating,
     /// Child process is running.
     Running,
     /// Child exited with the given code.
-    Exited { exit_code: u32 },
+    Exited {
+        #[serde(rename = "exitCode")]
+        exit_code: u32,
+    },
     /// `CreateProcess` failed.
     Failed { error: String },
     /// Waiting to restart (backoff in progress).

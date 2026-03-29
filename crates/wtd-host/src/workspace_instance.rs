@@ -24,7 +24,8 @@ use wtd_pty::JobObject;
 // ── Workspace state machine (§27.2) ─────────────────────────────────────────
 
 /// Lifecycle state of a workspace instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum WorkspaceState {
     /// Sessions are being launched.
     Creating,
@@ -41,10 +42,14 @@ pub enum WorkspaceState {
 // ── Per-pane state ──────────────────────────────────────────────────────────
 
 /// Attachment state of a pane to a session (§29.2).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum PaneState {
     /// Session is running and attached to this pane.
-    Attached { session_id: SessionId },
+    Attached {
+        #[serde(rename = "sessionId")]
+        session_id: SessionId,
+    },
     /// Session failed to launch; error is displayed in the pane.
     Detached { error: String },
 }
@@ -163,6 +168,19 @@ impl WorkspaceInstance {
                     id: t.id.clone(),
                     name: t.name.clone(),
                     panes: t.layout.panes(),
+                    layout: t.layout.to_pane_node(|pane_id| {
+                        if let Some(rec) = self.panes.get(pane_id) {
+                            PaneLeaf {
+                                name: rec.name.clone(),
+                                session: None,
+                            }
+                        } else {
+                            PaneLeaf {
+                                name: format!("pane-{}", pane_id),
+                                session: None,
+                            }
+                        }
+                    }),
                 })
                 .collect(),
             pane_states: self
@@ -174,6 +192,11 @@ impl WorkspaceInstance {
                 .sessions
                 .iter()
                 .map(|(id, s)| (id.clone(), s.state().clone()))
+                .collect(),
+            session_titles: self
+                .sessions
+                .iter()
+                .map(|(id, s)| (id.clone(), s.screen().title.clone()))
                 .collect(),
         }
     }
@@ -687,7 +710,8 @@ impl WorkspaceInstance {
 // ── Attach snapshot ─────────────────────────────────────────────────────────
 
 /// Read-only snapshot of a workspace instance for attach (§26.2).
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttachSnapshot {
     pub id: WorkspaceInstanceId,
     pub name: String,
@@ -695,14 +719,19 @@ pub struct AttachSnapshot {
     pub tabs: Vec<TabSnapshot>,
     pub pane_states: HashMap<PaneId, PaneState>,
     pub session_states: HashMap<SessionId, SessionState>,
+    /// Current terminal title per session (OSC 2).
+    pub session_titles: HashMap<SessionId, String>,
 }
 
-/// Snapshot of a single tab's metadata.
-#[derive(Debug)]
+/// Snapshot of a single tab's metadata and layout.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TabSnapshot {
     pub id: TabId,
     pub name: String,
     pub panes: Vec<PaneId>,
+    /// Full layout tree as a serializable PaneNode (same schema as workspace YAML).
+    pub layout: PaneNode,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
