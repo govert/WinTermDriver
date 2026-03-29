@@ -999,3 +999,38 @@ UI IPC connection lives in `wtd_ui::host_client` (async) and `wtd_ui::host_bridg
 - No `base64` crate dependency; hand-rolled encode/decode for the small amount of base64 needed
 - `PaneSession` mapping (pane → session) is maintained in main.rs; populated from attach state (full population deferred to host handler bead)
 - Layout/tab rebuilding from `HostEvent::LayoutChanged` is stubbed (logs notification); full rebuild deferred to downstream beads
+
+---
+
+## wintermdriver-w0y.5: Command palette component
+
+`CommandPalette` lives in `wtd_ui::command_palette`. Modal overlay with fuzzy search over v1 action catalog.
+
+**Key types:**
+- `CommandPalette` — owns action list, filtered results, selection state, DirectWrite resources
+- `PaletteEntry` — `{ name, description, keybinding: Option<String> }`
+- `PaletteResult` — enum: `Dismissed | Action(ActionReference) | Consumed`
+
+**Public API:**
+- `CommandPalette::new(dw_factory, bindings) -> Result<Self>` — create with action catalog + keybinding hints
+- `show()`, `hide()`, `toggle()`, `is_visible()`
+- `on_key_event(event) -> PaletteResult` — handles Escape/Enter/Up/Down/Backspace/typing
+- `on_click(x, y, window_w, window_h) -> Option<PaletteResult>` — click-to-select or click-outside-to-dismiss
+- `paint(rt, window_w, window_h) -> Result<()>` — render overlay within BeginDraw/EndDraw
+- `fuzzy_score(query, target) -> Option<i32>` — public subsequence fuzzy match with scoring
+- `build_palette_entries(bindings) -> Vec<PaletteEntry>` — all 36 v1 actions with keybinding hints
+- `build_keybinding_hints(bindings) -> HashMap<String, String>` — reverse map action→keybinding
+
+**Integration in main.rs:**
+- Toggled by `Ctrl+Shift+Space` (checked in keyboard event loop before normal key handling)
+- When visible, all keyboard events routed to palette; mouse clicks handled for selection/dismissal
+- Selected actions dispatched via `bridge.send_action()` (or handled locally for `toggle-command-palette`)
+- Painted as overlay after all other components (within same BeginDraw/EndDraw)
+
+**Design decisions:**
+- Action catalog is UI-side (not imported from `wtd-host::action` which is dev-dep only) — 36 static entries matching §20.3
+- Keybinding hints built from `BindingsDefinition` reverse lookup; single-stroke preferred over chord
+- Fuzzy matching: character-by-character subsequence with consecutive and word-boundary bonuses
+- `D2D_RECT_F` is the correct type in windows-rs 0.58 (not `D2D1_RECT_F`)
+- Prefix state machine not yet integrated — Ctrl+Shift+Space checked directly in main loop
+- Target selection for arg-requiring actions not yet implemented (actions dispatch with null args)
