@@ -1216,3 +1216,38 @@ Tracing infrastructure lives in `wtd-core::logging` (§31). All three processes 
 - Pane targeting uses `find_pane_by_name` across all workspaces (no target-path resolution yet)
 
 **Test:** `crates/wtd-host/tests/test_real_handler.rs` — 3 tests: full IPC round-trip (open+send+capture+list+inspect+close), nonexistent workspace error, nonexistent pane error
+
+---
+
+## wintermdriver-gp6.2: Session I/O broadcasting to UI clients
+
+Background output broadcaster lives in `wtd-host::output_broadcaster`. Drains ConPTY output and pushes to UI clients.
+
+**Key types and functions:**
+- `BroadcastEvent` — enum: `Output { session_id, data }` | `StateChanged { session_id, new_state, exit_code }` | `TitleChange { session_id, title }`
+- `run(handler, server, shutdown_rx)` — async loop polling every 50ms
+- `encode_base64(data) -> String` — public base64 encoder for raw VT bytes
+
+**Session additions:**
+- `Session::process_pending_output_collecting(&mut self) -> Vec<u8>` — drains output, feeds to screen buffer, returns raw bytes
+
+**HostRequestHandler additions:**
+- `drain_session_events(&self, prev_titles: &mut HashMap<String, String>) -> Vec<BroadcastEvent>` — locks state, iterates all sessions, drains output, detects title and state changes
+
+**IpcServer additions:**
+- `IpcServer::with_arc_handler(pipe_name, Arc<dyn RequestHandler>)` — constructor accepting pre-wrapped handler for shared ownership
+
+**Host lifecycle additions:**
+- `run_host_with_broadcaster(pipe_name, Arc<HostRequestHandler>, shutdown_rx, dir)` — runs IPC server + output broadcaster concurrently; broadcaster spawned as tokio task
+
+**Design decisions:**
+- Broadcaster polls every 50ms (not frame-rate — output batching is acceptable)
+- `drain_session_events` locks the handler's Mutex, iterates all workspaces/sessions, releases lock
+- Title change detection: broadcaster tracks `prev_titles: HashMap<String, String>` keyed by session ID string; emits TitleChanged when screen buffer title differs
+- State change detection: calls `session.check_exit()` per tick; emits StateChanged on exit
+- Existing `handle_capture`/`handle_scrollback` still call `process_pending_output` as a safety net (no-op if broadcaster already drained)
+- `main.rs` now uses `Arc<HostRequestHandler>` and `run_host_with_broadcaster`
+- Push message IDs use `"evt-{counter}"` format with atomic u64 counter
+- Base64 encoding is hand-rolled (same pattern as decode in request_handler)
+
+**Test:** `crates/wtd-host/tests/test_output_broadcaster.rs` — 2 tests: UI client receives SessionOutput containing echoed marker, SessionOutput data is valid base64. Tests use explicit `file:` path in OpenWorkspace to avoid CWD race conditions between parallel tests.
