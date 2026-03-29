@@ -888,3 +888,42 @@ renderer.end_draw()?;
 - State machine is stateless w.r.t. time source — uses `std::time::Instant`; tests use short timeouts
 - Caller responsible for updating status bar via `set_prefix_active()` / `set_prefix_label()` after each `process()` / `check_timeout()` call
 - When no prefix is configured, state machine never enters active state; all keys pass through as raw input or single-stroke bindings
+
+---
+
+## wintermdriver-w0y.3: Mouse handling
+
+`MouseHandler` lives in `wtd_ui::mouse_handler`. Central coordinator for all mouse interactions per §21.6.
+
+**Key types:**
+- `MouseHandler` — stateful handler tracking per-pane scroll offsets, selection drags, and button state
+- `MouseOutput` — enum: `FocusPane(PaneId) | SelectionChanged(PaneId, Option<TextSelection>) | PaneResize(PaneLayoutAction) | SendToSession(PaneId, Vec<u8>) | ScrollPane(PaneId, i32) | PasteClipboard(PaneId) | Tab(TabAction) | SetCursor(CursorHint)`
+- `MouseButton` — enum: `Left | Middle | Right | None | WheelUp | WheelDown`
+
+**MouseMode tracking in ScreenBuffer (`wtd-pty`):**
+- `MouseMode` enum: `None | Normal (1000) | ButtonEvent (1002) | AnyEvent (1003)`
+- `sgr_mouse: bool` for mode 1006 (SGR extended format)
+- Handled via DECSET/DECRST in `csi_dispatch`; reset on RIS
+- Exported from `wtd_pty` root
+
+**Public API:**
+- `MouseHandler::new()` / `Default`
+- `handle_event(event, tab_strip, pane_layout, ..., focused_pane, mouse_modes, cell_size) -> Vec<MouseOutput>`
+- `scroll_offset(pane_id) -> i32`, `selection(pane_id) -> Option<TextSelection>`
+- `clear_selection(pane_id)`, `reset_scroll(pane_id)`, `clamp_scroll(pane_id, max)`, `remove_pane(pane_id)`
+- `encode_mouse_event(button, press, col, row, modifier_bits, sgr) -> Vec<u8>` — VT mouse sequence
+- `encode_mouse_motion(button, col, row, modifier_bits, sgr) -> Vec<u8>` — VT motion sequence
+
+**Window module changes:**
+- `MouseEventKind` expanded: `LeftDown | LeftUp | RightDown | RightUp | MiddleDown | MiddleUp | Move | Wheel(i16)`
+- Wndproc handles WM_RBUTTONDOWN/UP, WM_MBUTTONDOWN/UP, WM_MOUSEWHEEL
+- Existing code using `Down`/`Up` updated to `LeftDown`/`LeftUp`
+
+**Design decisions:**
+- `focused_pane` passed by reference to `handle_event` (PaneId is not Copy)
+- Right-click = paste when no mouse reporting; forwards VT right-click when mouse mode active
+- Scroll wheel = scrollback navigation (3 lines per notch) or VT wheel events when mouse mode active
+- Wheel targets pane under cursor, not focused pane (hover-scroll)
+- Selection: drag starts on left-down in non-mouse-reporting pane; finalized on left-up; single-cell click clears
+- SGR format (`\x1b[<...M/m`) preferred when mouse mode active; legacy X10 also supported
+- Motion reporting: AnyEvent reports all motion; ButtonEvent only reports while button held
