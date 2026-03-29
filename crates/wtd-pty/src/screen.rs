@@ -78,6 +78,22 @@ impl Cell {
     }
 }
 
+// ── MouseMode ───────────────────────────────────────────────────────────────
+
+/// Mouse tracking mode requested by the application via DECSET.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseMode {
+    /// No mouse reporting (default).
+    #[default]
+    None,
+    /// Normal tracking (DECSET 1000): report press and release.
+    Normal,
+    /// Button-event tracking (DECSET 1002): report press, release, and drag.
+    ButtonEvent,
+    /// Any-event tracking (DECSET 1003): report all motion even without buttons.
+    AnyEvent,
+}
+
 // ── Grid ─────────────────────────────────────────────────────────────────────
 
 /// A rectangular grid of cells.
@@ -291,6 +307,11 @@ pub struct ScreenBuffer {
     /// Window title from OSC sequences.
     pub title: String,
 
+    /// Mouse tracking mode (DECSET 1000/1002/1003).
+    mouse_mode: MouseMode,
+    /// SGR extended mouse format (DECSET 1006).
+    sgr_mouse: bool,
+
     /// VT parser.
     parser: vte::Parser,
 
@@ -321,6 +342,8 @@ impl ScreenBuffer {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             title: String::new(),
+            mouse_mode: MouseMode::None,
+            sgr_mouse: false,
             parser: vte::Parser::new(),
             _wide_pending: false,
         }
@@ -345,6 +368,12 @@ impl ScreenBuffer {
 
     /// Current cursor state.
     pub fn cursor(&self) -> &Cursor { &self.cursor }
+
+    /// Current mouse tracking mode.
+    pub fn mouse_mode(&self) -> MouseMode { self.mouse_mode }
+
+    /// Whether SGR extended mouse format (mode 1006) is active.
+    pub fn sgr_mouse(&self) -> bool { self.sgr_mouse }
 
     /// Cell at (row, col) in the visible screen (0-based).
     pub fn cell(&self, row: usize, col: usize) -> Option<&Cell> {
@@ -913,6 +942,10 @@ impl Perform for ScreenBuffer {
                 for sub in params.iter() {
                     match sub[0] {
                         25 => self.cursor.visible = true,
+                        1000 => self.mouse_mode = MouseMode::Normal,
+                        1002 => self.mouse_mode = MouseMode::ButtonEvent,
+                        1003 => self.mouse_mode = MouseMode::AnyEvent,
+                        1006 => self.sgr_mouse = true,
                         1049 => {
                             // Save primary cursor, enter alternate screen
                             self.save_cursor();
@@ -926,6 +959,8 @@ impl Perform for ScreenBuffer {
                 for sub in params.iter() {
                     match sub[0] {
                         25 => self.cursor.visible = false,
+                        1000 | 1002 | 1003 => self.mouse_mode = MouseMode::None,
+                        1006 => self.sgr_mouse = false,
                         1049 => {
                             // Leave alternate screen, restore primary cursor
                             self.leave_alternate_screen();
@@ -958,6 +993,8 @@ impl Perform for ScreenBuffer {
                 self.reset_sgr();
                 self.scroll_top = 0;
                 self.scroll_bottom = self.rows.saturating_sub(1);
+                self.mouse_mode = MouseMode::None;
+                self.sgr_mouse = false;
             }
             _ => {}
         }

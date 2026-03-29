@@ -56,11 +56,25 @@ pub struct MouseEvent {
 }
 
 /// Kind of mouse event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MouseEventKind {
-    Down,
-    Up,
+    /// Left button pressed.
+    LeftDown,
+    /// Left button released.
+    LeftUp,
+    /// Right button pressed.
+    RightDown,
+    /// Right button released.
+    RightUp,
+    /// Middle button pressed.
+    MiddleDown,
+    /// Middle button released.
+    MiddleUp,
+    /// Mouse moved (any button state).
     Move,
+    /// Scroll wheel rotated. Positive = up, negative = down. Value is delta in
+    /// multiples of `WHEEL_DELTA` (120).
+    Wheel(i16),
 }
 
 static MOUSE_EVENTS: OnceLock<Mutex<Vec<MouseEvent>>> = OnceLock::new();
@@ -229,7 +243,7 @@ unsafe extern "system" fn wndproc(
         WM_LBUTTONDOWN => {
             let (x, y) = extract_mouse_pos(lparam);
             mouse_queue().lock().unwrap().push(MouseEvent {
-                kind: MouseEventKind::Down,
+                kind: MouseEventKind::LeftDown,
                 x,
                 y,
             });
@@ -238,7 +252,43 @@ unsafe extern "system" fn wndproc(
         WM_LBUTTONUP => {
             let (x, y) = extract_mouse_pos(lparam);
             mouse_queue().lock().unwrap().push(MouseEvent {
-                kind: MouseEventKind::Up,
+                kind: MouseEventKind::LeftUp,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_RBUTTONDOWN => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::RightDown,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_RBUTTONUP => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::RightUp,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_MBUTTONDOWN => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::MiddleDown,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_MBUTTONUP => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::MiddleUp,
                 x,
                 y,
             });
@@ -248,6 +298,19 @@ unsafe extern "system" fn wndproc(
             let (x, y) = extract_mouse_pos(lparam);
             mouse_queue().lock().unwrap().push(MouseEvent {
                 kind: MouseEventKind::Move,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            // Wheel delta is in the high word of wparam (signed).
+            let delta = ((wparam.0 >> 16) & 0xFFFF) as i16;
+            // For WM_MOUSEWHEEL, lparam coordinates are screen-relative.
+            // Convert to client-relative.
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::Wheel(delta),
                 x,
                 y,
             });

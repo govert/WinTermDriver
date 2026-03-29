@@ -119,9 +119,10 @@ fn run() -> anyhow::Result<()> {
             // First try the tab strip if event is in the tab strip area.
             if event.y < tab_strip.height() {
                 let action = match event.kind {
-                    MouseEventKind::Down => tab_strip.on_mouse_down(event.x, event.y),
-                    MouseEventKind::Up => tab_strip.on_mouse_up(event.x, event.y),
+                    MouseEventKind::LeftDown => tab_strip.on_mouse_down(event.x, event.y),
+                    MouseEventKind::LeftUp => tab_strip.on_mouse_up(event.x, event.y),
                     MouseEventKind::Move => tab_strip.on_mouse_move(event.x, event.y),
+                    _ => None,
                 };
 
                 if let Some(action) = action {
@@ -154,9 +155,10 @@ fn run() -> anyhow::Result<()> {
             } else {
                 // Pane layout area — handle splitter drag and pane focus.
                 let action = match event.kind {
-                    MouseEventKind::Down => pane_layout.on_mouse_down(event.x, event.y),
-                    MouseEventKind::Up => pane_layout.on_mouse_up(event.x, event.y),
+                    MouseEventKind::LeftDown => pane_layout.on_mouse_down(event.x, event.y),
+                    MouseEventKind::LeftUp => pane_layout.on_mouse_up(event.x, event.y),
                     MouseEventKind::Move => pane_layout.on_mouse_move(event.x, event.y),
+                    _ => None,
                 };
 
                 if let Some(action) = action {
