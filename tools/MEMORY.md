@@ -927,3 +927,31 @@ renderer.end_draw()?;
 - Selection: drag starts on left-down in non-mouse-reporting pane; finalized on left-up; single-cell click clears
 - SGR format (`\x1b[<...M/m`) preferred when mouse mode active; legacy X10 also supported
 - Motion reporting: AnyEvent reports all motion; ButtonEvent only reports while button held
+
+---
+
+## wintermdriver-w0y.4: Copy and paste with VT stripping and bracketed paste
+
+Clipboard operations live in `wtd_ui::clipboard`.
+
+**Key types and functions:**
+- `extract_selection_text(screen, selection) -> String` — extracts plain text from `TextSelection` range in `ScreenBuffer`, skipping wide-char continuations, trimming trailing whitespace per line
+- `strip_vt(text) -> String` — strips ANSI/VT escape sequences (CSI, OSC, simple ESC) as safety measure
+- `copy_to_clipboard(text) -> Result<(), ClipboardError>` — Win32 clipboard write (CF_UNICODETEXT via GlobalAlloc)
+- `read_from_clipboard() -> Result<String, ClipboardError>` — Win32 clipboard read
+- `wrap_bracketed_paste(data) -> Vec<u8>` — wraps bytes in `ESC[200~` / `ESC[201~` markers
+- `prepare_paste(text, bracketed_paste_active) -> Vec<u8>` — encode text as bytes, optionally wrapped
+- `ClipboardError` — `Open | SetData | NoText | Alloc | Lock`
+
+**ScreenBuffer additions:**
+- `bracketed_paste: bool` field — tracks DECSET 2004 mode
+- `bracketed_paste() -> bool` accessor
+- DECSET 2004 handled in `csi_dispatch` (set/reset); reset on RIS
+
+**Windows features added to wtd-ui:** `Win32_System_DataExchange`, `Win32_System_Memory`
+
+**Design decisions:**
+- Text extraction from cells is inherently VT-stripped (cells store parsed characters, not raw VT); `strip_vt()` is an extra safety layer
+- Win32 clipboard tests must run sequentially (single test function) — clipboard is a global resource and concurrent access from parallel test threads causes heap corruption
+- `copy_to_clipboard` uses `HWND(null)` for clipboard association (works from any thread context)
+- `prepare_paste` takes `bracketed_paste_active: bool` — caller checks `ScreenBuffer::bracketed_paste()` and passes the flag
