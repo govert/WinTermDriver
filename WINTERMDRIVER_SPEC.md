@@ -2820,6 +2820,26 @@ Gated on W5 (rendering technology decision).
 - Add request timeout protection to the CLI IPC client: wrap `read_frame_async` with `tokio::time::timeout` (default 30s), return a clear error on timeout, and expose a `--timeout` flag on all CLI commands (§9.2).
 - Wire the `ActionDispatcher` into the host request handler: `InvokeAction` messages resolve the target workspace and pane, call `dispatcher.dispatch`, handle the `ActionResult`, and return success or a structured error (§18.1–18.3).
 
+#### W9: Release packaging and CI
+
+**Capability outcome:** The project has a CI pipeline that builds and tests on every push. Tagged releases automatically produce pre-compiled Windows binaries (`wtd-host.exe`, `wtd-ui.exe`, `wtd.exe`) and publish them as GitHub Releases with checksums.
+
+**Candidate beads:**
+
+- Set up a GitHub Actions CI workflow that builds the workspace and runs `cargo test --workspace` on a Windows runner. Ensure the workflow runs on push and pull request.
+- Configure release build settings (Cargo release profile, binary stripping, LTO) and create a packaging script that collects the three binaries plus a README into a release archive.
+- Create a GitHub Actions release workflow triggered by version tags (`v*`) that builds release binaries, generates SHA-256 checksums, and publishes a GitHub Release with the archive and checksums attached.
+
+#### W10: Documentation and showcase
+
+**Capability outcome:** The README contains complete run instructions and screenshots showing the application in use. A guidance document exists for AI agents that want to use WinTermDriver to manage terminal sessions programmatically.
+
+**Candidate beads:**
+
+- Update the README with complete run instructions: prerequisites, installation from GitHub Releases, first-run quickstart (start host, open a workspace YAML, interact via CLI), example workspace YAML, and troubleshooting tips.
+- Write an agent guidance document (`docs/AGENT_GUIDE.md`) that explains how an AI agent can drive terminal sessions through WinTermDriver — opening workspaces, sending commands, capturing output, inspecting state — with worked examples and best practices for orchestrating multi-session workflows.
+- Capture screenshots of the running system (window with tabs and split panes, terminal output, command palette, prefix chord indicator, status bar) and add them to the README with captions.
+
 ### 37.3 Dependency structure
 
 #### Workset dependencies
@@ -2830,18 +2850,26 @@ W1 (definition/config) ──┐
 W2 (terminal core) ──────┘         │
                                    └──► Slice 1 complete (with minimal W4)
 
-W5 (rendering spike) ──► W6 (UI rendering) ──► W7 (UI interaction)
+W5 (rendering spike) ──�� W6 (UI rendering) ──► W7 (UI interaction)
                                    │                    │
                                    └──► Slice 3         └──► Slice 4
 
 W3 + W4 ──► W8 (host runtime wiring) ──► Slice 5 (end-to-end integration)
-                     │
-                     └──► W6 (UI IPC client needs real host responses)
+                     │                         ���
+                     └──► W6 (UI IPC)          ├──► W9 (release packaging — release workflow)
+                                               ├──► W10 (docs — README run instructions, screenshots)
+                                               └──► M7 (runnable application)
+
+W9 (CI pipeline) ── no dependency on W8 (can start now, builds and tests existing code)
 ```
 
 W5 (rendering spike) has no dependency on W1–W4 and should start early, running in parallel with Slices 1–2.
 
 W8 (host runtime wiring) depends on W1–W4 being complete — it wires together the components those worksets produced. It is a prerequisite for any end-to-end integration testing.
+
+W9 (release packaging) has two phases: the CI pipeline can be set up immediately (builds and tests existing code), but the release workflow should wait until the application is runnable (M7).
+
+W10 (documentation and showcase) depends on M7 — accurate run instructions and screenshots require a working application.
 
 #### Critical path
 
@@ -2886,6 +2914,12 @@ These can proceed concurrently:
 | CLI request timeouts | CLI IPC client |
 | Action dispatch wiring | Host request handler, action dispatcher |
 | AttachWorkspace state | Workspace instance manager, layout tree |
+| CI pipeline | None (can start immediately) |
+| Release build config | CI pipeline |
+| GitHub Release workflow | Release build config, M7 (runnable application) |
+| README run instructions | M7 (runnable application) |
+| Agent guidance document | M7 (runnable application) |
+| Screenshots | README run instructions (screenshots go in README) |
 
 ### 37.4 Risks and ambiguities
 
@@ -2918,6 +2952,7 @@ Milestones are mapped to slice completions. Each milestone has a concrete defini
 | **M5: Interactive workspace** | Slice 4 | Typing works in panes. Single-stroke keybindings dispatch actions. Prefix chords work (`Ctrl+B,%` splits right). Mouse click changes pane focus. Text selection and copy/paste work. The command palette opens, searches, and dispatches actions. |
 | **M6: Validated release** | Post-Slice 4 | All acceptance criteria (§36) pass. Performance targets (§30) are met. Logging is operational. Error messages are clear and complete. |
 | **M7: Runnable application** | Slice 5 | `wtd-host` starts with a real request handler. `wtd open dev.yaml` creates a workspace with live ConPTY sessions. `wtd send` and `wtd capture` work end-to-end. A UI client receives live session output via IPC broadcast. Actions dispatched via CLI modify the workspace layout. The application is runnable, not just testable. |
+| **M8: Shipped and documented** | Post-M7 | Pre-compiled binaries are published as GitHub Releases. README has complete run instructions with screenshots. An agent guidance document explains how to drive terminal sessions programmatically. |
 
 ### 37.6 Recommended bead generation order
 
@@ -2934,6 +2969,10 @@ Generate beads in slice order. For each slice, generate beads from the contribut
 **Fifth bead set (Slice 4):** Generate W7 beads after W6 beads are substantially complete.
 
 **Sixth bead set (Slice 5):** Generate W8 beads after W1–W4 beads are complete. These wire the independently-tested components into a working host process. The host request handler, session I/O broadcast, workspace runtime loading, and action dispatch wiring are the critical path to a runnable application.
+
+**Seventh bead set (parallel with Slice 5):** Generate the W9 CI pipeline bead immediately — it builds and tests existing code with no dependency on W8. The release build config and GitHub Release workflow beads should be generated after the CI pipeline is working.
+
+**Eighth bead set (post-M7):** Generate W10 beads after M7. README run instructions, agent guidance document, and screenshots all require a working application. Also generate the W9 release workflow bead if not already done.
 
 **Validation beads:** Generate after Slice 5 for end-to-end acceptance testing, performance validation, and error message review. These are cross-cutting and draw from §30, §32, and §36.
 
