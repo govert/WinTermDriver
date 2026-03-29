@@ -1287,3 +1287,25 @@ Background output broadcaster lives in `wtd-host::output_broadcaster`. Drains Co
 **Serde note:** `rename_all` on tagged enums only renames variant discriminants, not fields within variants. Use explicit `#[serde(rename = "camelCase")]` on multi-word fields inside enum variants (e.g., `session_id`, `exit_code`).
 
 **Test:** `crates/wtd-host/tests/test_attach_snapshot.rs` — 3 tests: multi-pane attach with full state verification, single-pane attach, nonexistent workspace error.
+
+---
+
+## wintermdriver-gp6.4: File-path workspace loading and SaveWorkspace file writing
+
+OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace writes YAML to disk.
+
+**ErrorCode addition:**
+- `ErrorCode::DefinitionError` (`"definition-error"`) — for YAML parse failures and workspace validation errors
+- CLI maps `DefinitionError` to `exit_code::DEFINITION_ERROR` (5)
+
+**Error code mapping in `load_workspace_from_disk`:**
+- Discovery failure (file not found, no match) → `WorkspaceNotFound`
+- File read failure → `WorkspaceNotFound`
+- Parse/validation failure → `DefinitionError`
+
+**SaveWorkspace file writing:**
+- If `save.file` is `Some(path)` → writes to that path
+- If `save.file` is `None` → writes to `user_workspaces_dir() / "{name}.yaml"`
+- Uses `serde_yaml::to_string(&def)` for serialization
+
+**Test:** `crates/wtd-host/tests/test_file_path_open.rs` — 6 tests: file-path open with live sessions, split workspace via file, save-to-file round-trip, file-not-found error, invalid YAML error, validation failure (bad version) error
