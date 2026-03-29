@@ -87,7 +87,13 @@ fn decode_frame_too_short_incomplete_payload() {
 fn oversize_message_rejected_on_encode() {
     // Create an envelope with a payload larger than 16 MiB.
     let huge_string = "x".repeat(MAX_MESSAGE_SIZE + 1);
-    let envelope = Envelope::new("big", &CaptureResult { text: huge_string });
+    let envelope = Envelope::new("big", &CaptureResult {
+        text: huge_string,
+        lines: 0,
+        total_lines: 0,
+        anchor_found: None,
+        cursor: None,
+    });
 
     let result = framing::encode(&envelope);
     let err = result.unwrap_err();

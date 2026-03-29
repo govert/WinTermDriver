@@ -316,11 +316,40 @@ pub struct Keys {
 }
 impl_payload!(Keys, "Keys");
 
-/// §13.14 — Capture the visible screen of a target pane.
+/// §13.14 — Capture screen content from a target pane.
+///
+/// Precedence for what to return:
+/// 1. Anchor found (`after`/`after_regex`) → from match line to end
+/// 2. Anchor not found → fall back to `lines`/`all`/visible
+/// 3. `lines` → last N lines (scrollback + visible, from bottom)
+/// 4. `all` → entire buffer (all scrollback + visible)
+/// 5. Nothing → visible screen only
+///
+/// `max_lines` always caps the output (trims oldest first).
+/// `count` suppresses text and returns metadata only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capture {
+    /// Required: target pane path.
     pub target: String,
+    /// Return last N lines (scrollback + visible, counted from bottom).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u32>,
+    /// Return entire buffer (all scrollback + visible).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all: Option<bool>,
+    /// Exact substring anchor — search newest-first in scrollback, capture from match line to end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// Regex anchor — same search behavior as `after`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_regex: Option<String>,
+    /// Cap total lines returned (trims oldest if exceeded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_lines: Option<u32>,
+    /// Return metadata only (line count, anchor status), no text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<bool>,
 }
 impl_payload!(Capture, "Capture");
 
@@ -560,11 +589,24 @@ pub struct SessionInfo {
     pub state: String,
 }
 
-/// §13.14 — Captured visible screen text.
+/// §13.14 — Result of a Capture request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureResult {
+    /// Captured text (empty when `count` mode was requested).
     pub text: String,
+    /// Number of lines in `text` (or would-be count when `count` mode).
+    #[serde(default)]
+    pub lines: u32,
+    /// Total lines available in the buffer (scrollback + visible).
+    #[serde(default)]
+    pub total_lines: u32,
+    /// Whether the anchor was found (only set when `after`/`after_regex` was requested).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_found: Option<bool>,
+    /// Absolute line index where the capture started (0 = oldest scrollback).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<u32>,
 }
 impl_payload!(CaptureResult, "CaptureResult");
 

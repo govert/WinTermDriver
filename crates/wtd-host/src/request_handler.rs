@@ -752,7 +752,14 @@ impl HostRequestHandler {
         };
 
         let text = get_pane_screen_text(inst, &pane_id);
-        Some(Envelope::new(id, &CaptureResult { text }))
+        let line_count = if text.is_empty() { 0 } else { text.lines().count() as u32 };
+        Some(Envelope::new(id, &CaptureResult {
+            text,
+            lines: line_count,
+            total_lines: line_count,
+            anchor_found: None,
+            cursor: None,
+        }))
     }
 
     fn handle_scrollback(&self, id: &str, scrollback: &Scrollback) -> Option<Envelope> {

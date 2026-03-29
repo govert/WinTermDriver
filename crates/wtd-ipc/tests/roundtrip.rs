@@ -154,7 +154,92 @@ fn keys_roundtrip() {
 fn capture_roundtrip() {
     roundtrip(Capture {
         target: "dev/editor".into(),
+        lines: None,
+        all: None,
+        after: None,
+        after_regex: None,
+        max_lines: None,
+        count: None,
     });
+}
+
+#[test]
+fn capture_with_lines_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/logs".into(),
+        lines: Some(50),
+        all: None,
+        after: None,
+        after_regex: None,
+        max_lines: Some(100),
+        count: None,
+    });
+}
+
+#[test]
+fn capture_with_anchor_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/server".into(),
+        lines: None,
+        all: None,
+        after: Some("=== BUILD START ===".into()),
+        after_regex: None,
+        max_lines: Some(200),
+        count: None,
+    });
+}
+
+#[test]
+fn capture_with_regex_anchor_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/ci".into(),
+        lines: None,
+        all: None,
+        after: None,
+        after_regex: Some(r"test\d+ PASS".into()),
+        max_lines: None,
+        count: None,
+    });
+}
+
+#[test]
+fn capture_all_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/editor".into(),
+        lines: None,
+        all: Some(true),
+        after: None,
+        after_regex: None,
+        max_lines: None,
+        count: None,
+    });
+}
+
+#[test]
+fn capture_count_mode_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/editor".into(),
+        lines: None,
+        all: None,
+        after: None,
+        after_regex: None,
+        max_lines: None,
+        count: Some(true),
+    });
+}
+
+#[test]
+fn capture_minimal_json_deserializes() {
+    // {"target":"x"} must still deserialize with all optional fields → None.
+    let json = r#"{"target":"x"}"#;
+    let cap: Capture = serde_json::from_str(json).unwrap();
+    assert_eq!(cap.target, "x");
+    assert!(cap.lines.is_none());
+    assert!(cap.all.is_none());
+    assert!(cap.after.is_none());
+    assert!(cap.after_regex.is_none());
+    assert!(cap.max_lines.is_none());
+    assert!(cap.count.is_none());
 }
 
 #[test]
@@ -389,7 +474,56 @@ fn list_sessions_result_roundtrip() {
 fn capture_result_roundtrip() {
     roundtrip(CaptureResult {
         text: "$ ls\nfile1.txt\nfile2.txt\n".into(),
+        lines: 3,
+        total_lines: 150,
+        anchor_found: None,
+        cursor: Some(147),
     });
+}
+
+#[test]
+fn capture_result_with_anchor_roundtrip() {
+    roundtrip(CaptureResult {
+        text: "=== BUILD START ===\nBuilding...\nDone.\n".into(),
+        lines: 3,
+        total_lines: 500,
+        anchor_found: Some(true),
+        cursor: Some(497),
+    });
+}
+
+#[test]
+fn capture_result_anchor_not_found_roundtrip() {
+    roundtrip(CaptureResult {
+        text: "last line\n".into(),
+        lines: 1,
+        total_lines: 42,
+        anchor_found: Some(false),
+        cursor: Some(41),
+    });
+}
+
+#[test]
+fn capture_result_count_mode_roundtrip() {
+    roundtrip(CaptureResult {
+        text: String::new(),
+        lines: 200,
+        total_lines: 200,
+        anchor_found: None,
+        cursor: None,
+    });
+}
+
+#[test]
+fn capture_result_legacy_json_deserializes() {
+    // Old responses with only "text" must still deserialize.
+    let json = r#"{"text":"hello\n"}"#;
+    let result: CaptureResult = serde_json::from_str(json).unwrap();
+    assert_eq!(result.text, "hello\n");
+    assert_eq!(result.lines, 0);
+    assert_eq!(result.total_lines, 0);
+    assert!(result.anchor_found.is_none());
+    assert!(result.cursor.is_none());
 }
 
 #[test]
