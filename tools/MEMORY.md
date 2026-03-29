@@ -478,3 +478,50 @@ Target path parsing in `wtd-core::target`. Resolution in `wtd-host::target_resol
 - 1-segment requires exactly one active instance (§19.5); 0 or 2+ returns error
 - `resolve_by_id` parses the ID string as u64 (matching current PaneId representation)
 - Known issue: `LayoutTree::new()` always starts PaneIds at 1, so multi-tab workspaces have PaneId collisions in the flat `panes` HashMap — cross-tab pane-level resolution not reliable until PaneId uniqueness is addressed
+
+---
+
+## wintermdriver-rul.3: CLI IPC client, dispatch, and output formatting
+
+CLI client lives in `wtd-cli::client`. Command dispatch in `wtd-cli::dispatch`. Output formatting in `wtd-cli::output`. Exit codes in `wtd-cli::exit_code`. `wtd-cli` is now a lib+bin crate (like `wtd-host`).
+
+**Shared IPC additions (`wtd-ipc`):**
+- `wtd_ipc::PROTOCOL_VERSION` — protocol version constant (was previously only in `wtd-host::ipc_server`)
+- `wtd_ipc::connect::pipe_name_for_current_user()` — SID-based pipe name resolution (mirrors `wtd-host::pipe_security::pipe_name_for_current_user()`)
+- `wtd_ipc::framing::read_frame_async()` / `write_frame_async()` — async length-prefixed frame I/O (mirrors `wtd-host::ipc_server::read_frame/write_frame`)
+- **Note:** In windows-rs 0.58, `OpenProcessToken` is in `Win32::System::Threading`, NOT `Win32::Security` — must import from Threading explicitly
+
+**Key types:**
+- `IpcClient` — connects to host pipe, performs handshake, sends requests and reads responses
+- `ClientError` — `Connect(ConnectError) | Ipc(IpcError) | Handshake(String)`
+- `OutputResult` — `{ stdout, stderr, exit_code }` for testable formatting
+- Exit codes: SUCCESS=0, GENERAL_ERROR=1, TARGET_NOT_FOUND=2, AMBIGUOUS_TARGET=3, HOST_START_FAILED=4, DEFINITION_ERROR=5, CONNECTION_ERROR=6, TIMEOUT=10
+
+**Public API:**
+- `IpcClient::connect_and_handshake()` — resolve pipe name, auto-start host, connect, handshake
+- `IpcClient::connect_to(pipe_name)` — connect to specific pipe (for tests)
+- `IpcClient::request(envelope) -> Envelope` — send request, read response
+- `IpcClient::read_frame() / write_frame()` — raw frame I/O for streaming (Follow)
+- `dispatch::run(cli) -> i32` — full dispatch: connect, build request, send, format, return exit code
+- `output::format_response(envelope, json_mode) -> OutputResult` — text or JSON formatting
+
+**Command dispatch mapping:**
+- All CLI commands map to their corresponding IPC message types
+- `message::Send` conflicts with `std::marker::Send` — use qualified `message::Send` or avoid glob importing `wtd_ipc::message::*`
+- `host status` checks pipe availability locally (no IPC needed)
+- `host stop` not yet implemented (no StopHost IPC message)
+- `follow` sends Follow request then loops reading FollowData/FollowEnd; Ctrl+C sends CancelFollow
+
+**Output formatting:**
+- Text mode: table formatting with dynamic column widths for list commands; plain text for capture/scrollback
+- JSON mode: `serde_json::to_string_pretty` on the response payload
+- Error responses: message to stderr, candidates listed if present
+- ErrorCode → exit code mapping: TargetNotFound/WorkspaceNotFound → 2, TargetAmbiguous → 3, others → 1
+
+**Design decisions:**
+- `IpcClient::connect_to(pipe_name)` allows tests to use custom pipe names without auto-start
+- `message::Send` name conflict: dispatch.rs imports specific types, not glob, and qualifies `message::Send`
+- `OutputResult` struct enables unit testing of formatting without stdout capture
+- `host status` is a local check (no server connection needed), using `is_host_pipe_available`
+- `FocusPane` and `RenamePane` messages receive the CLI target string as `pane_id` — host dispatch handler will need to resolve paths to PaneIds
+- Action command args parsed as `key=value` pairs into `serde_json::Value::Object`
