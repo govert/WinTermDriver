@@ -221,3 +221,39 @@ Workspace lifecycle lives in `wtd-host::workspace_instance`. Manages running wor
 - Job Object created per instance; each child process added on successful start
 - Session IDs are monotonically increasing across recreates (never reused)
 - `save()` uses `to_pane_node` with original `SessionLaunchDefinition` stored per pane
+
+---
+
+## wintermdriver-8w8.4: Named pipe IPC server
+
+Named pipe server lives in `wtd-host::ipc_server`. Security helpers in `wtd-host::pipe_security`.
+
+**Key types:**
+- `IpcServer` — tokio-based accept loop on `\\.\pipe\wtd-{SID}`, manages concurrent clients
+- `ClientRegistry` — tracks connected clients with `mpsc` channels for push messages
+- `ClientId` — `u64` identifier for each connected client
+- `PipeSecurity` — RAII wrapper owning SECURITY_DESCRIPTOR + ACL buffers for pipe DACL
+- `ServerError` — `Io | Ipc | Security`
+- `RequestHandler` trait — `handle_request(client_id, envelope, msg) -> Option<Envelope>`
+
+**Public API:**
+- `IpcServer::new(pipe_name, handler) -> Result<Self, ServerError>` — create with security
+- `IpcServer::run(&self, shutdown_rx) -> Result<()>` — accept loop until shutdown
+- `IpcServer::broadcast_to_ui(&self, envelope)` — push to all UI clients
+- `IpcServer::send_to_client(&self, client_id, envelope)` — push to specific client
+- `IpcServer::clients()` — access `Arc<Mutex<ClientRegistry>>`
+- `read_frame(reader) -> Result<Envelope>` / `write_frame(writer, envelope)` — async frame I/O
+- `pipe_name_for_current_user() -> Result<String>` — builds `\\.\pipe\wtd-{SID}`
+- `PipeSecurity::verify_client_sid(pipe_handle) -> Result<bool>` — checks connecting client's SID
+
+**Design decisions:**
+- Uses `tokio::net::windows::named_pipe::ServerOptions::create_with_security_attributes_raw` for custom DACL
+- DACL built manually (`InitializeAcl` + `AddAccessAllowedAce`) — no `Win32_Security_Authorization` dependency
+- SID-to-string conversion is hand-rolled (avoids `ConvertSidToStringSidW` and extra feature)
+- Per-connection `tokio::spawn` with `tokio::io::split` for simultaneous read/write
+- `select!` loop: reads frames from pipe AND drains push channel, writes responses directly
+- Handshake handled by the server itself (not the `RequestHandler`)
+- Protocol version check: rejects mismatched versions with `ErrorCode::ProtocolError`
+- Client SID verified via `GetNamedPipeClientProcessId` + `OpenProcessToken` + `EqualSid`
+- `PROTOCOL_VERSION = 1`, `HOST_VERSION = env!("CARGO_PKG_VERSION")`
+- Shutdown via `watch::Receiver<bool>` — accept loop exits, existing connections run until client disconnects
