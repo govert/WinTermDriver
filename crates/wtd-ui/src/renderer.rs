@@ -58,6 +58,11 @@ impl TextSelection {
 
 const SELECTION_COLOR: (u8, u8, u8) = (58, 100, 150);
 
+// Colors for the failed/exited pane overlay.
+const FAILED_PANE_BG: (u8, u8, u8) = (30, 30, 42);
+const FAILED_PANE_MSG_FG: (u8, u8, u8) = (204, 120, 120);
+const FAILED_PANE_HINT_FG: (u8, u8, u8) = (140, 140, 160);
+
 // ── Default theme colors ─────────────────────────────────────────────────────
 
 /// Standard 16-color ANSI palette (r, g, b) in 0–255.
@@ -394,6 +399,138 @@ impl TerminalRenderer {
             self.rt.PopAxisAlignedClip();
         }
         result
+    }
+
+    /// Paint a failed or exited pane overlay within a viewport rectangle.
+    ///
+    /// Displays a centered status message (e.g. "Session exited (code 0)" or
+    /// "Session failed: error") and a restart hint below it. The pane area is
+    /// filled with a dark background. The viewport is clipped via a D2D
+    /// axis-aligned clip rect, just like [`paint_pane_viewport`].
+    pub fn paint_failed_pane(
+        &self,
+        message: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        let clip = D2D_RECT_F {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        };
+        unsafe {
+            self.rt
+                .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+
+        let result = self.paint_failed_pane_inner(message, x, y, width, height);
+
+        unsafe {
+            self.rt.PopAxisAlignedClip();
+        }
+        result
+    }
+
+    fn paint_failed_pane_inner(
+        &self,
+        message: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        let restart_hint = "Press Enter to restart  \u{00B7}  Ctrl+B, r";
+
+        unsafe {
+            // Fill background.
+            let bg_brush = self.rt.CreateSolidColorBrush(
+                &rgb_to_d2d(FAILED_PANE_BG.0, FAILED_PANE_BG.1, FAILED_PANE_BG.2),
+                None,
+            )?;
+            let bg_rect = D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            };
+            self.rt.FillRectangle(&bg_rect, &bg_brush);
+
+            // Measure the message text.
+            let msg_utf16: Vec<u16> = message.encode_utf16().collect();
+            let msg_layout =
+                self.dw_factory
+                    .CreateTextLayout(&msg_utf16, &self.tf_regular, width, height)?;
+            let mut msg_metrics = DWRITE_TEXT_METRICS::default();
+            msg_layout.GetMetrics(&mut msg_metrics)?;
+
+            // Measure the hint text.
+            let hint_utf16: Vec<u16> = restart_hint.encode_utf16().collect();
+            let hint_layout =
+                self.dw_factory
+                    .CreateTextLayout(&hint_utf16, &self.tf_regular, width, height)?;
+            let mut hint_metrics = DWRITE_TEXT_METRICS::default();
+            hint_layout.GetMetrics(&mut hint_metrics)?;
+
+            // Vertical center: both lines as a block with a small gap.
+            let line_gap = self.cell_height * 0.5;
+            let total_text_height = msg_metrics.height + line_gap + hint_metrics.height;
+            let top_y = y + (height - total_text_height) / 2.0;
+
+            // Draw message (centered horizontally).
+            let msg_x = x + (width - msg_metrics.width) / 2.0;
+            let msg_brush = self.rt.CreateSolidColorBrush(
+                &rgb_to_d2d(
+                    FAILED_PANE_MSG_FG.0,
+                    FAILED_PANE_MSG_FG.1,
+                    FAILED_PANE_MSG_FG.2,
+                ),
+                None,
+            )?;
+            let msg_rect = D2D_RECT_F {
+                left: msg_x,
+                top: top_y,
+                right: msg_x + msg_metrics.width,
+                bottom: top_y + msg_metrics.height,
+            };
+            self.rt.DrawText(
+                &msg_utf16,
+                &self.tf_regular,
+                &msg_rect,
+                &msg_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+
+            // Draw restart hint (centered horizontally, below message).
+            let hint_y = top_y + msg_metrics.height + line_gap;
+            let hint_x = x + (width - hint_metrics.width) / 2.0;
+            let hint_brush = self.rt.CreateSolidColorBrush(
+                &rgb_to_d2d(
+                    FAILED_PANE_HINT_FG.0,
+                    FAILED_PANE_HINT_FG.1,
+                    FAILED_PANE_HINT_FG.2,
+                ),
+                None,
+            )?;
+            let hint_rect = D2D_RECT_F {
+                left: hint_x,
+                top: hint_y,
+                right: hint_x + hint_metrics.width,
+                bottom: hint_y + hint_metrics.height,
+            };
+            self.rt.DrawText(
+                &hint_utf16,
+                &self.tf_regular,
+                &hint_rect,
+                &hint_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+        Ok(())
     }
 
     fn paint_viewport_inner(
@@ -862,6 +999,21 @@ impl TerminalRenderer {
     }
 }
 
+// ── Failed pane message helpers ──────────────────────────────────────────────
+
+/// Format a message for a pane whose session exited with a given exit code.
+pub fn exited_pane_message(exit_code: u32) -> String {
+    format!("Session exited (code {exit_code})")
+}
+
+/// Format a message for a pane whose session failed to launch.
+pub fn failed_pane_message(error: &str) -> String {
+    format!("Session failed: {error}")
+}
+
+/// The restart hint shown below the status message in failed/exited panes.
+pub const RESTART_HINT: &str = "Press Enter to restart  \u{00B7}  Ctrl+B, r";
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -986,5 +1138,30 @@ mod tests {
         assert!(c.g.abs() < 0.01);
         assert!((c.b - 0.502).abs() < 0.01);
         assert!((c.a - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn exited_pane_message_format() {
+        assert_eq!(exited_pane_message(0), "Session exited (code 0)");
+        assert_eq!(exited_pane_message(1), "Session exited (code 1)");
+        assert_eq!(exited_pane_message(255), "Session exited (code 255)");
+    }
+
+    #[test]
+    fn failed_pane_message_format() {
+        assert_eq!(
+            failed_pane_message("CreateProcess failed"),
+            "Session failed: CreateProcess failed"
+        );
+        assert_eq!(
+            failed_pane_message("profile not found"),
+            "Session failed: profile not found"
+        );
+    }
+
+    #[test]
+    fn restart_hint_contains_keybinding() {
+        assert!(RESTART_HINT.contains("Enter"));
+        assert!(RESTART_HINT.contains("Ctrl+B"));
     }
 }

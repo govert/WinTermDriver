@@ -6,7 +6,8 @@
 
 use wtd_pty::{Cell, CellAttrs, Color, ScreenBuffer};
 use wtd_ui::renderer::{
-    color_to_rgb, resolve_cell_colors, RendererConfig, TerminalRenderer, TextSelection,
+    color_to_rgb, exited_pane_message, failed_pane_message, resolve_cell_colors, RendererConfig,
+    TerminalRenderer, TextSelection, RESTART_HINT,
 };
 
 use windows::core::*;
@@ -627,4 +628,131 @@ fn selection_contains_backward() {
     assert!(sel.contains(1, 5));
     assert!(sel.contains(3, 10));
     assert!(!sel.contains(3, 11));
+}
+
+// ── Failed pane rendering tests ─────────────────────────────────────────────
+
+#[test]
+fn paint_failed_pane_exited() {
+    let hwnd = create_test_window("failed_pane_exited");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_failed_pane(&exited_pane_message(0), 0.0, 0.0, cw * 80.0, ch * 24.0)
+        .expect("exited pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_failed_pane_error() {
+    let hwnd = create_test_window("failed_pane_error");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_failed_pane(
+            &failed_pane_message("CreateProcess failed: file not found"),
+            0.0,
+            0.0,
+            cw * 80.0,
+            ch * 24.0,
+        )
+        .expect("failed pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_failed_pane_small_viewport() {
+    let hwnd = create_test_window("failed_pane_small");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    // Very small pane — should not panic or error.
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_failed_pane(&exited_pane_message(1), 10.0, 10.0, cw * 10.0, ch * 3.0)
+        .expect("small failed pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_failed_pane_at_offset() {
+    let hwnd = create_test_window("failed_pane_offset");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    // Render at an offset (as if a tab strip is above and pane is offset).
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_failed_pane(
+            &failed_pane_message("profile not found"),
+            cw * 5.0,
+            ch * 3.0,
+            cw * 40.0,
+            ch * 12.0,
+        )
+        .expect("offset failed pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_failed_pane_alongside_normal_pane() {
+    let mut screen = ScreenBuffer::new(40, 24, 0);
+    screen.advance(b"Hello, world!");
+
+    let hwnd = create_test_window("failed_alongside_normal");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    // Left pane: normal terminal content.
+    renderer
+        .paint_pane_viewport(&screen, 0.0, 0.0, cw * 40.0, ch * 24.0, None)
+        .expect("normal pane should paint");
+    // Right pane: failed overlay.
+    renderer
+        .paint_failed_pane(
+            &exited_pane_message(127),
+            cw * 40.0,
+            0.0,
+            cw * 40.0,
+            ch * 24.0,
+        )
+        .expect("failed pane next to normal should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn message_helpers_produce_expected_strings() {
+    assert_eq!(exited_pane_message(0), "Session exited (code 0)");
+    assert_eq!(exited_pane_message(42), "Session exited (code 42)");
+    assert_eq!(
+        failed_pane_message("out of memory"),
+        "Session failed: out of memory"
+    );
+    assert!(RESTART_HINT.contains("Enter"));
+    assert!(RESTART_HINT.contains("Ctrl+B"));
 }
