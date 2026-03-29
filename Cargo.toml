@@ -32,6 +32,7 @@ vte = "0.13"
 
 # CLI parsing
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Windows APIs (ConPTY, named pipes, Win32) — Windows-only project
 windows = { version = "0.58", features = [

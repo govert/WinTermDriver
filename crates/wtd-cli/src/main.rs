@@ -4,8 +4,22 @@
 //! response, and exits. Long-running commands (e.g. `follow`) keep the
 //! connection open until interrupted.
 //!
-//! CLI structure is defined in bead wintermdriver-rul.1. See spec §8.3 and §22.
+//! CLI structure defined per spec §22.
+
+mod cli;
+
+use clap::Parser;
+use cli::{Cli, Command};
 
 fn main() {
-    eprintln!("wtd: not yet implemented");
+    let cli = Cli::parse();
+
+    if let Command::Completions { shell } = cli.command {
+        cli::print_completions(shell);
+        return;
+    }
+
+    // Command dispatch will be implemented in a future bead.
+    eprintln!("wtd: command dispatch not yet implemented");
+    std::process::exit(1);
 }

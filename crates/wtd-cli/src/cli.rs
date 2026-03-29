@@ -1,0 +1,706 @@
+//! Clap-based CLI parser for `wtd` — all commands, subcommands, and global flags.
+//!
+//! Spec references: §22.1–22.4
+
+use std::io;
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+use clap_complete::Shell;
+
+/// WinTermDriver controller CLI.
+///
+/// Sends commands to the wtd-host background process.
+#[derive(Debug, Parser)]
+#[command(name = "wtd", version, about)]
+pub struct Cli {
+    /// Output in JSON format instead of human-readable text.
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Include internal IDs and additional metadata in output.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
+    /// Address a target by internal ID instead of semantic path.
+    #[arg(long, global = true)]
+    pub id: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    // ── Workspace commands ──────────────────────────────────────────
+
+    /// Open workspace from definition.
+    Open {
+        /// Workspace name.
+        name: String,
+        /// Path to a workspace definition file.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Tear down existing instance and recreate from definition.
+        #[arg(long)]
+        recreate: bool,
+    },
+
+    /// Attach to an existing workspace instance.
+    Attach {
+        /// Workspace name.
+        name: String,
+    },
+
+    /// Tear down existing instance and recreate from definition.
+    Recreate {
+        /// Workspace name.
+        name: String,
+    },
+
+    /// Close workspace UI.
+    Close {
+        /// Workspace name.
+        name: String,
+        /// Also destroy the instance.
+        #[arg(long)]
+        kill: bool,
+    },
+
+    /// Save workspace definition.
+    Save {
+        /// Workspace name.
+        name: String,
+        /// Output file path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    // ── List commands ───────────────────────────────────────────────
+
+    /// List workspaces, instances, panes, or sessions.
+    List {
+        #[command(subcommand)]
+        what: ListCommand,
+    },
+
+    // ── Pane / session commands ─────────────────────────────────────
+
+    /// Focus a pane in the UI.
+    Focus {
+        /// Target path (e.g. workspace/tab/pane).
+        target: String,
+    },
+
+    /// Rename a pane.
+    Rename {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// New name for the pane.
+        new_name: String,
+    },
+
+    /// Invoke a named action on a target.
+    Action {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Action name (kebab-case).
+        action_name: String,
+        /// Action arguments as key=value pairs.
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+
+    // ── Input commands ──────────────────────────────────────────────
+
+    /// Send text to a session.
+    Send {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Text to send.
+        text: String,
+        /// Do not append newline.
+        #[arg(long)]
+        no_newline: bool,
+    },
+
+    /// Send key sequences to a session.
+    Keys {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Key specifications (e.g. Enter, Ctrl+C, F1).
+        #[arg(required = true)]
+        key_specs: Vec<String>,
+    },
+
+    // ── Inspection commands ─────────────────────────────────────────
+
+    /// Capture the visible screen content as text.
+    Capture {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+    },
+
+    /// Capture scrollback lines.
+    Scrollback {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Number of lines from the end.
+        #[arg(long)]
+        tail: u32,
+    },
+
+    /// Stream output from a session until Ctrl+C or session exit.
+    Follow {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Output raw bytes without processing.
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Show full metadata for a pane/session.
+    Inspect {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+    },
+
+    // ── Host management commands ────────────────────────────────────
+
+    /// Manage the host process.
+    Host {
+        #[command(subcommand)]
+        action: HostCommand,
+    },
+
+    // ── Shell completions ───────────────────────────────────────────
+
+    /// Generate shell completion scripts.
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for.
+        shell: Shell,
+    },
+}
+
+/// Subcommands for `wtd list`.
+#[derive(Debug, Subcommand)]
+pub enum ListCommand {
+    /// List all available workspace definitions.
+    Workspaces,
+
+    /// List all running workspace instances.
+    Instances,
+
+    /// List all panes in a workspace instance.
+    Panes {
+        /// Workspace name.
+        workspace: String,
+    },
+
+    /// List all sessions in a workspace instance.
+    Sessions {
+        /// Workspace name.
+        workspace: String,
+    },
+}
+
+/// Subcommands for `wtd host`.
+#[derive(Debug, Subcommand)]
+pub enum HostCommand {
+    /// Show host process status (PID, uptime, instance count).
+    Status,
+
+    /// Shut down the host process.
+    Stop,
+}
+
+/// Generate shell completions and write them to stdout.
+pub fn print_completions(shell: Shell) {
+    use clap::CommandFactory;
+    clap_complete::generate(shell, &mut Cli::command(), "wtd", &mut io::stdout());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Helper: parse a command line, returning the parsed Cli or the error string.
+    fn parse(args: &[&str]) -> Result<Cli, String> {
+        let mut full = vec!["wtd"];
+        full.extend_from_slice(args);
+        Cli::try_parse_from(full).map_err(|e| e.to_string())
+    }
+
+    // ── Workspace commands ──────────────────────────────────────
+
+    #[test]
+    fn open_basic() {
+        let cli = parse(&["open", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Open { ref name, ref file, recreate }
+            if name == "dev" && file.is_none() && !recreate
+        ));
+    }
+
+    #[test]
+    fn open_with_file_and_recreate() {
+        let cli = parse(&["open", "dev", "--file", "dev.yaml", "--recreate"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Open { ref name, ref file, recreate }
+            if name == "dev" && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
+        ));
+    }
+
+    #[test]
+    fn open_missing_name() {
+        assert!(parse(&["open"]).is_err());
+    }
+
+    #[test]
+    fn attach_basic() {
+        let cli = parse(&["attach", "dev"]).unwrap();
+        assert!(matches!(cli.command, Command::Attach { ref name } if name == "dev"));
+    }
+
+    #[test]
+    fn attach_missing_name() {
+        assert!(parse(&["attach"]).is_err());
+    }
+
+    #[test]
+    fn recreate_basic() {
+        let cli = parse(&["recreate", "dev"]).unwrap();
+        assert!(matches!(cli.command, Command::Recreate { ref name } if name == "dev"));
+    }
+
+    #[test]
+    fn close_basic() {
+        let cli = parse(&["close", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Close { ref name, kill } if name == "dev" && !kill
+        ));
+    }
+
+    #[test]
+    fn close_with_kill() {
+        let cli = parse(&["close", "dev", "--kill"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Close { ref name, kill } if name == "dev" && kill
+        ));
+    }
+
+    #[test]
+    fn save_basic() {
+        let cli = parse(&["save", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Save { ref name, ref file } if name == "dev" && file.is_none()
+        ));
+    }
+
+    #[test]
+    fn save_with_file() {
+        let cli = parse(&["save", "dev", "--file", "out.yaml"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Save { ref name, ref file }
+            if name == "dev" && file.as_deref() == Some(std::path::Path::new("out.yaml"))
+        ));
+    }
+
+    // ── List commands ───────────────────────────────────────────
+
+    #[test]
+    fn list_workspaces() {
+        let cli = parse(&["list", "workspaces"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::List { what: ListCommand::Workspaces }
+        ));
+    }
+
+    #[test]
+    fn list_instances() {
+        let cli = parse(&["list", "instances"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::List { what: ListCommand::Instances }
+        ));
+    }
+
+    #[test]
+    fn list_panes() {
+        let cli = parse(&["list", "panes", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::List { what: ListCommand::Panes { ref workspace } } if workspace == "dev"
+        ));
+    }
+
+    #[test]
+    fn list_panes_missing_workspace() {
+        assert!(parse(&["list", "panes"]).is_err());
+    }
+
+    #[test]
+    fn list_sessions() {
+        let cli = parse(&["list", "sessions", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::List { what: ListCommand::Sessions { ref workspace } } if workspace == "dev"
+        ));
+    }
+
+    #[test]
+    fn list_sessions_missing_workspace() {
+        assert!(parse(&["list", "sessions"]).is_err());
+    }
+
+    #[test]
+    fn list_missing_subcommand() {
+        assert!(parse(&["list"]).is_err());
+    }
+
+    // ── Pane / session commands ─────────────────────────────────
+
+    #[test]
+    fn focus_basic() {
+        let cli = parse(&["focus", "dev/server"]).unwrap();
+        assert!(matches!(cli.command, Command::Focus { ref target } if target == "dev/server"));
+    }
+
+    #[test]
+    fn focus_missing_target() {
+        assert!(parse(&["focus"]).is_err());
+    }
+
+    #[test]
+    fn rename_basic() {
+        let cli = parse(&["rename", "dev/server", "api-server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Rename { ref target, ref new_name }
+            if target == "dev/server" && new_name == "api-server"
+        ));
+    }
+
+    #[test]
+    fn rename_missing_new_name() {
+        assert!(parse(&["rename", "dev/server"]).is_err());
+    }
+
+    #[test]
+    fn action_basic() {
+        let cli = parse(&["action", "dev/server", "split-right"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Action { ref target, ref action_name, ref args }
+            if target == "dev/server" && action_name == "split-right" && args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn action_with_args() {
+        let cli = parse(&["action", "dev/server", "resize-pane-grow-right", "cells=5"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Action { ref target, ref action_name, ref args }
+            if target == "dev/server"
+                && action_name == "resize-pane-grow-right"
+                && args == &["cells=5"]
+        ));
+    }
+
+    #[test]
+    fn action_missing_action_name() {
+        assert!(parse(&["action", "dev/server"]).is_err());
+    }
+
+    // ── Input commands ──────────────────────────────────────────
+
+    #[test]
+    fn send_basic() {
+        let cli = parse(&["send", "dev/server", "echo hello"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Send { ref target, ref text, no_newline }
+            if target == "dev/server" && text == "echo hello" && !no_newline
+        ));
+    }
+
+    #[test]
+    fn send_no_newline() {
+        let cli = parse(&["send", "dev/server", "data", "--no-newline"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Send { ref target, ref text, no_newline }
+            if target == "dev/server" && text == "data" && no_newline
+        ));
+    }
+
+    #[test]
+    fn send_missing_text() {
+        assert!(parse(&["send", "dev/server"]).is_err());
+    }
+
+    #[test]
+    fn keys_basic() {
+        let cli = parse(&["keys", "dev/server", "Enter"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Keys { ref target, ref key_specs }
+            if target == "dev/server" && key_specs == &["Enter"]
+        ));
+    }
+
+    #[test]
+    fn keys_multiple() {
+        let cli = parse(&["keys", "dev/server", "Ctrl+C", "Enter", "Up"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Keys { ref target, ref key_specs }
+            if target == "dev/server" && key_specs == &["Ctrl+C", "Enter", "Up"]
+        ));
+    }
+
+    #[test]
+    fn keys_missing_spec() {
+        assert!(parse(&["keys", "dev/server"]).is_err());
+    }
+
+    // ── Inspection commands ─────────────────────────────────────
+
+    #[test]
+    fn capture_basic() {
+        let cli = parse(&["capture", "dev/server"]).unwrap();
+        assert!(matches!(cli.command, Command::Capture { ref target } if target == "dev/server"));
+    }
+
+    #[test]
+    fn capture_missing_target() {
+        assert!(parse(&["capture"]).is_err());
+    }
+
+    #[test]
+    fn scrollback_basic() {
+        let cli = parse(&["scrollback", "dev/server", "--tail", "100"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Scrollback { ref target, tail }
+            if target == "dev/server" && tail == 100
+        ));
+    }
+
+    #[test]
+    fn scrollback_missing_tail() {
+        assert!(parse(&["scrollback", "dev/server"]).is_err());
+    }
+
+    #[test]
+    fn scrollback_invalid_tail() {
+        assert!(parse(&["scrollback", "dev/server", "--tail", "abc"]).is_err());
+    }
+
+    #[test]
+    fn follow_basic() {
+        let cli = parse(&["follow", "dev/server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Follow { ref target, raw }
+            if target == "dev/server" && !raw
+        ));
+    }
+
+    #[test]
+    fn follow_raw() {
+        let cli = parse(&["follow", "dev/server", "--raw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Follow { ref target, raw }
+            if target == "dev/server" && raw
+        ));
+    }
+
+    #[test]
+    fn inspect_basic() {
+        let cli = parse(&["inspect", "dev/server"]).unwrap();
+        assert!(matches!(cli.command, Command::Inspect { ref target } if target == "dev/server"));
+    }
+
+    // ── Host management commands ────────────────────────────────
+
+    #[test]
+    fn host_status() {
+        let cli = parse(&["host", "status"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Host { action: HostCommand::Status }
+        ));
+    }
+
+    #[test]
+    fn host_stop() {
+        let cli = parse(&["host", "stop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Host { action: HostCommand::Stop }
+        ));
+    }
+
+    #[test]
+    fn host_missing_subcommand() {
+        assert!(parse(&["host"]).is_err());
+    }
+
+    // ── Global flags ────────────────────────────────────────────
+
+    #[test]
+    fn json_flag() {
+        let cli = parse(&["--json", "list", "workspaces"]).unwrap();
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn json_flag_after_command() {
+        let cli = parse(&["list", "workspaces", "--json"]).unwrap();
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn verbose_flag() {
+        let cli = parse(&["--verbose", "list", "instances"]).unwrap();
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn id_flag() {
+        let cli = parse(&[
+            "--id", "550e8400-e29b-41d4-a716-446655440000",
+            "capture", "dev/server",
+        ]).unwrap();
+        assert_eq!(cli.id.as_deref(), Some("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn id_flag_with_inspect() {
+        let cli = parse(&[
+            "inspect", "dev/server",
+            "--id", "abc-123",
+        ]).unwrap();
+        assert_eq!(cli.id.as_deref(), Some("abc-123"));
+    }
+
+    #[test]
+    fn combined_global_flags() {
+        let cli = parse(&[
+            "--json", "--verbose",
+            "list", "panes", "dev",
+        ]).unwrap();
+        assert!(cli.json);
+        assert!(cli.verbose);
+    }
+
+    // ── Version and help ────────────────────────────────────────
+
+    #[test]
+    fn version_flag_produces_output() {
+        let err = parse(&["--version"]).unwrap_err();
+        assert!(err.contains("wtd"), "expected version output, got: {err}");
+    }
+
+    #[test]
+    fn help_flag_produces_output() {
+        let err = parse(&["--help"]).unwrap_err();
+        assert!(err.contains("Usage"), "expected help output, got: {err}");
+    }
+
+    #[test]
+    fn subcommand_help() {
+        let err = parse(&["open", "--help"]).unwrap_err();
+        assert!(err.contains("Usage"), "expected help output, got: {err}");
+    }
+
+    #[test]
+    fn list_help() {
+        let err = parse(&["list", "--help"]).unwrap_err();
+        assert!(err.contains("workspaces"), "expected list subcommands in help, got: {err}");
+    }
+
+    // ── Error messages ──────────────────────────────────────────
+
+    #[test]
+    fn unknown_command_produces_error() {
+        let err = parse(&["frobnicate"]).unwrap_err();
+        assert!(
+            err.contains("unrecognized") || err.contains("invalid"),
+            "expected helpful error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_command_produces_error() {
+        let err = parse(&[]).unwrap_err();
+        assert!(
+            err.contains("Usage") || err.contains("subcommand"),
+            "expected usage hint, got: {err}"
+        );
+    }
+
+    // ── Shell completions ───────────────────────────────────────
+
+    #[test]
+    fn completions_parse() {
+        let cli = parse(&["completions", "bash"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Completions { shell: Shell::Bash }
+        ));
+    }
+
+    #[test]
+    fn completions_powershell() {
+        let cli = parse(&["completions", "powershell"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Completions { shell: Shell::PowerShell }
+        ));
+    }
+
+    // ── Target path formats ─────────────────────────────────────
+
+    #[test]
+    fn single_segment_target() {
+        let cli = parse(&["capture", "server"]).unwrap();
+        assert!(matches!(cli.command, Command::Capture { ref target } if target == "server"));
+    }
+
+    #[test]
+    fn two_segment_target() {
+        let cli = parse(&["capture", "dev/server"]).unwrap();
+        assert!(matches!(cli.command, Command::Capture { ref target } if target == "dev/server"));
+    }
+
+    #[test]
+    fn three_segment_target() {
+        let cli = parse(&["capture", "dev/backend/server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Capture { ref target } if target == "dev/backend/server"
+        ));
+    }
+
+    #[test]
+    fn four_segment_target() {
+        let cli = parse(&["capture", "dev/main/backend/server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Capture { ref target } if target == "dev/main/backend/server"
+        ));
+    }
+}
