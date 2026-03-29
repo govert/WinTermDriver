@@ -1251,3 +1251,39 @@ Background output broadcaster lives in `wtd-host::output_broadcaster`. Drains Co
 - Base64 encoding is hand-rolled (same pattern as decode in request_handler)
 
 **Test:** `crates/wtd-host/tests/test_output_broadcaster.rs` — 2 tests: UI client receives SessionOutput containing echoed marker, SessionOutput data is valid base64. Tests use explicit `file:` path in OpenWorkspace to avoid CWD race conditions between parallel tests.
+
+---
+
+## wintermdriver-gp6.3: AttachWorkspaceResult populated with full workspace state
+
+`AttachWorkspaceResult.state` now contains a serialized `AttachSnapshot` instead of an empty JSON object.
+
+**Serializable types added:**
+- `SessionState` — `#[serde(tag = "type", rename_all = "camelCase")]`; `Exited.exit_code` → `exitCode`
+- `WorkspaceState` — `#[serde(rename_all = "camelCase")]`
+- `PaneState` — `#[serde(tag = "type", rename_all = "camelCase")]`; `Attached.session_id` → `sessionId`
+- `AttachSnapshot` — `#[serde(rename_all = "camelCase")]`
+- `TabSnapshot` — `#[serde(rename_all = "camelCase")]`; now includes `layout: PaneNode` field
+
+**New fields in AttachSnapshot:**
+- `session_titles: HashMap<SessionId, String>` — current terminal title (OSC 2) per session
+
+**New fields in TabSnapshot:**
+- `layout: PaneNode` — full layout tree (same schema as workspace YAML definition)
+
+**JSON wire format example:**
+```json
+{
+  "id": 1,
+  "name": "dev",
+  "state": "active",
+  "tabs": [{ "id": 1, "name": "main", "panes": [1, 2], "layout": { "type": "split", ... } }],
+  "paneStates": { "1": { "type": "attached", "sessionId": 1 } },
+  "sessionStates": { "1": { "type": "running" } },
+  "sessionTitles": { "1": "" }
+}
+```
+
+**Serde note:** `rename_all` on tagged enums only renames variant discriminants, not fields within variants. Use explicit `#[serde(rename = "camelCase")]` on multi-word fields inside enum variants (e.g., `session_id`, `exit_code`).
+
+**Test:** `crates/wtd-host/tests/test_attach_snapshot.rs` — 3 tests: multi-pane attach with full state verification, single-pane attach, nonexistent workspace error.
