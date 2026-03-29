@@ -955,3 +955,47 @@ Clipboard operations live in `wtd_ui::clipboard`.
 - Win32 clipboard tests must run sequentially (single test function) — clipboard is a global resource and concurrent access from parallel test threads causes heap corruption
 - `copy_to_clipboard` uses `HWND(null)` for clipboard association (works from any thread context)
 - `prepare_paste` takes `bracketed_paste_active: bool` — caller checks `ScreenBuffer::bracketed_paste()` and passes the flag
+
+---
+
+## wintermdriver-psx.4: UI IPC client and host bridge
+
+UI IPC connection lives in `wtd_ui::host_client` (async) and `wtd_ui::host_bridge` (sync bridge).
+
+**Key types:**
+- `UiIpcClient` — async IPC client that handshakes with `clientType: "ui"`; has `connect_and_handshake()`, `connect_to(pipe)`, `request()`, and `split()` → `(UiIpcReader, UiIpcWriter)`
+- `UiIpcReader` / `UiIpcWriter` — split halves for concurrent read/write after attach
+- `HostBridge` — sync bridge spawning a background thread with its own tokio `current_thread` runtime
+- `HostEvent` — enum: `Connected { state }`, `SessionOutput { session_id, data: Vec<u8> }`, `SessionStateChanged`, `TitleChanged`, `LayoutChanged`, `WorkspaceStateChanged`, `Error`, `Disconnected`
+- `HostCommand` — enum: `SessionInput { session_id, data: Vec<u8> }`, `PaneResize { pane_id, cols, rows }`, `InvokeAction { action, target_pane_id, args }`, `Disconnect`
+
+**Public API:**
+- `HostBridge::connect(workspace_name)` — connect to host (auto-start), handshake, attach
+- `HostBridge::connect_to(pipe_name, workspace_name)` — connect to specific pipe (for tests)
+- `HostBridge::try_recv() -> Option<HostEvent>` — non-blocking poll for host events
+- `HostBridge::send(cmd)`, `send_input()`, `send_resize()`, `send_action()` — push commands
+- `UiIpcClient::connect_to(pipe_name)` — async direct client (for tests bypassing bridge)
+
+**Base64 encoding:** Built-in encode/decode (no external dependency). `SessionOutput.data` arrives base64-encoded; bridge decodes to `Vec<u8>`. `SessionInput.data` sent as base64-encoded bytes.
+
+**Architecture:**
+- Background thread runs `current_thread` tokio runtime
+- `std::sync::mpsc` channels between UI thread and IPC thread
+- Separate OS thread relays `std::sync::mpsc::Receiver<HostCommand>` → `tokio::sync::mpsc` (avoids blocking the async runtime)
+- After attach, pipe is split; reader task pushes `HostEvent`s, writer drains command channel
+
+**main.rs integration:**
+- `--workspace <name>` or `WTD_WORKSPACE` env var triggers IPC mode; otherwise demo mode
+- Event loop drains `HostEvent`s each frame: feeds SessionOutput to ScreenBuffers, updates status bar on state changes
+- Keyboard input forwarded as `SessionInput` via bridge
+- Pane resizes sent as `PaneResize` on window resize
+- Status bar and tab strip integrated into paint pipeline
+
+**Dependencies added to wtd-ui:** `serde_json` (runtime), `wtd-host` (dev-only, for tests)
+
+**Design decisions:**
+- Bridge tests need `#[tokio::test(flavor = "multi_thread")]` because `wait_for_event` polling uses `std::thread::sleep` which blocks a current-thread runtime
+- `UiIpcWriter`/`UiIpcReader` are separate types (not reusing CLI's `IpcClient`) because UI needs split I/O for concurrent push receive + command send
+- No `base64` crate dependency; hand-rolled encode/decode for the small amount of base64 needed
+- `PaneSession` mapping (pane → session) is maintained in main.rs; populated from attach state (full population deferred to host handler bead)
+- Layout/tab rebuilding from `HostEvent::LayoutChanged` is stubbed (logs notification); full rebuild deferred to downstream beads
