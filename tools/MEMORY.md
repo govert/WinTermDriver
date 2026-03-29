@@ -1341,3 +1341,19 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 - UI client: raw named pipe with `ClientType::Ui` handshake, split via `tokio::io::split` for push message reading
 - Unique pipe names via `AtomicU64` counter (base 21000) to avoid collisions with other gate tests
 - `#[tokio::test(flavor = "multi_thread")]` required for broadcaster push delivery
+
+---
+
+## wintermdriver-71i.3: Screenshot generation tool
+
+`crates/screenshot-gen/` — standalone tool crate for generating documentation screenshots. Workspace member with `publish = false`.
+
+**Approach:** Creates a real Win32 window, renders UI components with mock VT content, captures pixels via D2D GDI interop (`ID2D1GdiInteropRenderTarget::GetDC`), saves as PNG using the `image` crate.
+
+**Key requirement:** `RendererConfig { software_rendering: true }` must be set for GDI-compatible capture. This sets `D2D1_RENDER_TARGET_TYPE_SOFTWARE` + `D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE` + `DXGI_FORMAT_B8G8R8A8_UNORM` pixel format on the HWND render target. Without this, `BitBlt` from `GetDC(hwnd)` captures a black image because D2D hardware rendering bypasses the GDI surface.
+
+**Capture flow:** BeginDraw → paint scene → cast RT to `ID2D1GdiInteropRenderTarget` → `GetDC(D2D1_DC_INITIALIZE_MODE_COPY)` → `BitBlt` + `GetDIBits` → `ReleaseDC` → `EndDraw` → save PNG.
+
+**Screenshots in `docs/images/`:** workspace-overview.png, command-palette.png, prefix-chord.png, failed-pane.png
+
+**Workspace dep added:** `image = "0.25"` (PNG encoding, in screenshot-gen only)
