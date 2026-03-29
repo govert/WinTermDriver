@@ -257,3 +257,45 @@ Named pipe server lives in `wtd-host::ipc_server`. Security helpers in `wtd-host
 - Client SID verified via `GetNamedPipeClientProcessId` + `OpenProcessToken` + `EqualSid`
 - `PROTOCOL_VERSION = 1`, `HOST_VERSION = env!("CARGO_PKG_VERSION")`
 - Shutdown via `watch::Receiver<bool>` — accept loop exits, existing connections run until client disconnects
+
+---
+
+## wintermdriver-8w8.5: Action system (registry + dispatcher)
+
+Action system lives in `wtd-host::action`. Registry of named actions and dispatcher that validates args and executes them.
+
+**Key types:**
+- `ActionRegistry` — maps action names (kebab-case) to `ActionDef`; `v1_registry()` pre-populates all 36 v1 actions
+- `ActionDef` — `name`, `target_type: TargetType`, `args: &[ArgDef]`, `description`
+- `TargetType` — `Global | Workspace | Window | Tab | Pane`
+- `ArgDef` — `name`, `arg_type: ArgType`, `required: bool`
+- `ArgType` — `String | Int | Bool`
+- `ActionDispatcher` — validates args via registry, resolves target pane, dispatches to `WorkspaceInstance`
+- `ActionResult` — `Ok | PaneCreated { pane_id } | PaneClosed { pane_id, close_result }`
+- `ActionError` — `UnknownAction | InvalidArgument | Workspace | Layout | PaneNotFound | NoActiveTab | NotImplemented`
+
+**Public API:**
+- `v1_registry() -> ActionRegistry` — all §20.3 actions registered
+- `ActionRegistry::get(name)`, `validate_args(name, &Value)`, `action_names()`, `len()`
+- `ActionDispatcher::new(registry, viewport)` — create with viewport rect for layout ops
+- `ActionDispatcher::dispatch(workspace, action_name, args, target_pane_id) -> Result<ActionResult>`
+
+**Currently dispatched actions:** split-right, split-down, close-pane, focus-next/prev-pane, focus-pane-{up,down,left,right}, focus-pane (by name), zoom-pane, resize-pane-{grow,shrink}-{right,down}, rename-pane, restart-session
+
+**Not yet dispatched (return NotImplemented):** Workspace lifecycle (open/close/recreate/save-workspace), window actions, tab management (new/close/next/prev/goto/rename/move-tab), clipboard (copy/paste), UI actions (toggle-command-palette, toggle-fullscreen, enter-scrollback-mode). These need host-level or UI-level context beyond a single `WorkspaceInstance`.
+
+**WorkspaceInstance additions:**
+- `tabs_mut()` — mutable access to tabs vec
+- `stop_pane_session(pane_id)` — stop and remove session for a pane
+- `remove_pane(pane_id)` — remove pane record
+- `find_pane_by_name(name) -> Option<PaneId>` — lookup across all panes
+- `rename_pane(pane_id, new_name)` — update pane name
+- `restart_pane_session(pane_id)` — stop and restart session
+- `new_for_test(name)` — (cfg(test)) creates minimal instance with one tab/pane for unit tests
+
+**Design decisions:**
+- Split actions only modify the layout tree (no session created for new pane — session creation requires profile resolution, which is a host-level concern)
+- Close-pane stops the session, removes from layout, then removes pane record
+- Resolve target pane: explicit `target_pane_id` if given, otherwise focused pane of first (active) tab
+- Pane existence checked in both pane records AND layout trees (split-created panes only exist in layout)
+- Actions that require host-level context (workspace lifecycle, tab management, clipboard, UI) return `NotImplemented` for the host request handler to dispatch at a higher level

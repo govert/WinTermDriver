@@ -257,6 +257,10 @@ impl WorkspaceInstance {
         &self.tabs
     }
 
+    pub fn tabs_mut(&mut self) -> &mut Vec<TabInstance> {
+        &mut self.tabs
+    }
+
     pub fn session(&self, id: &SessionId) -> Option<&Session> {
         self.sessions.get(id)
     }
@@ -293,6 +297,108 @@ impl WorkspaceInstance {
             .values()
             .filter(|r| matches!(r.state, PaneState::Detached { .. }))
             .count()
+    }
+
+    // ── Action-support methods ────────────────────────────────────────────────
+
+    /// Stop the session attached to a pane (if any).
+    pub fn stop_pane_session(&mut self, pane_id: &PaneId) {
+        if let Some(rec) = self.panes.get(pane_id) {
+            if let PaneState::Attached { session_id } = &rec.state {
+                let sid = session_id.clone();
+                if let Some(session) = self.sessions.get_mut(&sid) {
+                    session.stop();
+                }
+                self.sessions.remove(&sid);
+            }
+        }
+    }
+
+    /// Remove pane record (after layout removal).
+    pub fn remove_pane(&mut self, pane_id: &PaneId) {
+        self.panes.remove(pane_id);
+    }
+
+    /// Find a pane by name (across all tabs).
+    pub fn find_pane_by_name(&self, name: &str) -> Option<PaneId> {
+        for (id, rec) in &self.panes {
+            if rec.name == name {
+                return Some(id.clone());
+            }
+        }
+        None
+    }
+
+    /// Rename a pane.
+    pub fn rename_pane(&mut self, pane_id: &PaneId, new_name: String) {
+        if let Some(rec) = self.panes.get_mut(pane_id) {
+            rec.name = new_name;
+        }
+    }
+
+    /// Restart the session in a pane.
+    pub fn restart_pane_session(&mut self, pane_id: &PaneId) -> Result<(), WorkspaceError> {
+        let session_id = match self.panes.get(pane_id) {
+            Some(rec) => match &rec.state {
+                PaneState::Attached { session_id } => session_id.clone(),
+                PaneState::Detached { .. } => {
+                    return Err(WorkspaceError::InvalidState(WorkspaceState::Active));
+                }
+            },
+            None => return Err(WorkspaceError::InvalidState(WorkspaceState::Active)),
+        };
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            session.stop();
+            session.restart().map_err(|e| {
+                WorkspaceError::JobObject(format!("restart failed: {}", e))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Create a minimal instance for testing (no real sessions or job objects).
+    #[cfg(test)]
+    pub fn new_for_test(name: &str) -> Self {
+        use wtd_core::layout::LayoutTree;
+
+        let mut inst = Self {
+            id: WorkspaceInstanceId(1),
+            name: name.to_string(),
+            state: WorkspaceState::Active,
+            tabs: Vec::new(),
+            sessions: HashMap::new(),
+            panes: HashMap::new(),
+            #[cfg(windows)]
+            job: None,
+            next_session_id: 1,
+            next_tab_id: 1,
+        };
+
+        let tab_id = TabId(inst.next_tab_id);
+        inst.next_tab_id += 1;
+
+        let layout = LayoutTree::new();
+        let pane_id = layout.focus();
+
+        inst.panes.insert(
+            pane_id,
+            PaneRecord {
+                name: "default".to_string(),
+                state: PaneState::Detached {
+                    error: "test mode".to_string(),
+                },
+                original_def: None,
+            },
+        );
+
+        inst.tabs.push(TabInstance {
+            id: tab_id,
+            name: "main".to_string(),
+            layout,
+        });
+
+        inst.state = WorkspaceState::Active;
+        inst
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
