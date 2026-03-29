@@ -1,12 +1,15 @@
-//! Win32 window creation and message pump for the terminal UI.
+//! Win32 window creation, message pump, and event handling for the terminal UI.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
+
+// ── Paint / resize signals (atomics) ─────────────────────────────────────────
 
 /// Signals that a `WM_PAINT` was received and the window needs repainting.
 static NEEDS_PAINT: AtomicBool = AtomicBool::new(true);
@@ -37,6 +40,46 @@ pub fn take_resize() -> Option<(u32, u32)> {
 pub fn request_repaint(hwnd: HWND) {
     unsafe {
         let _ = InvalidateRect(hwnd, None, false);
+    }
+}
+
+// ── Mouse events ─────────────────────────────────────────────────────────────
+
+/// A mouse event captured from the window proc.
+#[derive(Debug, Clone)]
+pub struct MouseEvent {
+    pub kind: MouseEventKind,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// Kind of mouse event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseEventKind {
+    Down,
+    Up,
+    Move,
+}
+
+static MOUSE_EVENTS: OnceLock<Mutex<Vec<MouseEvent>>> = OnceLock::new();
+
+fn mouse_queue() -> &'static Mutex<Vec<MouseEvent>> {
+    MOUSE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Drain all pending mouse events from the queue.
+pub fn drain_mouse_events() -> Vec<MouseEvent> {
+    let mut queue = mouse_queue().lock().unwrap();
+    std::mem::take(&mut *queue)
+}
+
+// ── Window management ────────────────────────────────────────────────────────
+
+/// Update the window title text.
+pub fn set_window_title(hwnd: HWND, title: &str) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let _ = SetWindowTextW(hwnd, PCWSTR(wide.as_ptr()));
     }
 }
 
@@ -108,6 +151,14 @@ pub fn pump_pending_messages() {
     }
 }
 
+// ── Window procedure ─────────────────────────────────────────────────────────
+
+fn extract_mouse_pos(lparam: LPARAM) -> (f32, f32) {
+    let x = (lparam.0 & 0xFFFF) as i16 as f32;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+    (x, y)
+}
+
 unsafe extern "system" fn wndproc(
     hwnd: HWND,
     msg: u32,
@@ -129,6 +180,33 @@ unsafe extern "system" fn wndproc(
             RESIZE_WIDTH.store(width, Ordering::Relaxed);
             RESIZE_HEIGHT.store(height, Ordering::Relaxed);
             RESIZED.store(true, Ordering::Relaxed);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::Down,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::Up,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::Move,
+                x,
+                y,
+            });
             LRESULT(0)
         }
         WM_DESTROY => {

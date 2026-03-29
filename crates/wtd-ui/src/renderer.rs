@@ -244,43 +244,77 @@ impl TerminalRenderer {
         (self.cell_width, self.cell_height)
     }
 
+    /// Access the underlying render target (for compositing with other
+    /// components such as the tab strip).
+    pub fn render_target(&self) -> &ID2D1RenderTarget {
+        &self.rt
+    }
+
+    /// Access the DirectWrite factory (for creating text formats in other
+    /// components such as the tab strip).
+    pub fn dw_factory(&self) -> &IDWriteFactory {
+        &self.dw_factory
+    }
+
     /// Resize the render target to match a new window size.
     pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         let size = D2D_SIZE_U { width, height };
         unsafe { self.hwnd_rt.Resize(&size) }
     }
 
-    /// Paint the contents of a [`ScreenBuffer`] to the window.
-    ///
-    /// This is the core rendering entry point. It clears the background,
-    /// draws per-cell backgrounds where non-default, draws text runs with
-    /// appropriate fonts/colors, and draws the cursor.
-    pub fn paint(&self, screen: &ScreenBuffer) -> Result<()> {
-        let rows = screen.rows();
-        let cols = screen.cols();
-
+    /// Begin a Direct2D draw session.
+    pub fn begin_draw(&self) {
         unsafe {
             self.rt.BeginDraw();
+        }
+    }
 
-            let bg = rgb_to_d2d(DEFAULT_BG.0, DEFAULT_BG.1, DEFAULT_BG.2);
+    /// Clear the render target to the default terminal background color.
+    pub fn clear_background(&self) {
+        let bg = rgb_to_d2d(DEFAULT_BG.0, DEFAULT_BG.1, DEFAULT_BG.2);
+        unsafe {
             self.rt.Clear(Some(&bg));
+        }
+    }
 
-            // Draw cell backgrounds + text row by row using run-based batching.
+    /// End the Direct2D draw session and present.
+    pub fn end_draw(&self) -> Result<()> {
+        unsafe { self.rt.EndDraw(None, None) }
+    }
+
+    /// Paint the terminal content at a vertical offset.
+    ///
+    /// Use this when compositing with other UI elements (e.g. a tab strip
+    /// above the terminal content). Pass `y_offset = 0.0` for no offset.
+    pub fn paint_screen(&self, screen: &ScreenBuffer, y_offset: f32) -> Result<()> {
+        let rows = screen.rows();
+        let cols = screen.cols();
+        unsafe {
             for row in 0..rows {
-                let y = row as f32 * self.cell_height;
+                let y = y_offset + row as f32 * self.cell_height;
                 self.paint_row_backgrounds(screen, row, cols, y)?;
                 self.paint_row_text(screen, row, cols, y)?;
             }
-
-            // Draw cursor
             let cursor = screen.cursor();
             if cursor.visible && cursor.row < rows && cursor.col < cols {
-                self.paint_cursor(cursor)?;
+                self.paint_cursor(cursor, y_offset)?;
             }
-
-            self.rt.EndDraw(None, None)?;
         }
         Ok(())
+    }
+
+    /// Paint the contents of a [`ScreenBuffer`] to the window.
+    ///
+    /// Convenience method that calls [`begin_draw`], [`clear_background`],
+    /// [`paint_screen`], and [`end_draw`] in sequence. For compositing with
+    /// other components, use those methods individually.
+    pub fn paint(&self, screen: &ScreenBuffer) -> Result<()> {
+        self.begin_draw();
+        self.clear_background();
+        let paint_result = self.paint_screen(screen, 0.0);
+        let end_result = self.end_draw();
+        paint_result?;
+        end_result
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -440,17 +474,17 @@ impl TerminalRenderer {
         Ok(())
     }
 
-    /// Paint the cursor as a filled rectangle.
-    unsafe fn paint_cursor(&self, cursor: &Cursor) -> Result<()> {
+    /// Paint the cursor as a filled rectangle at the given vertical offset.
+    unsafe fn paint_cursor(&self, cursor: &Cursor, y_offset: f32) -> Result<()> {
         let (r, g, b) = CURSOR_COLOR;
         let brush = self
             .rt
             .CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
         let rect = D2D_RECT_F {
             left: cursor.col as f32 * self.cell_width,
-            top: cursor.row as f32 * self.cell_height,
+            top: y_offset + cursor.row as f32 * self.cell_height,
             right: (cursor.col + 1) as f32 * self.cell_width,
-            bottom: (cursor.row + 1) as f32 * self.cell_height,
+            bottom: y_offset + (cursor.row + 1) as f32 * self.cell_height,
         };
         // Use 50% opacity for the cursor so text underneath is visible.
         brush.SetOpacity(0.5);

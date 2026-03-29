@@ -1,15 +1,16 @@
 //! `wtd-ui` — WinTermDriver UI process.
 //!
-//! Minimal rendering prototype: creates a Win32 window, feeds VT sequences
-//! into a ScreenBuffer, and renders the result using Direct2D + DirectWrite.
-//! Demonstrates colors, bold, italic, underline, inverse, and cursor rendering.
+//! Demonstrates the tab strip and terminal rendering pipeline: creates a Win32
+//! window with a tab strip at the top, feeds VT sequences into a ScreenBuffer,
+//! and renders everything using Direct2D + DirectWrite.
 
 use wtd_pty::ScreenBuffer;
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
-use wtd_ui::window;
+use wtd_ui::tab_strip::{TabAction, TabStrip};
+use wtd_ui::window::{self, MouseEventKind};
 
 fn main() {
-    eprintln!("wtd-ui: rendering prototype");
+    eprintln!("wtd-ui: tab strip + rendering prototype");
 
     if let Err(e) = run() {
         eprintln!("fatal: {e}");
@@ -25,12 +26,11 @@ fn run() -> anyhow::Result<()> {
     let mut screen = ScreenBuffer::new(cols, rows, 1000);
     feed_demo_content(&mut screen);
 
-    // Create a window sized for the terminal grid.
-    let config = RendererConfig::default();
-    // Estimate window size: we'll resize after we know cell dimensions.
-    let hwnd = window::create_terminal_window("WinTermDriver — Rendering Prototype", 1000, 600)?;
+    // Create window.
+    let hwnd = window::create_terminal_window("WinTermDriver", 1000, 600)?;
 
     // Create the renderer.
+    let config = RendererConfig::default();
     let mut renderer = TerminalRenderer::new(hwnd, &config)?;
 
     let (cell_w, cell_h) = renderer.cell_size();
@@ -39,22 +39,84 @@ fn run() -> anyhow::Result<()> {
         cell_w, cell_h, cols, rows
     );
 
-    // Initial paint.
-    renderer.paint(&screen)?;
+    // Create the tab strip with demo tabs.
+    let mut tab_strip = TabStrip::new(renderer.dw_factory())?;
+    tab_strip.add_tab("main".to_string());
+    tab_strip.add_tab("build".to_string());
+    tab_strip.add_tab("logs".to_string());
+    tab_strip.set_active(0);
 
-    // Message loop with repaint on WM_PAINT / WM_SIZE.
+    let mut window_width: f32 = 1000.0;
+    tab_strip.layout(window_width);
+
+    // Set initial window title.
+    let title = tab_strip.window_title("WinTermDriver");
+    window::set_window_title(hwnd, &title);
+
+    // Initial paint.
+    paint_all(&renderer, &tab_strip, &screen)?;
+
+    // Message loop with repaint on WM_PAINT / WM_SIZE / mouse events.
     loop {
         window::pump_pending_messages();
 
+        let mut needs_paint = false;
+
+        // Handle resize.
         if let Some((w, h)) = window::take_resize() {
             if w > 0 && h > 0 {
                 let _ = renderer.resize(w, h);
-                window::request_repaint(hwnd);
+                window_width = w as f32;
+                tab_strip.layout(window_width);
+                needs_paint = true;
             }
         }
 
+        // Process mouse events.
+        for event in window::drain_mouse_events() {
+            let action = match event.kind {
+                MouseEventKind::Down => tab_strip.on_mouse_down(event.x, event.y),
+                MouseEventKind::Up => tab_strip.on_mouse_up(event.x, event.y),
+                MouseEventKind::Move => tab_strip.on_mouse_move(event.x, event.y),
+            };
+
+            if let Some(action) = action {
+                match action {
+                    TabAction::WindowClose => {
+                        unsafe {
+                            let _ =
+                                windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+                        }
+                        return Ok(());
+                    }
+                    TabAction::Create => {
+                        let n = tab_strip.tab_count() + 1;
+                        tab_strip.add_tab(format!("tab-{n}"));
+                        tab_strip.set_active(tab_strip.tab_count() - 1);
+                        tab_strip.layout(window_width);
+                    }
+                    TabAction::Close(_) => {
+                        tab_strip.layout(window_width);
+                    }
+                    TabAction::Reorder { .. } => {
+                        tab_strip.layout(window_width);
+                    }
+                    TabAction::SwitchTo(_) => {}
+                }
+                let title = tab_strip.window_title("WinTermDriver");
+                window::set_window_title(hwnd, &title);
+            }
+
+            // Any mouse activity may change hover state, so repaint.
+            needs_paint = true;
+        }
+
         if window::take_needs_paint() {
-            renderer.paint(&screen)?;
+            needs_paint = true;
+        }
+
+        if needs_paint {
+            paint_all(&renderer, &tab_strip, &screen)?;
         }
 
         // Sleep briefly to avoid busy-looping (prototype only — a real UI
@@ -67,6 +129,22 @@ fn run() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn paint_all(
+    renderer: &TerminalRenderer,
+    tab_strip: &TabStrip,
+    screen: &ScreenBuffer,
+) -> anyhow::Result<()> {
+    renderer.begin_draw();
+    renderer.clear_background();
+    let tab_result = tab_strip.paint(renderer.render_target());
+    let screen_result = renderer.paint_screen(screen, tab_strip.height());
+    let end_result = renderer.end_draw();
+    tab_result.map_err(|e| anyhow::anyhow!("{e}"))?;
+    screen_result.map_err(|e| anyhow::anyhow!("{e}"))?;
+    end_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
