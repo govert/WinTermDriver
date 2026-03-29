@@ -1034,3 +1034,27 @@ UI IPC connection lives in `wtd_ui::host_client` (async) and `wtd_ui::host_bridg
 - `D2D_RECT_F` is the correct type in windows-rs 0.58 (not `D2D1_RECT_F`)
 - Prefix state machine not yet integrated — Ctrl+Shift+Space checked directly in main loop
 - Target selection for arg-requiring actions not yet implemented (actions dispatch with null args)
+
+---
+
+## wintermdriver-jxt.1: Gate — Host output renders in pane viewport
+
+Integration test in `crates/wtd-ui/tests/gate_host_to_pane.rs` verifies the full UI rendering pipeline: IPC connect → SessionOutput push → ScreenBuffer → Direct2D pane viewport.
+
+**Test structure:** `GateHandler` implements `RequestHandler` handling OpenWorkspace, Send, and Capture. Test connects as UI client via `UiIpcClient::connect_to()`, uses split reader/writer.
+
+**Pipeline verified:**
+1. UI connects to host IPC as `ClientType::Ui` (via `UiIpcClient`)
+2. Opens workspace with real ConPTY session, polls Capture until `GATE_MARKER` appears
+3. `server.broadcast_to_ui()` pushes `SessionOutput` with base64-encoded VT bytes
+4. UI reader receives push notification, decodes base64, feeds to `ScreenBuffer::advance()`
+5. Verifies `visible_text()` contains expected content
+6. Creates test window + `TerminalRenderer`, calls `paint_pane_viewport()` with the populated ScreenBuffer
+7. Also renders ANSI-colored content (green, bold red) to verify styled rendering
+
+**Test patterns:**
+- `UiIpcClient::connect_to(pipe)` then `.split()` for concurrent reader/writer (no HostBridge needed)
+- Writer sends requests, reader reads responses in sequence (no interleaved pushes during request/response)
+- `server.broadcast_to_ui()` only called after all request/response interactions complete
+- Base64 encode/decode implemented locally in test (same algorithm as `host_bridge.rs`)
+- Hidden test window via Win32 `CreateWindowExW` + `WS_OVERLAPPEDWINDOW` (not shown)
