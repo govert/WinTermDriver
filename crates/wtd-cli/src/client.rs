@@ -2,10 +2,15 @@
 //!
 //! Handles pipe connection with retry, handshake, and frame I/O.
 
+use std::time::Duration;
+
 use thiserror::Error;
 use wtd_ipc::connect::ConnectError;
 use wtd_ipc::message::{ClientType, Handshake, HandshakeAck, MessagePayload};
 use wtd_ipc::{connect, Envelope, IpcError, PROTOCOL_VERSION};
+
+/// Default request timeout (30 seconds).
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Errors from client operations.
 #[derive(Debug, Error)]
@@ -18,6 +23,9 @@ pub enum ClientError {
 
     #[error("handshake failed: {0}")]
     Handshake(String),
+
+    #[error("request timed out after {0:.1}s — host may be unresponsive")]
+    RequestTimeout(f64),
 }
 
 // ── Windows implementation ───────────────────────────────────────────
@@ -25,13 +33,13 @@ pub enum ClientError {
 #[cfg(windows)]
 mod win {
     use super::*;
-    use std::time::Duration;
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
     use wtd_ipc::framing::{read_frame_async, write_frame_async};
 
     /// IPC client connected to `wtd-host` via named pipe.
     pub struct IpcClient {
         pipe: NamedPipeClient,
+        timeout: Duration,
     }
 
     impl IpcClient {
@@ -47,9 +55,17 @@ mod win {
         /// Useful for tests that run their own pipe server.
         pub async fn connect_to(pipe_name: &str) -> Result<Self, ClientError> {
             let pipe = connect_to_pipe(pipe_name).await?;
-            let mut client = Self { pipe };
+            let mut client = Self {
+                pipe,
+                timeout: DEFAULT_TIMEOUT,
+            };
             client.do_handshake().await?;
             Ok(client)
+        }
+
+        /// Set the request timeout duration.
+        pub fn set_timeout(&mut self, timeout: Duration) {
+            self.timeout = timeout;
         }
 
         async fn do_handshake(&mut self) -> Result<(), ClientError> {
@@ -62,7 +78,7 @@ mod win {
                 },
             );
             write_frame_async(&mut self.pipe, &hs).await?;
-            let ack = read_frame_async(&mut self.pipe).await?;
+            let ack = self.read_frame_with_timeout().await?;
             if ack.msg_type != HandshakeAck::TYPE_NAME {
                 return Err(ClientError::Handshake(format!(
                     "expected HandshakeAck, got {}",
@@ -72,11 +88,10 @@ mod win {
             Ok(())
         }
 
-        /// Send a request and wait for the response.
+        /// Send a request and wait for the response, subject to the configured timeout.
         pub async fn request(&mut self, envelope: &Envelope) -> Result<Envelope, ClientError> {
             write_frame_async(&mut self.pipe, envelope).await?;
-            let response = read_frame_async(&mut self.pipe).await?;
-            Ok(response)
+            self.read_frame_with_timeout().await
         }
 
         /// Read one frame from the server (for streaming responses like Follow).
@@ -87,6 +102,13 @@ mod win {
         /// Write one frame to the server.
         pub async fn write_frame(&mut self, envelope: &Envelope) -> Result<(), ClientError> {
             Ok(write_frame_async(&mut self.pipe, envelope).await?)
+        }
+
+        async fn read_frame_with_timeout(&mut self) -> Result<Envelope, ClientError> {
+            match tokio::time::timeout(self.timeout, read_frame_async(&mut self.pipe)).await {
+                Ok(result) => Ok(result?),
+                Err(_) => Err(ClientError::RequestTimeout(self.timeout.as_secs_f64())),
+            }
         }
     }
 
@@ -131,6 +153,8 @@ impl IpcClient {
             "named pipes not supported on this platform".into(),
         )))
     }
+
+    pub fn set_timeout(&mut self, _timeout: Duration) {}
 
     pub async fn request(&mut self, _: &Envelope) -> Result<Envelope, ClientError> {
         unreachable!()

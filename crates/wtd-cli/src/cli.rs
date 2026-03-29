@@ -26,6 +26,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub id: Option<String>,
 
+    /// Request timeout in seconds (default: 30).
+    #[arg(long, global = true)]
+    pub timeout: Option<f64>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -594,6 +598,24 @@ mod tests {
             "--id", "abc-123",
         ]).unwrap();
         assert_eq!(cli.id.as_deref(), Some("abc-123"));
+    }
+
+    #[test]
+    fn timeout_flag() {
+        let cli = parse(&["--timeout", "10", "capture", "dev/server"]).unwrap();
+        assert_eq!(cli.timeout, Some(10.0));
+    }
+
+    #[test]
+    fn timeout_flag_after_command() {
+        let cli = parse(&["list", "workspaces", "--timeout", "5.5"]).unwrap();
+        assert_eq!(cli.timeout, Some(5.5));
+    }
+
+    #[test]
+    fn timeout_flag_absent() {
+        let cli = parse(&["capture", "dev/server"]).unwrap();
+        assert!(cli.timeout.is_none());
     }
 
     #[test]

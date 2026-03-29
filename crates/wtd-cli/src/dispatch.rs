@@ -4,9 +4,10 @@
 //! and the response is formatted for output.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::cli::{Cli, Command, HostCommand, ListCommand};
-use crate::client::{ClientError, IpcClient};
+use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
 use crate::output::{self, OutputResult};
 use wtd_ipc::connect;
@@ -23,13 +24,22 @@ fn next_id() -> String {
     format!("cli-{}", MSG_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
+fn resolve_timeout(cli_timeout: Option<f64>) -> Duration {
+    match cli_timeout {
+        Some(secs) if secs > 0.0 => Duration::from_secs_f64(secs),
+        _ => DEFAULT_TIMEOUT,
+    }
+}
+
 /// Run the CLI command: connect to host, send request, format response.
 pub async fn run(cli: Cli) -> i32 {
+    let timeout = resolve_timeout(cli.timeout);
+
     match &cli.command {
         Command::Completions { .. } => unreachable!(),
         Command::Host { action } => return run_host_command(action, cli.json),
         Command::Follow { target, raw } => {
-            return run_follow(target, *raw, cli.json).await;
+            return run_follow(target, *raw, cli.json, timeout).await;
         }
         _ => {}
     }
@@ -41,6 +51,7 @@ pub async fn run(cli: Cli) -> i32 {
             return client_error_exit_code(&e);
         }
     };
+    client.set_timeout(timeout);
 
     let envelope = match build_request(&cli.command) {
         Some(env) => env,
@@ -54,7 +65,7 @@ pub async fn run(cli: Cli) -> i32 {
         Ok(r) => r,
         Err(e) => {
             eprintln!("wtd: {e}");
-            return exit_code::CONNECTION_ERROR;
+            return client_error_exit_code(&e);
         }
     };
 
@@ -204,7 +215,7 @@ fn build_request(command: &Command) -> Option<Envelope> {
 
 // ── Follow (streaming) ──────────────────────────────────────────────
 
-async fn run_follow(target: &str, raw: bool, json_mode: bool) -> i32 {
+async fn run_follow(target: &str, raw: bool, json_mode: bool, timeout: Duration) -> i32 {
     let mut client = match IpcClient::connect_and_handshake().await {
         Ok(c) => c,
         Err(e) => {
@@ -212,6 +223,7 @@ async fn run_follow(target: &str, raw: bool, json_mode: bool) -> i32 {
             return client_error_exit_code(&e);
         }
     };
+    client.set_timeout(timeout);
 
     let follow_id = next_id();
     let follow_req = Envelope::new(
@@ -334,5 +346,6 @@ fn client_error_exit_code(e: &ClientError) -> i32 {
             _ => exit_code::CONNECTION_ERROR,
         },
         ClientError::Ipc(_) | ClientError::Handshake(_) => exit_code::CONNECTION_ERROR,
+        ClientError::RequestTimeout(_) => exit_code::TIMEOUT,
     }
 }
