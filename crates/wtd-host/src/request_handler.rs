@@ -215,7 +215,7 @@ fn load_workspace_from_disk(
     let content = std::fs::read_to_string(&discovered.path).map_err(|e| {
         error_envelope(
             "",
-            ErrorCode::InternalError,
+            ErrorCode::WorkspaceNotFound,
             &format!("failed to read {}: {}", discovered.path.display(), e),
         )
     })?;
@@ -229,7 +229,7 @@ fn load_workspace_from_disk(
     load_workspace_definition(&file_name, &content).map_err(|e| {
         error_envelope(
             "",
-            ErrorCode::InternalError,
+            ErrorCode::DefinitionError,
             &format!("failed to parse workspace: {}", e),
         )
     })
@@ -479,8 +479,43 @@ impl HostRequestHandler {
         let state = self.state.lock().unwrap();
         match state.workspaces.get(&save.workspace) {
             Some(inst) => {
-                let _def = inst.save();
-                // File writing deferred to gp6.4
+                let def = inst.save();
+
+                let path = if let Some(ref file) = save.file {
+                    std::path::PathBuf::from(file)
+                } else {
+                    let dir = match wtd_core::ensure_user_workspaces_dir() {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return Some(error_envelope(
+                                id,
+                                ErrorCode::InternalError,
+                                &format!("failed to create workspaces directory: {}", e),
+                            ));
+                        }
+                    };
+                    dir.join(format!("{}.yaml", save.workspace))
+                };
+
+                let yaml = match serde_yaml::to_string(&def) {
+                    Ok(y) => y,
+                    Err(e) => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::InternalError,
+                            &format!("failed to serialize workspace: {}", e),
+                        ));
+                    }
+                };
+
+                if let Err(e) = std::fs::write(&path, &yaml) {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InternalError,
+                        &format!("failed to write {}: {}", path.display(), e),
+                    ));
+                }
+
                 Some(Envelope::new(id, &OkResponse {}))
             }
             None => Some(error_envelope(

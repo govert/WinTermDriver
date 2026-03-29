@@ -271,6 +271,7 @@ pub fn error_code_to_exit_code(code: &ErrorCode) -> i32 {
     match code {
         ErrorCode::TargetNotFound | ErrorCode::WorkspaceNotFound => exit_code::TARGET_NOT_FOUND,
         ErrorCode::TargetAmbiguous => exit_code::AMBIGUOUS_TARGET,
+        ErrorCode::DefinitionError => exit_code::DEFINITION_ERROR,
         _ => exit_code::GENERAL_ERROR,
     }
 }

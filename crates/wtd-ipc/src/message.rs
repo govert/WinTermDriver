@@ -453,6 +453,8 @@ pub enum ErrorCode {
     InvalidArgument,
     #[serde(rename = "session-failed")]
     SessionFailed,
+    #[serde(rename = "definition-error")]
+    DefinitionError,
     #[serde(rename = "protocol-error")]
     ProtocolError,
     #[serde(rename = "internal-error")]
