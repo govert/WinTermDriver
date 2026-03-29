@@ -26,11 +26,16 @@ You are executing a single bead from the WinTermDriver project as part of an aut
 
 ## Closing the Bead
 
-After implementation and tests pass:
+After implementation and tests pass, close the bead using the `br` CLI tool:
 
 ```bash
 br close <bead-id> --reason "Completed: <one-line summary of what was done>"
 ```
+
+**IMPORTANT:** The command is `br close`, NOT `bash bead-runner.sh close` or any
+variation involving the runner script. The runner script does not accept subcommands.
+`br` is the issue tracker CLI. `bead-runner.sh` is the outer loop that invoked you —
+never call it.
 
 ## Updating Cross-Bead Memory
 
@@ -77,6 +82,7 @@ If part of the bead's work is blocked or turns out to be too large for one sessi
 - **Only work on YOUR bead.** Do not modify or close other beads.
 - **Do not push** to the remote repository — the runner or user handles that.
 - **Do not run `br sync`** — the runner handles JSONL export.
+- **Do not run `bead-runner.sh`** — it is the outer loop. You are inside it already.
 - **Keep commits focused** on this bead's changes.
 - If existing code (from other beads) has test failures, **note it in MEMORY.md** but do not fix other beads' code.
 - Do not add features beyond the bead's scope. If you discover needed work, create a follow-up bead.

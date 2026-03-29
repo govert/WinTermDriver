@@ -20,6 +20,20 @@
 
 set -euo pipefail
 
+# ── Guard against nested invocation ──────────────────────────────
+# A bead agent once ran `bash bead-runner.sh close ...` (confusing it
+# with `br close`), which spawned a nested runner loop.  Prevent this.
+if [[ -n "${BEAD_RUNNER_PID:-}" ]]; then
+  echo "[runner] ERROR: Nested invocation detected (parent PID=$BEAD_RUNNER_PID). Aborting." >&2
+  echo "[runner] Did you mean:  br close <bead-id> --reason \"...\"" >&2
+  exit 1
+fi
+export BEAD_RUNNER_PID=$$
+
+# Ensure common tool locations are in PATH (Git Bash from PowerShell may not have them)
+USERDIR="${HOME:-/c/Users/${USERNAME:-${USER}}}"
+export PATH="${USERDIR}/.local/bin:${USERDIR}/go/bin:${USERDIR}/.dotnet/tools:${USERDIR}/AppData/Local/Microsoft/WinGet/Links:${PATH}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MEMORY_FILE="$SCRIPT_DIR/MEMORY.md"
@@ -48,6 +62,87 @@ for f in "$MEMORY_FILE" "$INSTRUCTIONS"; do
   fi
 done
 
+# ── Live display formatter ────────────────────────────────────────
+# Reads stream-json from stdin, writes formatted progress to stderr,
+# passes all input through to stdout unchanged (for the log file).
+make_formatter() {
+  python3 -u -c '
+import json, sys, time
+
+def dim(s):    return f"\033[2m{s}\033[0m"
+def bold(s):   return f"\033[1m{s}\033[0m"
+def green(s):  return f"\033[32m{s}\033[0m"
+def yellow(s): return f"\033[33m{s}\033[0m"
+def cyan(s):   return f"\033[36m{s}\033[0m"
+
+tool_count = 0
+start = time.time()
+
+for raw in sys.stdin:
+    # Pass through to stdout (log file) unchanged
+    sys.stdout.write(raw)
+    sys.stdout.flush()
+
+    line = raw.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+
+    t = msg.get("type", "")
+
+    if t == "assistant":
+        for block in msg.get("message", {}).get("content", []):
+            kind = block.get("type", "")
+            if kind == "tool_use":
+                tool_count += 1
+                name = block.get("name", "?")
+                inp = block.get("input", {})
+                detail = ""
+                if name == "Bash":
+                    cmd = inp.get("command", "")
+                    detail = cmd[:80].replace("\n", " ")
+                elif name == "Edit":
+                    detail = inp.get("file_path", "")[-60:]
+                elif name == "Write":
+                    detail = inp.get("file_path", "")[-60:]
+                elif name == "Read":
+                    detail = inp.get("file_path", "")[-60:]
+                elif name == "Glob":
+                    detail = inp.get("pattern", "")
+                elif name == "Grep":
+                    detail = inp.get("pattern", "")[:40]
+                elapsed = int(time.time() - start)
+                prefix = dim(f"[{elapsed:>4d}s #{tool_count:>3d}]")
+                print(f"  {prefix} {cyan(name):>20s}  {dim(detail)}", file=sys.stderr, flush=True)
+            elif kind == "text":
+                text = block.get("text", "")
+                if len(text) > 120:
+                    text = text[:117] + "..."
+                elapsed = int(time.time() - start)
+                prefix = dim(f"[{elapsed:>4d}s]")
+                print(f"  {prefix} {green(text)}", file=sys.stderr, flush=True)
+
+    elif t == "result":
+        elapsed = int(time.time() - start)
+        sub = msg.get("subtype", "?")
+        cost = msg.get("total_cost_usd", 0)
+        turns = msg.get("num_turns", 0)
+        result_text = msg.get("result", "")
+        prefix = dim(f"[{elapsed:>4d}s]")
+        if sub == "success":
+            print(f"  {prefix} {bold(green(\"DONE\"))} ({turns} turns, ${cost:.2f})", file=sys.stderr, flush=True)
+        else:
+            print(f"  {prefix} {bold(yellow(f\"EXIT: {sub}\"))} ({turns} turns, ${cost:.2f})", file=sys.stderr, flush=True)
+        if result_text:
+            # Print first 3 lines of result
+            for rline in result_text.strip().split("\n")[:3]:
+                print(f"         {dim(rline[:100])}", file=sys.stderr, flush=True)
+'
+}
+
 # ── Banner ─────────────────────────────────────────────────────────
 
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -62,6 +157,7 @@ echo ""
 # ── Main loop ──────────────────────────────────────────────────────
 
 bead_count=0
+total_cost=0
 
 while true; do
   # Get first ready task bead (skip epics)
@@ -129,13 +225,13 @@ print(items[0]['id'] if items else '')
   # shellcheck disable=SC2206
   [[ -n "$CLAUDE_FLAGS" ]] && CLAUDE_ARGS+=($CLAUDE_FLAGS)
 
-  # ── Run claude ─────────────────────────────────────────────────
+  # ── Run claude with live display ───────────────────────────────
   echo "[runner] Starting claude..."
   SECONDS=0
 
   set +e
-  claude "${CLAUDE_ARGS[@]}" < "$PROMPT_FILE" > "$LOG_FILE" 2>&1
-  CLAUDE_EXIT=$?
+  claude "${CLAUDE_ARGS[@]}" < "$PROMPT_FILE" 2>&1 | make_formatter > "$LOG_FILE"
+  CLAUDE_EXIT=${PIPESTATUS[0]}
   set -e
 
   ELAPSED=$SECONDS
@@ -143,33 +239,21 @@ print(items[0]['id'] if items else '')
 
   echo "[runner] Claude exited ($CLAUDE_EXIT) after ${ELAPSED}s"
 
-  # ── Extract summary from log ───────────────────────────────────
-  LOG_FILE="$LOG_FILE" python3 -c "
-import json, sys, os
-last_text = ''
-log_path = os.environ['LOG_FILE']
-for line in open(log_path, encoding='utf-8', errors='replace'):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        msg = json.loads(line)
-        if msg.get('type') == 'result':
-            last_text = msg.get('result', '')
-        elif msg.get('type') == 'assistant':
-            for block in msg.get('message', {}).get('content', []):
-                if block.get('type') == 'text':
-                    last_text = block['text']
-    except (json.JSONDecodeError, KeyError):
-        pass
-if last_text:
-    preview = last_text[:500]
-    if len(last_text) > 500:
-        preview += '...'
-    print(f'[runner] Summary: {preview}')
+  # ── Extract cost from log ──────────────────────────────────────
+  BEAD_COST=$(tail -1 "$LOG_FILE" 2>/dev/null \
+    | python3 -c "
+import json, sys
+line = sys.stdin.read().strip()
+if line:
+    msg = json.loads(line)
+    if msg.get('type') == 'result':
+        print(f\"{msg.get('total_cost_usd', 0):.2f}\")
+    else:
+        print('0')
 else:
-    print('[runner] (no summary extracted from log)')
-" 2>/dev/null || echo "[runner] (could not parse log)"
+    print('0')
+" 2>/dev/null) || BEAD_COST="0"
+  total_cost=$(python3 -c "print(f'{$total_cost + $BEAD_COST:.2f}')" 2>/dev/null) || true
 
   # ── Check bead status ──────────────────────────────────────────
   BEAD_STATUS=$(br show "$BEAD_ID" --json 2>/dev/null \
@@ -223,6 +307,6 @@ done
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo " Bead runner finished after $bead_count bead(s)."
+echo " Bead runner finished after $bead_count bead(s). Total cost: \$$total_cost"
 echo " Logs: $LOG_DIR"
 echo "════════════════════════════════════════════════════════════════"
