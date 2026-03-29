@@ -10,7 +10,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::workspace::{ActionReference, BindingsDefinition, ProfileDefinition, RestartPolicy};
+use crate::workspace::{
+    ActionReference, BindingPreset, BindingsDefinition, ProfileDefinition, RestartPolicy,
+};
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -220,10 +222,12 @@ fn default_confirm_close() -> bool {
     true
 }
 
-// ── Default Keybindings (§11.3) ─────────────────────────────────────────────
+// ── Preset Keybindings ───────────────────────────────────────────────────────
 
-/// Returns the built-in default keybindings per §11.3.
-pub fn default_bindings() -> BindingsDefinition {
+/// Returns the tmux-style preset keybindings.
+///
+/// Ctrl+B prefix, 10 single-stroke keys, 15 chords — the legacy WTD defaults.
+pub fn tmux_bindings() -> BindingsDefinition {
     let keys: HashMap<String, ActionReference> = [
         ("Ctrl+Shift+T", "new-tab"),
         ("Ctrl+Shift+W", "close-pane"),
@@ -262,10 +266,101 @@ pub fn default_bindings() -> BindingsDefinition {
     .collect();
 
     BindingsDefinition {
+        preset: Some(BindingPreset::Tmux),
         prefix: Some("Ctrl+B".to_string()),
         prefix_timeout: Some(2000),
         chords: Some(chords),
         keys: Some(keys),
+    }
+}
+
+/// Returns the Windows Terminal-style preset keybindings (placeholder, to be
+/// populated by bead wintermdriver-h35.3).
+pub fn windows_terminal_bindings() -> BindingsDefinition {
+    BindingsDefinition {
+        preset: Some(BindingPreset::WindowsTerminal),
+        prefix: None,
+        prefix_timeout: None,
+        chords: None,
+        keys: None,
+    }
+}
+
+/// Expand a `BindingPreset` into its base `BindingsDefinition` (no preset field
+/// set on the returned value).
+fn expand_preset(preset: &BindingPreset) -> BindingsDefinition {
+    match preset {
+        BindingPreset::Tmux => {
+            let base = tmux_bindings();
+            BindingsDefinition {
+                preset: None,
+                ..base
+            }
+        }
+        BindingPreset::WindowsTerminal => {
+            // Placeholder: populated by bead wintermdriver-h35.3.
+            BindingsDefinition {
+                preset: None,
+                prefix: None,
+                prefix_timeout: None,
+                chords: None,
+                keys: None,
+            }
+        }
+        BindingPreset::None => BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        },
+    }
+}
+
+/// Resolve the effective (fully expanded) bindings for a `BindingsDefinition`.
+///
+/// Expands the preset into its base keys/chords/prefix, then applies user
+/// overrides from the `keys`, `chords`, `prefix`, and `prefix_timeout` fields.
+/// The returned value always has `preset: None`.
+pub fn effective_bindings(def: &BindingsDefinition) -> BindingsDefinition {
+    let base = match &def.preset {
+        Some(preset) => expand_preset(preset),
+        None => BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        },
+    };
+
+    let prefix = def.prefix.clone().or(base.prefix);
+    let prefix_timeout = def.prefix_timeout.or(base.prefix_timeout);
+    let keys = merge_action_maps(&base.keys, &def.keys);
+    let chords = merge_action_maps(&base.chords, &def.chords);
+
+    BindingsDefinition {
+        preset: None,
+        prefix,
+        prefix_timeout,
+        chords,
+        keys,
+    }
+}
+
+// ── Default Keybindings (§11.3) ─────────────────────────────────────────────
+
+/// Returns the built-in default keybindings per §11.3.
+///
+/// The default preset is `windows-terminal`. Use [`tmux_bindings`] to get
+/// the tmux-style preset.
+pub fn default_bindings() -> BindingsDefinition {
+    BindingsDefinition {
+        preset: Some(BindingPreset::WindowsTerminal),
+        prefix: None,
+        prefix_timeout: None,
+        chords: None,
+        keys: None,
     }
 }
 
@@ -295,6 +390,9 @@ pub fn load_global_settings(path: &Path) -> Result<GlobalSettings, SettingsLoadE
 
 /// Merge workspace-level bindings on top of global bindings per §11.6.
 ///
+/// Both `global` and `workspace` presets are expanded first.  Then workspace
+/// effective keys/chords/prefix override global effective values.
+///
 /// - Workspace `chords` override global for the same chord key; unoverridden preserved.
 /// - Workspace `keys` override global for the same key spec; unoverridden preserved.
 /// - Workspace `prefix` overrides global `prefix` if set.
@@ -303,13 +401,17 @@ pub fn merge_bindings(
     global: &BindingsDefinition,
     workspace: &BindingsDefinition,
 ) -> BindingsDefinition {
-    let prefix = workspace.prefix.clone().or_else(|| global.prefix.clone());
-    let prefix_timeout = workspace.prefix_timeout.or(global.prefix_timeout);
+    let eff_global = effective_bindings(global);
+    let eff_workspace = effective_bindings(workspace);
 
-    let chords = merge_action_maps(&global.chords, &workspace.chords);
-    let keys = merge_action_maps(&global.keys, &workspace.keys);
+    let prefix = eff_workspace.prefix.or(eff_global.prefix);
+    let prefix_timeout = eff_workspace.prefix_timeout.or(eff_global.prefix_timeout);
+
+    let chords = merge_action_maps(&eff_global.chords, &eff_workspace.chords);
+    let keys = merge_action_maps(&eff_global.keys, &eff_workspace.keys);
 
     BindingsDefinition {
+        preset: None,
         prefix,
         prefix_timeout,
         chords,
@@ -397,8 +499,23 @@ mod tests {
     // ── Default keybindings ─────────────────────────────────────────────
 
     #[test]
-    fn default_bindings_populated() {
+    fn default_bindings_is_windows_terminal_preset() {
         let b = default_bindings();
+        assert_eq!(
+            b.preset,
+            Some(BindingPreset::WindowsTerminal),
+            "default preset must be windows-terminal"
+        );
+        // Windows-terminal preset is a placeholder; no explicit overrides.
+        assert!(b.prefix.is_none());
+        assert!(b.keys.is_none());
+        assert!(b.chords.is_none());
+    }
+
+    #[test]
+    fn tmux_bindings_populated() {
+        let b = tmux_bindings();
+        assert_eq!(b.preset, Some(BindingPreset::Tmux));
         assert_eq!(b.prefix, Some("Ctrl+B".to_string()));
         assert_eq!(b.prefix_timeout, Some(2000));
 
@@ -427,6 +544,100 @@ mod tests {
         );
     }
 
+    #[test]
+    fn effective_bindings_expands_tmux_preset() {
+        let def = BindingsDefinition {
+            preset: Some(BindingPreset::Tmux),
+            ..BindingsDefinition::default()
+        };
+        let eff = effective_bindings(&def);
+        assert!(eff.preset.is_none(), "effective bindings must have no preset");
+        assert_eq!(eff.prefix, Some("Ctrl+B".to_string()));
+        assert_eq!(eff.prefix_timeout, Some(2000));
+        let keys = eff.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 10);
+        let chords = eff.chords.as_ref().unwrap();
+        assert_eq!(chords.len(), 15);
+    }
+
+    #[test]
+    fn effective_bindings_expands_windows_terminal_preset() {
+        let def = BindingsDefinition {
+            preset: Some(BindingPreset::WindowsTerminal),
+            ..BindingsDefinition::default()
+        };
+        let eff = effective_bindings(&def);
+        assert!(eff.preset.is_none());
+        // Placeholder — no keys yet.
+        assert!(eff.prefix.is_none());
+        assert!(eff.keys.is_none());
+        assert!(eff.chords.is_none());
+    }
+
+    #[test]
+    fn effective_bindings_user_overrides_layer_on_preset() {
+        let mut extra_key = HashMap::new();
+        extra_key.insert(
+            "Ctrl+N".to_string(),
+            ActionReference::Simple("new-window".to_string()),
+        );
+        let def = BindingsDefinition {
+            preset: Some(BindingPreset::Tmux),
+            prefix: None,
+            prefix_timeout: None,
+            keys: Some(extra_key),
+            chords: None,
+        };
+        let eff = effective_bindings(&def);
+        // Tmux preset keys + user extra key.
+        let keys = eff.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 11, "tmux 10 + 1 user key");
+        assert_eq!(
+            keys.get("Ctrl+N"),
+            Some(&ActionReference::Simple("new-window".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+T"),
+            Some(&ActionReference::Simple("new-tab".to_string()))
+        );
+    }
+
+    #[test]
+    fn effective_bindings_user_override_replaces_preset_entry() {
+        let mut override_key = HashMap::new();
+        override_key.insert(
+            "%".to_string(),
+            ActionReference::Simple("split-down".to_string()),
+        );
+        let def = BindingsDefinition {
+            preset: Some(BindingPreset::Tmux),
+            prefix: None,
+            prefix_timeout: None,
+            keys: None,
+            chords: Some(override_key),
+        };
+        let eff = effective_bindings(&def);
+        let chords = eff.chords.as_ref().unwrap();
+        assert_eq!(chords.len(), 15, "still 15 chords");
+        assert_eq!(
+            chords.get("%"),
+            Some(&ActionReference::Simple("split-down".to_string())),
+            "user override must replace preset value"
+        );
+    }
+
+    #[test]
+    fn preset_none_produces_empty_effective_bindings() {
+        let def = BindingsDefinition {
+            preset: Some(BindingPreset::None),
+            ..BindingsDefinition::default()
+        };
+        let eff = effective_bindings(&def);
+        assert!(eff.prefix.is_none());
+        assert!(eff.keys.is_none());
+        assert!(eff.chords.is_none());
+    }
+
     // ── Partial overrides (some fields set, others default) ─────────────
 
     #[test]
@@ -449,9 +660,12 @@ scrollbackLines: 5000
         assert_eq!(s.font, FontConfig::default());
         assert_eq!(s.theme, ThemeConfig::default());
         assert_eq!(s.log_level, LogLevel::Info);
-        // Bindings should be defaults since not overridden:
-        let keys = s.bindings.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 10);
+        // Bindings should be the default (windows-terminal preset, placeholder empty):
+        assert_eq!(
+            s.bindings.preset,
+            Some(BindingPreset::WindowsTerminal),
+            "default bindings must use windows-terminal preset"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -561,8 +775,10 @@ bindings:
 
     #[test]
     fn merge_workspace_chords_override_global() {
-        let global = default_bindings();
+        // Use tmux preset as global to get 15 chords/10 keys to merge against.
+        let global = tmux_bindings();
         let workspace = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: Some(
@@ -601,8 +817,9 @@ bindings:
 
     #[test]
     fn merge_workspace_keys_override_global() {
-        let global = default_bindings();
+        let global = tmux_bindings();
         let workspace = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,
@@ -646,8 +863,9 @@ bindings:
 
     #[test]
     fn merge_workspace_prefix_overrides_global() {
-        let global = default_bindings();
+        let global = tmux_bindings();
         let workspace = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+A".to_string()),
             prefix_timeout: Some(5000),
             chords: None,
@@ -657,21 +875,22 @@ bindings:
         let merged = merge_bindings(&global, &workspace);
         assert_eq!(merged.prefix, Some("Ctrl+A".to_string()));
         assert_eq!(merged.prefix_timeout, Some(5000));
-        // Chords and keys preserved from global:
+        // Chords and keys preserved from global (tmux preset):
         assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
         assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
     }
 
     #[test]
     fn merge_empty_workspace_preserves_global() {
-        let global = default_bindings();
+        let global = tmux_bindings();
         let workspace = BindingsDefinition::default();
 
         let merged = merge_bindings(&global, &workspace);
-        assert_eq!(merged.prefix, global.prefix);
-        assert_eq!(merged.prefix_timeout, global.prefix_timeout);
-        assert_eq!(merged.chords, global.chords);
-        assert_eq!(merged.keys, global.keys);
+        // Effective global has tmux content; workspace adds nothing.
+        assert_eq!(merged.prefix, Some("Ctrl+B".to_string()));
+        assert_eq!(merged.prefix_timeout, Some(2000));
+        assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
+        assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
     }
 
     #[test]
@@ -681,5 +900,54 @@ bindings:
         assert_eq!(merged.prefix_timeout, None);
         assert_eq!(merged.chords, None);
         assert_eq!(merged.keys, None);
+    }
+
+    #[test]
+    fn merge_tmux_global_with_windows_terminal_workspace_preset() {
+        // Workspace with windows-terminal preset (empty placeholder) overlaid on tmux global.
+        let global = tmux_bindings();
+        let workspace = BindingsDefinition {
+            preset: Some(BindingPreset::WindowsTerminal),
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        // WT preset is empty placeholder, so workspace contributes nothing.
+        // Result should equal the effective tmux global.
+        let merged = merge_bindings(&global, &workspace);
+        assert_eq!(merged.prefix, Some("Ctrl+B".to_string()));
+        assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
+        assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn merge_workspace_tmux_preset_overrides_global_keys() {
+        // Global has a custom binding; workspace switches to tmux preset.
+        let mut custom_keys = HashMap::new();
+        custom_keys.insert(
+            "Ctrl+X".to_string(),
+            ActionReference::Simple("custom".to_string()),
+        );
+        let global = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            keys: Some(custom_keys),
+            chords: None,
+        };
+        let workspace = BindingsDefinition {
+            preset: Some(BindingPreset::Tmux),
+            prefix: None,
+            prefix_timeout: None,
+            keys: None,
+            chords: None,
+        };
+        let merged = merge_bindings(&global, &workspace);
+        // Global has 1 key (Ctrl+X); workspace expands to 10 tmux keys; merged is 11.
+        let keys = merged.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 11, "1 global + 10 tmux = 11");
+        assert!(keys.contains_key("Ctrl+X"), "global Ctrl+X preserved");
+        assert!(keys.contains_key("Ctrl+Shift+T"), "tmux key present");
     }
 }

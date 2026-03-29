@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use wtd_core::global_settings::default_bindings;
+use wtd_core::global_settings::{default_bindings, tmux_bindings};
 use wtd_core::workspace::ActionReference;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::clipboard::{
@@ -332,7 +332,7 @@ fn palette_fuzzy_search_targets_specific_actions() {
 
 #[test]
 fn palette_entries_include_keybinding_hints() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let entries = build_palette_entries(&bindings);
 
     // new-tab has single-stroke Ctrl+Shift+T.

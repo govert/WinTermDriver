@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-use wtd_core::global_settings::default_bindings;
+use wtd_core::global_settings::{default_bindings, tmux_bindings};
 use wtd_core::ids::WorkspaceInstanceId;
 use wtd_core::load_workspace_definition;
 use wtd_core::workspace::ActionReference;
@@ -348,7 +348,7 @@ fn regular_typing_produces_send_to_session_bytes() {
 
 #[test]
 fn ctrl_shift_t_dispatches_new_tab_action() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 
@@ -382,7 +382,7 @@ fn ctrl_shift_t_dispatches_new_tab_action() {
 
 #[test]
 fn single_stroke_bindings_dispatch_correct_actions() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 
@@ -435,7 +435,7 @@ fn single_stroke_bindings_dispatch_correct_actions() {
 
 #[test]
 fn binding_keys_are_consumed_not_forwarded() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 
@@ -497,7 +497,7 @@ fn key_event_to_bytes_produces_correct_sequences() {
 
 #[test]
 fn prefix_key_enters_prefix_mode() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 
@@ -582,7 +582,7 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
 
     // Build key events for typing "echo KB_GATE_9PC1" using the keyboard pipeline.
     // Process through PrefixStateMachine to get the bytes that would be sent.
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 

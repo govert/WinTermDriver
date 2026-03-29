@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-use wtd_core::global_settings::default_bindings;
+use wtd_core::global_settings::tmux_bindings;
 use wtd_core::ids::{PaneId, WorkspaceInstanceId};
 use wtd_core::load_workspace_definition;
 use wtd_core::workspace::ActionReference;
@@ -1506,7 +1506,7 @@ tabs:
 /// focus-next-pane; prefix indicator visible; timeout cancels prefix.
 #[test]
 fn criterion_36_6_prefix_chords() {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 

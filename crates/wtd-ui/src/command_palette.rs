@@ -773,6 +773,7 @@ mod tests {
     #[test]
     fn single_stroke_hint() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,
@@ -789,6 +790,7 @@ mod tests {
     #[test]
     fn chord_hint_includes_prefix() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(
@@ -808,6 +810,7 @@ mod tests {
     #[test]
     fn single_stroke_preferred_over_chord() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(
@@ -831,6 +834,7 @@ mod tests {
     #[test]
     fn entry_count_matches_v1_catalog() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,
@@ -843,6 +847,7 @@ mod tests {
     #[test]
     fn entries_include_toggle_command_palette() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,
@@ -853,8 +858,8 @@ mod tests {
     }
 
     #[test]
-    fn entries_have_keybinding_from_default_bindings() {
-        let bindings = wtd_core::global_settings::default_bindings();
+    fn entries_have_keybinding_from_tmux_bindings() {
+        let bindings = wtd_core::global_settings::tmux_bindings();
         let entries = build_palette_entries(&bindings);
         let new_tab = entries.iter().find(|e| e.name == "new-tab").unwrap();
         assert_eq!(new_tab.keybinding, Some("Ctrl+Shift+T".to_string()));
@@ -862,7 +867,7 @@ mod tests {
 
     #[test]
     fn entries_have_chord_keybinding() {
-        let bindings = wtd_core::global_settings::default_bindings();
+        let bindings = wtd_core::global_settings::tmux_bindings();
         let entries = build_palette_entries(&bindings);
         let zoom = entries.iter().find(|e| e.name == "zoom-pane").unwrap();
         assert_eq!(zoom.keybinding, Some("Ctrl+B, z".to_string()));

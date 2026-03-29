@@ -369,7 +369,15 @@ pub struct InputClassifier {
 
 impl InputClassifier {
     /// Build a classifier from a merged bindings definition.
+    ///
+    /// Any `preset` field in `bindings` is expanded first via
+    /// [`wtd_core::effective_bindings`], so callers can pass a
+    /// `BindingsDefinition` with only a `preset` set and get the full
+    /// preset's keys, chords, and prefix.
     pub fn from_bindings(bindings: &BindingsDefinition) -> Result<Self, KeySpecError> {
+        let expanded = wtd_core::effective_bindings(bindings);
+        let bindings = &expanded;
+
         let prefix = match &bindings.prefix {
             Some(s) => Some(KeySpec::parse(s)?),
             None => None,
@@ -924,6 +932,7 @@ mod tests {
         );
 
         BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(chords),
@@ -1091,6 +1100,7 @@ mod tests {
         );
 
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: None,
@@ -1124,6 +1134,7 @@ mod tests {
         );
 
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(chords),
@@ -1162,6 +1173,7 @@ mod tests {
     #[test]
     fn unbound_key_passes_through() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(HashMap::new()),
@@ -1179,11 +1191,12 @@ mod tests {
         }
     }
 
-    // ── Default bindings ─────────────────────────────────────────────────
+    // ── Preset expansion via from_bindings ──────────────────────────────
 
     #[test]
-    fn from_default_bindings() {
-        let bindings = wtd_core::default_bindings();
+    fn from_tmux_preset_bindings() {
+        // Passing a BindingsDefinition with preset: Tmux expands to tmux bindings.
+        let bindings = wtd_core::tmux_bindings();
         let classifier = InputClassifier::from_bindings(&bindings).unwrap();
 
         assert!(classifier.prefix_key().is_some());
@@ -1208,6 +1221,19 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn from_windows_terminal_preset_bindings_is_empty() {
+        // Default (windows-terminal preset placeholder) has no active bindings.
+        let bindings = wtd_core::default_bindings();
+        let classifier = InputClassifier::from_bindings(&bindings).unwrap();
+
+        // No prefix configured for the windows-terminal placeholder.
+        assert!(
+            classifier.prefix_key().is_none(),
+            "windows-terminal preset has no prefix yet"
+        );
+    }
+
     // ── No prefix configured ────────────────────────────────────────────
 
     #[test]
@@ -1219,6 +1245,7 @@ mod tests {
         );
 
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,

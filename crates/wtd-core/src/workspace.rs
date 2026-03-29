@@ -221,10 +221,31 @@ pub enum ProfileType {
     Custom,
 }
 
+// ── BindingPreset (§9.1.10) ───────────────────────────────────────────────────
+
+/// Built-in keybinding preset.
+///
+/// When specified, the preset loads a predefined set of keys, chords, and prefix
+/// as the base. User-specified `keys` and `chords` fields then override individual
+/// entries from the preset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BindingPreset {
+    /// Windows Terminal-style keybindings (default, populated by h35.3).
+    WindowsTerminal,
+    /// tmux-style keybindings: Ctrl+B prefix, 15 chords, 10 single-stroke keys.
+    Tmux,
+    /// No preset — only explicit `keys` and `chords` are active.
+    None,
+}
+
 // ── BindingsDefinition (§9.1.10) ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct BindingsDefinition {
+    /// Built-in preset to use as the base before applying user overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<BindingPreset>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
     #[serde(

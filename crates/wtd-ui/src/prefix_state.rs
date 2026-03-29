@@ -245,6 +245,7 @@ mod tests {
         );
 
         BindingsDefinition {
+            preset: None,
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(timeout_ms),
             chords: Some(chords),
@@ -480,6 +481,7 @@ mod tests {
     #[test]
     fn no_prefix_configured_all_keys_pass_through() {
         let bindings = BindingsDefinition {
+            preset: None,
             prefix: None,
             prefix_timeout: None,
             chords: None,

@@ -31,7 +31,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use wtd_core::global_settings::default_bindings;
+use wtd_core::global_settings::tmux_bindings;
 use wtd_core::ids::WorkspaceInstanceId;
 use wtd_core::layout::LayoutTree;
 use wtd_core::load_workspace_definition;
@@ -538,7 +538,7 @@ async fn m5_interactive_workspace_acceptance() {
     // Build key events for "echo M5_TYPE_3R6J" through the keyboard
     // pipeline, collect raw bytes, send via IPC, verify ConPTY output.
 
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     let mut psm = PrefixStateMachine::new(classifier);
 

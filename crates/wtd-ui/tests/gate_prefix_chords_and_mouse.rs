@@ -10,7 +10,7 @@
 
 #![cfg(windows)]
 
-use wtd_core::global_settings::default_bindings;
+use wtd_core::global_settings::tmux_bindings;
 use wtd_core::ids::PaneId;
 use wtd_core::layout::{LayoutTree, Rect};
 use wtd_core::workspace::ActionReference;
@@ -58,7 +58,7 @@ fn letter_o() -> KeyEvent {
 
 /// Create a default PrefixStateMachine from the built-in bindings.
 fn default_psm() -> PrefixStateMachine {
-    let bindings = default_bindings();
+    let bindings = tmux_bindings();
     let classifier = InputClassifier::from_bindings(&bindings).unwrap();
     PrefixStateMachine::new(classifier)
 }
