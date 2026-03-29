@@ -196,6 +196,21 @@ impl Session {
         }
     }
 
+    /// Drain pending output into the screen buffer and return the raw bytes.
+    ///
+    /// Used by the output broadcaster to both update the screen buffer and
+    /// forward raw VT bytes to UI clients.
+    pub fn process_pending_output_collecting(&mut self) -> Vec<u8> {
+        let mut collected = Vec::new();
+        if let Some(ref rx) = self.output_rx {
+            while let Ok(chunk) = rx.try_recv() {
+                collected.extend_from_slice(&chunk);
+                self.screen.advance(&chunk);
+            }
+        }
+        collected
+    }
+
     // ── Lifecycle ────────────────────────────────────────────────────────
 
     /// Poll whether the child has exited. If so, drains remaining output,

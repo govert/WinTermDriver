@@ -5,6 +5,8 @@ pub mod backoff;
 pub mod host_lifecycle;
 #[cfg(windows)]
 pub mod ipc_server;
+#[cfg(windows)]
+pub mod output_broadcaster;
 pub mod pipe_security;
 #[cfg(windows)]
 pub mod request_handler;

@@ -162,6 +162,25 @@ impl IpcServer {
         })
     }
 
+    /// Create a new IPC server with a pre-wrapped `Arc<dyn RequestHandler>`.
+    ///
+    /// Use this when the handler needs to be shared with other components
+    /// (e.g. the output broadcaster).
+    #[cfg(windows)]
+    pub fn with_arc_handler(
+        pipe_name: String,
+        handler: Arc<dyn RequestHandler>,
+    ) -> Result<Self, ServerError> {
+        let security = PipeSecurity::new()?;
+        Ok(Self {
+            pipe_name,
+            clients: Arc::new(Mutex::new(ClientRegistry::new())),
+            handler,
+            next_client_id: AtomicU64::new(1),
+            security: Arc::new(security),
+        })
+    }
+
     /// Handle to the shared client registry.
     pub fn clients(&self) -> &Arc<Mutex<ClientRegistry>> {
         &self.clients

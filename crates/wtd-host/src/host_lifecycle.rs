@@ -265,6 +265,45 @@ pub async fn run_host(
     result.map_err(Into::into)
 }
 
+/// Run the host IPC server with the output broadcaster.
+///
+/// Like [`run_host`], but also spawns a background task that drains
+/// session output and broadcasts `SessionOutput`, `SessionStateChanged`,
+/// and `TitleChanged` messages to connected UI clients (§13.9, §13.13).
+#[cfg(windows)]
+pub async fn run_host_with_broadcaster(
+    pipe_name: &str,
+    handler: std::sync::Arc<crate::request_handler::HostRequestHandler>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    dir: &Path,
+) -> Result<(), LifecycleError> {
+    write_pid_file_in(dir)?;
+
+    let dyn_handler: std::sync::Arc<dyn crate::ipc_server::RequestHandler> =
+        handler.clone();
+    let server = std::sync::Arc::new(
+        crate::ipc_server::IpcServer::with_arc_handler(
+            pipe_name.to_owned(),
+            dyn_handler,
+        )?,
+    );
+
+    let broadcaster_handle = {
+        let h = handler;
+        let s = server.clone();
+        let sr = shutdown_rx.clone();
+        tokio::spawn(async move {
+            crate::output_broadcaster::run(h, s, sr).await;
+        })
+    };
+
+    let result = server.run(shutdown_rx).await;
+    broadcaster_handle.abort();
+
+    remove_pid_in(dir);
+    result.map_err(Into::into)
+}
+
 // ── Tests ─────────────────────────────────────────���─────────────────
 
 #[cfg(test)]

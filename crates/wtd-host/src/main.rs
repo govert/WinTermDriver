@@ -44,9 +44,9 @@ mod run {
 
         tracing::info!(pid = std::process::id(), "wtd-host started");
 
-        // 5. Run the IPC server with real request handler (§8.1).
-        let handler = HostRequestHandler::new(settings);
-        run_host(&pipe_name, handler, shutdown_rx, &dir).await?;
+        // 5. Run the IPC server with real request handler + output broadcaster.
+        let handler = std::sync::Arc::new(HostRequestHandler::new(settings));
+        run_host_with_broadcaster(&pipe_name, handler, shutdown_rx, &dir).await?;
 
         tracing::info!("wtd-host shut down");
         Ok(())

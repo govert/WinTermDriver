@@ -19,6 +19,7 @@ use wtd_ipc::Envelope;
 
 use crate::action::{v1_registry, ActionDispatcher};
 use crate::ipc_server::{ClientId, RequestHandler};
+use crate::output_broadcaster::BroadcastEvent;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
 
 // ── Internal state ────────────────────────────────────────────────────────
@@ -49,6 +50,62 @@ impl HostRequestHandler {
                 next_instance_id: 1,
             }),
         }
+    }
+
+    /// Drain pending output from all sessions and collect broadcast events.
+    ///
+    /// Called periodically by the output broadcaster. Returns events for:
+    /// - `Output`: raw VT bytes from ConPTY (caller base64-encodes)
+    /// - `StateChanged`: session exited
+    /// - `TitleChange`: VT title sequence detected
+    ///
+    /// `prev_titles` tracks the last-seen title per session for change detection.
+    pub fn drain_session_events(
+        &self,
+        prev_titles: &mut HashMap<String, String>,
+    ) -> Vec<BroadcastEvent> {
+        let mut state = self.state.lock().unwrap();
+        let mut events = Vec::new();
+
+        for inst in state.workspaces.values_mut() {
+            for (session_id, session) in inst.sessions_mut().iter_mut() {
+                let sid = format!("{}", session_id.0);
+
+                // Drain output and feed to screen buffer.
+                let raw_bytes = session.process_pending_output_collecting();
+                if !raw_bytes.is_empty() {
+                    events.push(BroadcastEvent::Output {
+                        session_id: sid.clone(),
+                        data: raw_bytes,
+                    });
+                }
+
+                // Detect title changes (screen buffer is up-to-date after drain).
+                let new_title = session.screen().title.clone();
+                let title_changed = match prev_titles.get(&sid) {
+                    Some(old) => *old != new_title,
+                    None => !new_title.is_empty(),
+                };
+                if title_changed {
+                    prev_titles.insert(sid.clone(), new_title.clone());
+                    events.push(BroadcastEvent::TitleChange {
+                        session_id: sid.clone(),
+                        title: new_title,
+                    });
+                }
+
+                // Detect session exit.
+                if let Some(exit_code) = session.check_exit() {
+                    events.push(BroadcastEvent::StateChanged {
+                        session_id: sid,
+                        new_state: "exited".to_string(),
+                        exit_code: Some(exit_code as i32),
+                    });
+                }
+            }
+        }
+
+        events
     }
 }
 
