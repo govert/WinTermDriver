@@ -698,4 +698,42 @@ renderer.end_draw()?;
 - Splitter color: #3c3c4b normal, #5a5a6e on hover/drag
 - Orientation naming: `Orientation::Horizontal` split has a vertical splitter line (divides left/right)
 - `pane_before` in SplitterInfo is the pane to the left/above — used for resize direction
-- Per-pane viewport clipping deferred to psx.3 (terminal content rendering in pane viewports)
+- Per-pane viewport clipping implemented in psx.3
+
+---
+
+## wintermdriver-psx.3: Per-pane viewport rendering with cursor shapes
+
+`TerminalRenderer::paint_pane_viewport()` renders a `ScreenBuffer` clipped to a pane's pixel rectangle using `PushAxisAlignedClip`.
+
+**New public types:**
+- `CursorShape` — enum in `wtd-pty`: `Block | Underline | Bar` (added to `Cursor` struct)
+- `TextSelection` — in `wtd-ui::renderer`: `{ start_row, start_col, end_row, end_col }` with `normalised()` and `contains()`
+
+**New public API:**
+- `TerminalRenderer::paint_pane_viewport(screen, x, y, width, height, selection)` — clipped viewport rendering
+- `CursorShape` — exported from `wtd_pty` root
+
+**VT sequence added:**
+- DECSCUSR (`CSI Ps SP q`): sets cursor shape (0/1/2 → Block, 3/4 → Underline, 5/6 → Bar)
+
+**Compositing pattern (updated):**
+```rust
+renderer.begin_draw();
+renderer.clear_background();
+tab_strip.paint(renderer.render_target())?;
+for pane_id in layout_tree.panes() {
+    let rect = pane_layout.pane_pixel_rect(&pane_id);
+    renderer.paint_pane_viewport(&screen, rect.x, rect.y, rect.width, rect.height, None)?;
+}
+pane_layout.paint(renderer.render_target(), &focused_pane)?;
+renderer.end_draw()?;
+```
+
+**Design decisions:**
+- Block cursor: 50% opacity filled rectangle (text visible underneath)
+- Underline cursor: 2px solid bar at cell bottom
+- Bar cursor: 2px solid bar at cell left edge
+- Selection: 50% opacity filled rectangles per row, color #3a6496
+- Viewport clips to exact pixel rect; only visible rows/cols rendered for performance
+- `paint_screen()` still available for non-pane use cases (also uses shaped cursor now)
