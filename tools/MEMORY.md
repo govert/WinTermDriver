@@ -525,3 +525,24 @@ CLI client lives in `wtd-cli::client`. Command dispatch in `wtd-cli::dispatch`. 
 - `host status` is a local check (no server connection needed), using `is_host_pipe_available`
 - `FocusPane` and `RenamePane` messages receive the CLI target string as `pane_id` — host dispatch handler will need to resolve paths to PaneIds
 - Action command args parsed as `key=value` pairs into `serde_json::Value::Object`
+
+---
+
+## wintermdriver-6en.1: Rendering technology decision
+
+**Decision:** Win32 + DirectWrite selected as the rendering technology (ADR-001 in `docs/decisions/001-rendering-technology.md`).
+
+**Candidates evaluated:**
+- wezterm components: NO-GO — GPU renderer (`wezterm-gui`) not published as standalone crate; extraction requires forking ~15k lines
+- Win32 + DirectWrite: GO (recommended) — 2-5ms/frame for realistic terminal content, 42 MB memory, zero new deps (uses existing `windows` 0.58)
+- WebView2 + xterm.js: NO-GO — 80-150 MB memory per WebView2 instance, 7-12ms IPC+render pipeline, dual-language complexity
+
+**Benchmark crate:** `crates/eval-renderer` — contains `bench_directwrite` example with five rendering modes (per-row, per-cell, run-based). Workspace member with `publish = false`.
+
+**Windows features needed for rendering** (beyond existing workspace features):
+`Foundation_Numerics`, `Win32_Graphics_Direct2D`, `Win32_Graphics_Direct2D_Common`, `Win32_Graphics_DirectWrite`, `Win32_Graphics_Dxgi_Common`, `Win32_Graphics_Gdi`, `Win32_UI_WindowsAndMessaging`
+
+**Key API pattern for windows-rs 0.58 Direct2D:**
+- `ID2D1HwndRenderTarget` does not expose inherited `ID2D1RenderTarget` methods directly — must `.cast::<ID2D1RenderTarget>()` first
+- `D2D1_BRUSH_PROPERTIES` requires `Foundation_Numerics` feature (contains `Matrix3x2`)
+- Use `D2D1_PRESENT_OPTIONS_IMMEDIATELY` to bypass vsync for benchmarking

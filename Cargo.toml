@@ -7,6 +7,7 @@ members = [
     "crates/wtd-host",
     "crates/wtd-ui",
     "crates/wtd-cli",
+    "crates/eval-renderer",
 ]
 
 [workspace.package]
