@@ -1309,3 +1309,17 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 - Uses `serde_yaml::to_string(&def)` for serialization
 
 **Test:** `crates/wtd-host/tests/test_file_path_open.rs` — 6 tests: file-path open with live sessions, split workspace via file, save-to-file round-trip, file-not-found error, invalid YAML error, validation failure (bad version) error
+
+---
+
+## wintermdriver-gp6.6: ActionDispatcher wired into host request handler
+
+`handle_invoke_action` in `wtd-host::request_handler` now processes `ActionResult` from `ActionDispatcher::dispatch`:
+
+**New IPC type:** `InvokeActionResult` in `wtd-ipc::message` — `{ result: String, pane_id: Option<String> }`. Result values: `"ok"`, `"pane-created"`, `"pane-closed"`.
+
+**Session spawning for split panes:** `WorkspaceInstance::spawn_session_for_pane(pane_id, name, settings, env, find_exe)` creates a session using the global default profile. Called by the request handler after `ActionResult::PaneCreated`. New panes get auto-generated names (`pane-{id}`).
+
+**CLI output:** `wtd-cli::output` handles `InvokeActionResult` type (displays result + pane ID when present).
+
+**Test:** `crates/wtd-host/tests/test_action_dispatch.rs` — 4 tests: split-right creates pane with session, close-pane removes pane and session, focus-next returns ok, unknown action returns error.
