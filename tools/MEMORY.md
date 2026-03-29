@@ -448,3 +448,33 @@ All CLI parsing lives in `wtd-cli::cli` (§22.1–22.4). Uses clap derive macros
 - `keys` requires at least one key spec (`#[arg(required = true)]`)
 - `scrollback --tail` is a required `u32` flag (clap validates numeric)
 - Command dispatch is not yet implemented — `main.rs` parses then exits with "not yet implemented"
+
+---
+
+## wintermdriver-rul.2: Target path parser and resolver
+
+Target path parsing in `wtd-core::target`. Resolution in `wtd-host::target_resolver`.
+
+**Key types:**
+- `TargetPath` — enum: `Pane { pane }` | `WorkspacePane { workspace, pane }` | `WorkspaceTabPane { workspace, tab, pane }` | `WorkspaceWindowTabPane { workspace, window, tab, pane }`
+- `TargetPathError` — `Empty | TooManySegments | EmptySegment | InvalidCharacters | TooLong`
+- `ResolvedTarget` — `{ instance_id: WorkspaceInstanceId, pane_id: PaneId, canonical_path: String }`
+- `ResolveError` — `Ambiguous | NotFound | NoActiveInstance | MultipleActiveInstances | WorkspaceNotFound | TabNotFound | PaneNotFound | PaneNotFoundInTab | IdNotFound`
+
+**Public API:**
+- `TargetPath::parse(path) -> Result<TargetPath, TargetPathError>` — validates §19.1 naming rules
+- `resolve_target(path, &[&WorkspaceInstance]) -> Result<ResolvedTarget, ResolveError>` — resolution per §19.4
+- `resolve_by_id(id_str, &[&WorkspaceInstance]) -> Result<ResolvedTarget, ResolveError>` — `--id` lookup
+
+**WorkspaceInstance additions:**
+- `find_tab_by_name(name) -> Option<&TabInstance>`
+- `find_pane_in_tab(tab, pane_name) -> Option<PaneId>`
+- `find_all_panes_by_name(name) -> Vec<(PaneId, String)>` — returns canonical paths for ambiguity reporting
+- `canonical_pane_path(pane_id) -> Option<String>` — `workspace/tab/pane` format
+- `new_for_test_multi(name, id, tab_specs)` — `#[cfg(test)]` flexible multi-tab test constructor
+
+**Design decisions:**
+- 4-segment paths: window segment is parsed but ignored during resolution (runtime doesn't track window-to-tab mapping)
+- 1-segment requires exactly one active instance (§19.5); 0 or 2+ returns error
+- `resolve_by_id` parses the ID string as u64 (matching current PaneId representation)
+- Known issue: `LayoutTree::new()` always starts PaneIds at 1, so multi-tab workspaces have PaneId collisions in the flat `panes` HashMap — cross-tab pane-level resolution not reliable until PaneId uniqueness is addressed
