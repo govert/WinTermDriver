@@ -304,6 +304,21 @@ for i in items:
   echo ""
 done
 
+# ── Close eligible epics ──────────────────────────────────────────
+
+if [[ "$bead_count" -gt 0 ]]; then
+  CLOSED_EPICS=$(br epic close-eligible 2>&1) || true
+  if [[ -n "$CLOSED_EPICS" && "$CLOSED_EPICS" != *"No eligible"* ]]; then
+    echo "[runner] Epics closed:"
+    echo "$CLOSED_EPICS" | sed 's/^/  /'
+    br sync --flush-only --quiet 2>/dev/null || true
+    git add .beads/issues.jsonl 2>/dev/null || true
+    if ! git diff --cached --quiet 2>/dev/null; then
+      git commit -m "bead-runner: close eligible epics" --quiet 2>/dev/null || true
+    fi
+  fi
+fi
+
 # ── Final summary ────────────────────────────────────────────────
 
 echo ""
