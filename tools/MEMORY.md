@@ -1094,3 +1094,28 @@ status_bar.paint(renderer.render_target(), window_height - status_bar.height())?
 **Test structure:** `M4Handler` implements `RequestHandler` handling OpenWorkspace and Capture. Uses single-tab split workspace YAML (avoids PaneId collision across tabs). UI-side builds two-tab TabStrip to prove tab switching. Full compositing pipeline exercised: tab strip + split pane viewports + pane borders/focus + status bar.
 
 **Known issue confirmed:** Multi-tab workspaces have PaneId collisions because `LayoutTree::new()` always starts PaneIds at 1 in each tab. `find_pane_by_name` fails for panes in the first tab when a second tab's panes overwrite the flat `panes` HashMap. Workaround: use single-tab workspace for IPC/ConPTY verification, build multi-tab UI on the rendering side.
+
+---
+
+## wintermdriver-nae.1: M6 Acceptance Gate
+
+`crates/wtd-ui/tests/gate_m6_acceptance.rs` — dedicated M6 milestone acceptance test (§36, §37.5). Validates all 10 acceptance criteria with 10 separate test functions.
+
+**Test structure:** `M6Handler` implements `RequestHandler` handling OpenWorkspace, CloseWorkspace, AttachWorkspace, RecreateWorkspace, ListPanes, ListSessions, Send, Capture, Scrollback, Inspect, InvokeAction, Keys. Uses `TestHost` harness with unique pipe names.
+
+**Criteria covered:**
+1. §36.1 `criterion_36_1_workspace_lifecycle` — IPC: open → interact → disconnect → attach → recreate
+2. §36.2 `criterion_36_2_mixed_sessions` — `resolve_launch_spec` for powershell, wsl, ssh profiles
+3. §36.3 `criterion_36_3_manual_interaction` — ScreenBuffer: typing, cursor movement, paste, selection, scrollback, alternate screen
+4. §36.4 `criterion_36_4_controller_interaction` — IPC: list panes, send, keys, capture, scrollback, inspect, action
+5. §36.5 `criterion_36_5_semantic_naming` — TargetPath parsing + resolve_target + ambiguous error with candidates
+6. §36.6 `criterion_36_6_prefix_chords` — PrefixStateMachine: Ctrl+B,% → split-right, Ctrl+B," → split-down, Ctrl+B,o → focus-next, timeout
+7. §36.7 `criterion_36_7_partial_failure` — 4-pane workspace with 1 bad executable; 3 running, 1 detached
+8. §36.8 `criterion_36_8_local_security` — SID-based pipe name, PipeSecurity DACL creation
+9. §36.9 `criterion_36_9_workspace_as_code` — .wtd/dev.yaml found via find_workspace_in
+10. §36.10 `criterion_36_10_recreation_determinism` — same YAML → same tabs/panes/layout/save()
+
+**Key pattern notes:**
+- `AttachSnapshot` does not implement `Serialize`; build JSON manually in handler
+- `new_for_test_multi` is `#[cfg(test)] pub(crate)` — not accessible from integration tests; use `WorkspaceInstance::open` with YAML instead
+- SID format varies (S-1-5- for NT Authority, S-1-12- for AzureAD); check for `S-1-` not `S-1-5-`
