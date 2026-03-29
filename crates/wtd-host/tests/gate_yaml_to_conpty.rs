@@ -1,7 +1,9 @@
-//! Gate integration test: YAML workspace definition → running ConPTY session.
+//! Gate integration tests: YAML workspace definition → running ConPTY session.
 //!
 //! Verifies the full pipeline: parse YAML fixture → resolve profile → create
 //! workspace instance → session reaches Running state with a live ConPTY.
+//! Also verifies the I/O round-trip: input sent to a session appears in the
+//! VT screen buffer output.
 //! This is the first integration point connecting workspace definitions (W1)
 //! and the session/PTY subsystem (W3).
 
@@ -189,6 +191,172 @@ mod tests {
         assert!(
             found,
             "startup command output 'GATE_MARKER' should appear in session screen"
+        );
+    }
+
+    // ── Test 4: Input sent to session appears in VT screen buffer ────────
+
+    #[test]
+    fn input_sent_to_session_appears_in_screen_buffer() {
+        let def = load_workspace_definition("fixtures/simple-workspace.yaml", SIMPLE_YAML)
+            .expect("fixture YAML should parse");
+
+        let gs = GlobalSettings::default();
+        let env = default_host_env();
+
+        let mut inst = WorkspaceInstance::open(
+            WorkspaceInstanceId(103),
+            &def,
+            &gs,
+            &env,
+            find_exe_windows,
+        )
+        .expect("workspace should open");
+
+        assert_eq!(*inst.state(), WorkspaceState::Active);
+
+        // Wait for the session to be Running and the initial prompt to settle.
+        let ready = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+            inst.sessions().values().any(|s| {
+                matches!(s.state(), &SessionState::Running)
+                    && !s.screen().visible_text().is_empty()
+            })
+        });
+        assert!(ready, "session should be Running with initial output");
+
+        // Send a unique command. The echo output will appear in the screen buffer
+        // when cmd.exe executes it and the PTY output flows back through the reader.
+        let marker = "INPUT_ROUND_TRIP_7X9Q";
+        let command = format!("echo {}\r\n", marker);
+        for session in inst.sessions().values() {
+            session
+                .write_input(command.as_bytes())
+                .expect("write_input should succeed on a running session");
+        }
+
+        // Poll until the marker text appears in the screen buffer.
+        let found = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+            inst.sessions()
+                .values()
+                .any(|s| s.screen().visible_text().contains(marker))
+        });
+
+        assert!(
+            found,
+            "text sent via write_input should appear in session screen buffer"
+        );
+
+        // Verify the screen buffer has the echoed text (not just the command line).
+        // cmd.exe echoes the command AND prints the result. Both should contain the marker.
+        let screen_text = inst
+            .sessions()
+            .values()
+            .next()
+            .unwrap()
+            .screen()
+            .visible_text();
+        let marker_count = screen_text.matches(marker).count();
+        assert!(
+            marker_count >= 2,
+            "marker should appear at least twice (command echo + output), found {} times in:\n{}",
+            marker_count,
+            screen_text
+        );
+    }
+
+    // ── Test 5: Multiple inputs produce sequential screen buffer output ──
+
+    #[test]
+    fn multiple_inputs_appear_sequentially_in_screen_buffer() {
+        let def = load_workspace_definition("fixtures/simple-workspace.yaml", SIMPLE_YAML)
+            .expect("fixture YAML should parse");
+
+        let gs = GlobalSettings::default();
+        let env = default_host_env();
+
+        let mut inst = WorkspaceInstance::open(
+            WorkspaceInstanceId(104),
+            &def,
+            &gs,
+            &env,
+            find_exe_windows,
+        )
+        .expect("workspace should open");
+
+        assert_eq!(*inst.state(), WorkspaceState::Active);
+
+        // Wait for session to settle.
+        let ready = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+            inst.sessions().values().any(|s| {
+                matches!(s.state(), &SessionState::Running)
+                    && !s.screen().visible_text().is_empty()
+            })
+        });
+        assert!(ready, "session should be Running with initial output");
+
+        // Send two distinct commands sequentially.
+        let marker_a = "MARKER_ALPHA_3K";
+        let marker_b = "MARKER_BRAVO_7J";
+
+        for session in inst.sessions().values() {
+            session
+                .write_input(format!("echo {}\r\n", marker_a).as_bytes())
+                .expect("first write_input should succeed");
+        }
+
+        // Wait for first marker before sending second.
+        let found_a = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+            inst.sessions()
+                .values()
+                .any(|s| s.screen().visible_text().contains(marker_a))
+        });
+        assert!(found_a, "first marker should appear in screen buffer");
+
+        for session in inst.sessions().values() {
+            session
+                .write_input(format!("echo {}\r\n", marker_b).as_bytes())
+                .expect("second write_input should succeed");
+        }
+
+        // Wait for second marker.
+        let found_b = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+            inst.sessions()
+                .values()
+                .any(|s| s.screen().visible_text().contains(marker_b))
+        });
+        assert!(found_b, "second marker should appear in screen buffer");
+
+        // Both markers should be present, with A appearing before B.
+        let screen_text = inst
+            .sessions()
+            .values()
+            .next()
+            .unwrap()
+            .screen()
+            .visible_text();
+        let pos_a = screen_text.find(marker_a).expect("marker A in screen");
+        let pos_b = screen_text.find(marker_b).expect("marker B in screen");
+        assert!(
+            pos_a < pos_b,
+            "marker A (pos {}) should appear before marker B (pos {}) in screen:\n{}",
+            pos_a,
+            pos_b,
+            screen_text
         );
     }
 }
