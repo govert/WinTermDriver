@@ -772,3 +772,41 @@ for pane_id in layout_tree.panes() {
 - Text centered both horizontally and vertically as a two-line block
 - Uses DirectWrite `CreateTextLayout` for measurement, ensuring accurate centering regardless of text length
 - Clipped via D2D `PushAxisAlignedClip` (same pattern as `paint_pane_viewport`)
+
+---
+
+## wintermdriver-psx.6: Status bar component
+
+`StatusBar` lives in `wtd_ui::status_bar`. Renders a bottom status bar with workspace name, pane path, prefix indicator, and session state.
+
+**Key types:**
+- `StatusBar` — owns state fields and DirectWrite resources; renders via `paint(&self, rt: &ID2D1RenderTarget, y: f32)`
+- `SessionStatus` — UI-side enum: `Creating | Running | Exited { exit_code } | Failed { error } | Restarting { attempt }`
+
+**Public API:**
+- `StatusBar::new(dw_factory) -> Result<Self>` — create with DirectWrite factory
+- `layout(available_width)` — recompute on resize
+- `set_workspace_name(name)`, `set_pane_path(path)`, `set_session_status(status)` — update displayed state
+- `set_prefix_active(bool)`, `set_prefix_label(label)` — show/hide prefix chord indicator
+- `paint(rt, y) -> Result<()>` — render within an active BeginDraw session at vertical offset `y`
+- `height() -> f32` — constant `STATUS_BAR_HEIGHT` (24px)
+
+**Compositing pattern (updated):**
+```rust
+renderer.begin_draw();
+renderer.clear_background();
+tab_strip.paint(renderer.render_target())?;
+// ... pane viewports and pane layout ...
+status_bar.paint(renderer.render_target(), window_height - status_bar.height())?;
+renderer.end_draw()?;
+```
+
+**Design decisions:**
+- Uses Segoe UI 11pt (matching tab strip font choice, slightly smaller)
+- Workspace name: bold, accent color (#4ec9b0) — left-aligned
+- Pane path: regular weight, muted text (#b4b4b4)
+- Session state: right-aligned, color-coded (green=running, yellow=exited, red=failed, gray=creating/restarting)
+- Prefix badge: accent bg (#4ec9b0) with dark text, rounded rect — only visible when `prefix_active` is true
+- Vertical separators between segments
+- Background matches tab strip (#1e1e28); top border line for visual separation
+- `SessionStatus` is a UI-side enum (not importing from `wtd-host::session`) to avoid circular dependency
