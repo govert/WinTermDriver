@@ -345,3 +345,13 @@ Integration tests in `crates/wtd-host/tests/gate_yaml_to_conpty.rs` verify the f
 
 **WorkspaceInstance additions:**
 - `sessions_mut()` — mutable access to sessions HashMap (for draining output via `process_pending_output()`)
+
+---
+
+## wintermdriver-g4u.2: Gate — Input to screen buffer output
+
+Extended `gate_yaml_to_conpty.rs` with two tests verifying the I/O round-trip:
+- `input_sent_to_session_appears_in_screen_buffer` — sends `echo` via `write_input()`, polls `process_pending_output()`, asserts marker in `visible_text()`
+- `multiple_inputs_appear_sequentially_in_screen_buffer` — sends two commands, verifies both markers appear in order
+
+**Test pattern:** Use `sessions()` (immutable) for `write_input(&self)`, then `sessions_mut()` for `process_pending_output(&mut self)`. Poll with `wait_until()` helper (5s timeout, 100ms interval). cmd.exe echoes commands, so markers appear at least twice (command echo + output).
