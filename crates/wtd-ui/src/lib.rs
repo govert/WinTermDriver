@@ -8,5 +8,6 @@
 
 pub mod pane_layout;
 pub mod renderer;
+pub mod status_bar;
 pub mod tab_strip;
 pub mod window;
