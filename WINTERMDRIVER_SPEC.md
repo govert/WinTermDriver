@@ -2851,6 +2851,17 @@ Gated on W5 (rendering technology decision).
 - Populate the `"windows-terminal"` preset with the full set of WT-compatible single-stroke keybindings: tab management (`Ctrl+Shift+T` new tab, `Ctrl+Shift+W` close pane, `Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs, `Ctrl+Alt+<n>` go to tab N), pane management (`Alt+Shift+Plus` split right, `Alt+Shift+Minus` split down, `Alt+Arrow` move focus, `Alt+Shift+Arrow` resize pane), clipboard (`Ctrl+Shift+C` copy, `Ctrl+Shift+V` paste, `Ctrl+C` copy-or-interrupt), scrollback (`Ctrl+Shift+Up`/`Down` scroll, `Ctrl+Shift+PgUp`/`PgDn` scroll page), and UI (`F11` fullscreen, `Ctrl+Shift+P` command palette, `Ctrl+Shift+F` find). Include all WT defaults that have WinTermDriver action equivalents.
 - Add integration tests that verify the preset system: loading `"windows-terminal"` preset produces the expected binding set, loading `"tmux"` preset produces the legacy bindings, user overrides on top of a preset work correctly, and switching presets in a workspace definition is respected.
 
+#### W12: Capture API redesign
+
+**Capability outcome:** `wtd capture` is the primary API for agents to read terminal output. It supports line-count retrieval (`--lines N`), exact and regex anchor search (`--after`, `--after-regex`), output capping (`--max-lines`), count-only probing (`--count`), and full-buffer dumps (`--all`). Agents can inject markers, run commands, and capture from the marker onward — the fundamental read pattern for terminal-driving workflows. The result includes metadata: line count, total buffer size, anchor status, and cursor position for incremental reads.
+
+**Candidate beads:**
+
+- Rewrite the `Capture` and `CaptureResult` IPC message types in `wtd-ipc/src/message.rs`. `Capture` gains optional fields: `lines` (last N lines), `all` (entire buffer), `after` (exact anchor), `after_regex` (regex anchor), `max_lines` (cap output), `count` (metadata only). `CaptureResult` gains: `lines` (count), `total_lines` (buffer size), `anchor_found`, and `cursor` (absolute line index). Update all serde round-trip tests.
+- Implement `capture_extended()` on `ScreenBuffer` in `wtd-pty/src/screen.rs`. Searches scrollback newest-first for anchor matches, supports line-count and all-buffer modes, applies max_lines trimming, and returns `(text, line_count, total_lines, anchor_found, cursor)`. Add `regex` crate dependency. Unit tests for each mode: visible-only, lines-N, anchor-found, anchor-not-found-fallback, regex, all, max_lines, count-only.
+- Wire the new capture API end-to-end: rewrite `handle_capture()` in `wtd-host/src/request_handler.rs` (compile regex, call `capture_extended`, build result), update CLI `Capture` command with `--lines`, `--all`, `--after`, `--after-regex`, `--max-lines`, `--count` flags, update dispatch and output formatting. Text mode prints text (or line count for `--count`), JSON mode includes all metadata fields.
+- Integration test for agent capture workflow: start host, open workspace, send multiple commands with markers, capture with `--after` anchor, verify correct text. Test anchor-not-found fallback to `--lines`, `--count` metadata, `--max-lines` cap, and `--all` full buffer.
+
 ### 37.3 Dependency structure
 
 #### Workset dependencies
@@ -2874,6 +2885,8 @@ W3 + W4 ──► W8 (host runtime wiring) ──► Slice 5 (end-to-end integra
 W9 (CI pipeline) ── no dependency on W8 (can start now, builds and tests existing code)
 
 W11 (WT keybindings) ── depends on W1 (bindings model) + W7 (interaction model)
+
+W12 (capture API redesign) ── depends on W3 (IPC types, screen buffer) + W4 (CLI)
 ```
 
 W5 (rendering spike) has no dependency on W1–W4 and should start early, running in parallel with Slices 1–2.
@@ -2937,6 +2950,10 @@ These can proceed concurrently:
 | Keybinding preset system | Global settings (W1), BindingsDefinition model |
 | WT keybinding preset data | WT keybinding audit, keybinding preset system |
 | Keybinding preset tests | WT keybinding preset data |
+| Capture IPC message redesign | IPC message types (W3) |
+| capture_extended() on ScreenBuffer | Capture IPC message redesign, VT screen buffer (W2) |
+| Capture handler + CLI wiring | capture_extended(), CLI client (W4) |
+| Agent capture integration test | Capture handler + CLI wiring |
 
 ### 37.4 Risks and ambiguities
 
@@ -2992,6 +3009,8 @@ Generate beads in slice order. For each slice, generate beads from the contribut
 **Eighth bead set (post-M7):** Generate W10 beads after M7. README run instructions, agent guidance document, and screenshots all require a working application. Also generate the W9 release workflow bead if not already done.
 
 **Ninth bead set (parallel):** Generate W11 beads (Windows Terminal keybindings) at any time after W1 and W7 are complete. The audit bead can start immediately. The preset system and data beads follow sequentially.
+
+**Tenth bead set (parallel):** Generate W12 beads (capture API redesign) at any time after W3 and W4 are complete. The IPC message bead is immediately ready. The remaining beads chain sequentially.
 
 **Validation beads:** Generate after Slice 5 for end-to-end acceptance testing, performance validation, and error message review. These are cross-cutting and draw from §30, §32, and §36.
 

@@ -10,6 +10,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 wtd-core = { workspace = true }
 vte = { workspace = true }
+regex = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
