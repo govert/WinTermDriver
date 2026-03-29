@@ -355,3 +355,18 @@ Extended `gate_yaml_to_conpty.rs` with two tests verifying the I/O round-trip:
 - `multiple_inputs_appear_sequentially_in_screen_buffer` — sends two commands, verifies both markers appear in order
 
 **Test pattern:** Use `sessions()` (immutable) for `write_input(&self)`, then `sessions_mut()` for `process_pending_output(&mut self)`. Poll with `wait_until()` helper (5s timeout, 100ms interval). cmd.exe echoes commands, so markers appear at least twice (command echo + output).
+
+---
+
+## wintermdriver-g4u.3: Gate — Full headless round-trip via IPC
+
+Integration test in `crates/wtd-host/tests/gate_ipc_round_trip.rs` verifies the complete IPC pipeline: named pipe connect → handshake → OpenWorkspace → Send → Capture → assert.
+
+**Test structure:** `GateHandler` implements `RequestHandler` with `Mutex<GateState>` for interior mutability. Handles three message types:
+- `OpenWorkspace` — loads YAML fixture, creates `WorkspaceInstance`
+- `Send` — resolves pane by name via `find_pane_by_name()`, writes input to session
+- `Capture` — drains `process_pending_output()` for all sessions, returns `visible_text()` from target pane's session
+
+**IPC client test pattern:** Use `connect_client()` (retry loop for pipe availability), `do_handshake()`, `poll_capture_until()` (polls Capture with a predicate and timeout). The `message::Send` payload type name-conflicts with `std::marker::Send` — import as `wtd_ipc::message::Send` or use qualified `message::Send`.
+
+**Key insight:** When polling for echoed output, poll until the marker appears **at least twice** (once in the command echo line, once in the output line) rather than polling for first appearance then checking count separately — avoids timing races between the poll returning and the final capture.
