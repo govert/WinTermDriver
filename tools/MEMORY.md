@@ -376,3 +376,27 @@ Integration test in `crates/wtd-host/tests/gate_ipc_round_trip.rs` verifies the 
 ## wintermdriver-in5.1: M1 Acceptance Gate
 
 `crates/wtd-host/tests/gate_m1_acceptance.rs` — dedicated M1 milestone acceptance test (§37.5). Explicitly validates all six M1 criteria: YAML parsing, profile resolution, ConPTY launch, IPC send, screen buffer population, and capture returning expected output. Uses inline YAML (not fixture file) with its own `M1Handler`. This is the milestone sign-off test; all prior gate tests (g4u.1–g4u.3) validated individual pipeline stages.
+
+---
+
+## wintermdriver-u24.3: Global settings loader and merge precedence
+
+`GlobalSettings` in `wtd-core::global_settings` expanded to full §11.2 schema.
+
+**New types:**
+- `FontConfig` — `family` ("Cascadia Mono"), `size` (12.0), `weight` ("normal")
+- `ThemeConfig` — `name`, `foreground`, `background`, `cursor_color`, `selection_background`, `palette` (16-color xterm)
+- `LogLevel` — `Trace | Debug | Info | Warn | Error` (default `Info`)
+- `SettingsLoadError` — `Io | Yaml`
+
+**New GlobalSettings fields:** `bindings`, `scrollback_lines` (10000), `restart_policy` (Never), `font`, `theme`, `copy_on_select` (false), `confirm_close` (true), `host_idle_shutdown` (None), `log_level` (Info)
+
+**New public API:**
+- `load_global_settings(path) -> Result<GlobalSettings, SettingsLoadError>` — missing file → defaults, empty file → defaults, partial YAML fills defaults via serde
+- `default_bindings() -> BindingsDefinition` — §11.3 built-in keys (10) + chords (15) + prefix "Ctrl+B" + timeout 2000ms
+- `merge_bindings(global, workspace) -> BindingsDefinition` — §11.6 merge: workspace chords/keys override same-key global entries, unoverridden preserved; workspace prefix/timeout override if set
+
+**Design decisions:**
+- `RestartPolicy` now implements `Default` (returns `Never`)
+- All new fields use `#[serde(default = "...")]` so existing code constructing `GlobalSettings::default()` or deserializing partial YAML continues to work
+- Existing `profile_resolver.rs` test that constructed `GlobalSettings { ... }` updated to use `..GlobalSettings::default()`
