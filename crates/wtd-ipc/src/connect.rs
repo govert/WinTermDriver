@@ -96,6 +96,96 @@ pub fn start_host_detached() -> Result<(), ConnectError> {
     ))
 }
 
+// ── Pipe name resolution ─────────────────────────────────────────────
+
+/// Convert raw SID binary bytes to standard string form (`S-1-5-21-…`).
+#[cfg(windows)]
+fn sid_to_string(sid_bytes: &[u8]) -> String {
+    assert!(sid_bytes.len() >= 8, "SID buffer too short");
+    let revision = sid_bytes[0];
+    let sub_count = sid_bytes[1] as usize;
+    let authority = &sid_bytes[2..8];
+
+    let authority_value = if authority[0] != 0 || authority[1] != 0 {
+        format!(
+            "0x{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            authority[0], authority[1], authority[2],
+            authority[3], authority[4], authority[5],
+        )
+    } else {
+        let val = ((authority[2] as u64) << 24)
+            | ((authority[3] as u64) << 16)
+            | ((authority[4] as u64) << 8)
+            | (authority[5] as u64);
+        val.to_string()
+    };
+
+    let mut result = format!("S-{}-{}", revision, authority_value);
+    for i in 0..sub_count {
+        let off = 8 + i * 4;
+        let sub = u32::from_le_bytes([
+            sid_bytes[off],
+            sid_bytes[off + 1],
+            sid_bytes[off + 2],
+            sid_bytes[off + 3],
+        ]);
+        result.push_str(&format!("-{}", sub));
+    }
+    result
+}
+
+/// Build the named-pipe path for the current user: `\\.\pipe\wtd-{SID}`.
+///
+/// Retrieves the current process token's user SID and constructs the
+/// pipe name that `wtd-host` listens on.
+#[cfg(windows)]
+pub fn pipe_name_for_current_user() -> Result<String, ConnectError> {
+    use std::ffi::c_void;
+    use windows::Win32::Foundation::*;
+    use windows::Win32::Security::*;
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let sid_str = unsafe {
+        let process = GetCurrentProcess();
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token)
+            .map_err(|e| ConnectError::PipeName(format!("OpenProcessToken: {e}")))?;
+
+        let mut size = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
+        let mut buf = vec![0u8; size as usize];
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            size,
+            &mut size,
+        )
+        .map_err(|e| {
+            let _ = CloseHandle(token);
+            ConnectError::PipeName(format!("GetTokenInformation: {e}"))
+        })?;
+        let _ = CloseHandle(token);
+
+        let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let psid = token_user.User.Sid;
+        let sid_len = GetLengthSid(psid) as usize;
+        let sid_bytes = std::slice::from_raw_parts(psid.0 as *const u8, sid_len).to_vec();
+        sid_to_string(&sid_bytes)
+    };
+
+    Ok(format!(r"\\.\pipe\wtd-{}", sid_str))
+}
+
+#[cfg(not(windows))]
+pub fn pipe_name_for_current_user() -> Result<String, ConnectError> {
+    Err(ConnectError::PipeName(
+        "named pipes not supported on this platform".into(),
+    ))
+}
+
+// ── Host auto-start ──────────────────────────────────────────────────
+
 /// Ensure the host process is running, auto-starting if necessary (§16.1).
 ///
 /// 1. Check if the named pipe is available.

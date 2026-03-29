@@ -6,20 +6,18 @@
 //!
 //! CLI structure defined per spec §22.
 
-mod cli;
-
 use clap::Parser;
-use cli::{Cli, Command};
+use wtd_cli::cli::{Cli, Command};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     if let Command::Completions { shell } = cli.command {
-        cli::print_completions(shell);
+        wtd_cli::cli::print_completions(shell);
         return;
     }
 
-    // Command dispatch will be implemented in a future bead.
-    eprintln!("wtd: command dispatch not yet implemented");
-    std::process::exit(1);
+    let code = wtd_cli::dispatch::run(cli).await;
+    std::process::exit(code);
 }

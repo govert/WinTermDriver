@@ -61,6 +61,40 @@ pub fn decode(data: &[u8]) -> Result<Envelope, IpcError> {
     Ok(envelope)
 }
 
+// ── Async frame I/O ──────────────────────────────────────────────────
+
+/// Read one length-prefixed frame from an async reader.
+pub async fn read_frame_async(
+    reader: &mut (impl tokio::io::AsyncReadExt + Unpin),
+) -> Result<Envelope, IpcError> {
+    let mut len_buf = [0u8; LENGTH_PREFIX_SIZE];
+    reader.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_MESSAGE_SIZE {
+        return Err(IpcError::MessageTooLarge {
+            size: len,
+            max: MAX_MESSAGE_SIZE,
+        });
+    }
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload).await?;
+    let envelope: Envelope = serde_json::from_slice(&payload)?;
+    Ok(envelope)
+}
+
+/// Write one length-prefixed frame to an async writer.
+pub async fn write_frame_async(
+    writer: &mut (impl tokio::io::AsyncWriteExt + Unpin),
+    envelope: &Envelope,
+) -> Result<(), IpcError> {
+    let frame = encode(envelope)?;
+    writer.write_all(&frame).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+// ── Sync helpers ─────────────────────────────────────────────────────
+
 /// Read the length prefix from the first 4 bytes.
 ///
 /// Returns `None` if fewer than 4 bytes are available. Returns the expected

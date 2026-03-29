@@ -9,6 +9,9 @@ pub mod error;
 pub mod framing;
 pub mod message;
 
+/// IPC protocol version. Both client and host must agree on this.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 pub use error::IpcError;
-pub use framing::{decode, encode, MAX_MESSAGE_SIZE};
+pub use framing::{decode, encode, read_frame_async, write_frame_async, MAX_MESSAGE_SIZE};
 pub use message::{parse_envelope, Envelope, MessagePayload, TypedMessage};
