@@ -400,3 +400,27 @@ Integration test in `crates/wtd-host/tests/gate_ipc_round_trip.rs` verifies the 
 - `RestartPolicy` now implements `Default` (returns `Never`)
 - All new fields use `#[serde(default = "...")]` so existing code constructing `GlobalSettings::default()` or deserializing partial YAML continues to work
 - Existing `profile_resolver.rs` test that constructed `GlobalSettings { ... }` updated to use `..GlobalSettings::default()`
+
+---
+
+## wintermdriver-u24.4: Workspace definition file discovery
+
+Workspace file discovery lives in `wtd-core::workspace_discovery` (§12).
+
+**Key types:**
+- `DiscoveredWorkspace` — `name`, `path: PathBuf`, `source: WorkspaceSource`
+- `WorkspaceSource` — `Explicit | Local | User`
+- `DiscoveryError` — `NotFound | ExplicitFileNotFound | Io`
+
+**Public API:**
+- `find_workspace(name, explicit_file, cwd)` — search using default user workspaces dir
+- `find_workspace_in(name, explicit_file, cwd, user_dir)` — search with explicit user dir (test-friendly)
+- `list_workspaces(cwd)` / `list_workspaces_in(cwd, user_dir)` — scan both sources, returns `Vec<DiscoveredWorkspace>`
+- `user_workspaces_dir()` — `%APPDATA%\WinTermDriver\workspaces` (respects `WTD_DATA_DIR`)
+- `ensure_dir(path)` / `ensure_user_workspaces_dir()` — create directories on first use (§12.3)
+
+**Design decisions:**
+- All functions have `_in` variants accepting explicit `user_dir: &Path` for test isolation (no env var mutation needed)
+- Extension priority: `.yaml` > `.yml` > `.json` — first match in that order wins
+- Listing returns both local and user entries even for the same name (per §12.4)
+- `data_dir()` is private within the module — mirrors `wtd-host::host_lifecycle::data_dir()` pattern
