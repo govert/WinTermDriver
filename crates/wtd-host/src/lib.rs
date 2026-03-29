@@ -7,4 +7,5 @@ pub mod host_lifecycle;
 pub mod ipc_server;
 pub mod pipe_security;
 pub mod session;
+pub mod target_resolver;
 pub mod workspace_instance;

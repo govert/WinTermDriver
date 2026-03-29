@@ -9,6 +9,7 @@ pub mod global_settings;
 pub mod ids;
 pub mod layout;
 pub mod profile_resolver;
+pub mod target;
 pub mod workspace;
 pub mod workspace_discovery;
 pub mod workspace_loader;
@@ -22,4 +23,5 @@ pub use workspace_discovery::{
     ensure_dir, ensure_user_workspaces_dir, find_workspace, find_workspace_in, list_workspaces,
     list_workspaces_in, user_workspaces_dir, DiscoveredWorkspace, DiscoveryError, WorkspaceSource,
 };
+pub use target::{TargetPath, TargetPathError};
 pub use workspace_loader::{load_workspace_definition, LoadError, ValidationError};

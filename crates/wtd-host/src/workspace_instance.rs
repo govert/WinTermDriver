@@ -303,6 +303,50 @@ impl WorkspaceInstance {
             .count()
     }
 
+    // ── Target-resolution helpers ────────────────────────────────────────────
+
+    /// Find a tab by name.
+    pub fn find_tab_by_name(&self, name: &str) -> Option<&TabInstance> {
+        self.tabs.iter().find(|t| t.name() == name)
+    }
+
+    /// Find a pane by name within a specific tab.
+    pub fn find_pane_in_tab(&self, tab: &TabInstance, pane_name: &str) -> Option<PaneId> {
+        for pane_id in tab.layout().panes() {
+            if self.pane_name(&pane_id).map_or(false, |n| n == pane_name) {
+                return Some(pane_id);
+            }
+        }
+        None
+    }
+
+    /// Find all panes matching a name, returning `(PaneId, canonical_path)` pairs.
+    ///
+    /// Canonical path format: `workspace/tab/pane`.
+    pub fn find_all_panes_by_name(&self, name: &str) -> Vec<(PaneId, String)> {
+        let mut results = Vec::new();
+        for tab in &self.tabs {
+            for pane_id in tab.layout().panes() {
+                if self.pane_name(&pane_id).map_or(false, |n| n == name) {
+                    let path = format!("{}/{}/{}", self.name, tab.name(), name);
+                    results.push((pane_id, path));
+                }
+            }
+        }
+        results
+    }
+
+    /// Build the canonical path for a pane (`workspace/tab/pane`).
+    pub fn canonical_pane_path(&self, pane_id: &PaneId) -> Option<String> {
+        let pane_name = self.pane_name(pane_id)?;
+        for tab in &self.tabs {
+            if tab.layout().panes().contains(pane_id) {
+                return Some(format!("{}/{}/{}", self.name, tab.name(), pane_name));
+            }
+        }
+        None
+    }
+
     // ── Action-support methods ────────────────────────────────────────────────
 
     /// Stop the session attached to a pane (if any).
@@ -402,6 +446,76 @@ impl WorkspaceInstance {
         });
 
         inst.state = WorkspaceState::Active;
+        inst
+    }
+
+    /// Create an instance with multiple tabs and named panes for testing.
+    ///
+    /// `tab_specs` is `[(tab_name, [pane_name, ...])]`. Panes are created
+    /// via right-splits within each tab. No real sessions or job objects.
+    #[cfg(test)]
+    pub(crate) fn new_for_test_multi(
+        name: &str,
+        instance_id: u64,
+        tab_specs: &[(&str, &[&str])],
+    ) -> Self {
+        use wtd_core::layout::LayoutTree;
+
+        let mut inst = Self {
+            id: WorkspaceInstanceId(instance_id),
+            name: name.to_string(),
+            state: WorkspaceState::Active,
+            tabs: Vec::new(),
+            sessions: HashMap::new(),
+            panes: HashMap::new(),
+            #[cfg(windows)]
+            job: None,
+            next_session_id: 1,
+            next_tab_id: 1,
+        };
+
+        for (tab_name, pane_names) in tab_specs {
+            assert!(!pane_names.is_empty(), "tab must have at least one pane");
+
+            let tab_id = TabId(inst.next_tab_id);
+            inst.next_tab_id += 1;
+
+            let mut layout = LayoutTree::new();
+            let first_pane = layout.focus();
+            inst.panes.insert(
+                first_pane.clone(),
+                PaneRecord {
+                    name: pane_names[0].to_string(),
+                    state: PaneState::Detached {
+                        error: "test".to_string(),
+                    },
+                    original_def: None,
+                },
+            );
+
+            let mut last_pane = first_pane;
+            for pane_name in &pane_names[1..] {
+                let new_pane = layout.split_right(last_pane).expect("split_right in test");
+                inst.panes.insert(
+                    new_pane.clone(),
+                    PaneRecord {
+                        name: pane_name.to_string(),
+                        state: PaneState::Detached {
+                            error: "test".to_string(),
+                        },
+                        original_def: None,
+                    },
+                );
+                last_pane = new_pane;
+            }
+
+            inst.tabs.push(TabInstance {
+                id: tab_id,
+                name: tab_name.to_string(),
+                layout,
+            });
+        }
+
         inst
     }
 
