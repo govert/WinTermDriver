@@ -1139,3 +1139,32 @@ status_bar.paint(renderer.render_target(), window_height - status_bar.height())?
 - Keystroke test uses direct Session access (not IPC polling) to avoid artificial polling latency
 - Concurrent test uses long-running `cmd.exe` (no `/c`) with startup commands; polls for READY markers
 - Throughput test scales data volume: 10 MB debug, 100 MB release
+
+---
+
+## wintermdriver-nae.3: Tracing infrastructure and diagnostics gate
+
+Tracing infrastructure lives in `wtd-core::logging` (§31). All three processes use the `tracing` crate.
+
+**Workspace dependencies added:** `tracing`, `tracing-subscriber` (with `env-filter` + `fmt` features), `tracing-appender`
+
+**Key functions:**
+- `init_host_logging(log_level, data_dir) -> WorkerGuard` — file appender (daily rotation, 5 files kept) + stderr
+- `init_stderr_logging(log_level)` — stderr only (CLI + UI)
+- `init_host_logging_to_file(level, dir, name) -> WorkerGuard` — test helper, writes to specific file
+- `init_test_logging_to_file(level, dir, name) -> WorkerGuard` — test helper using `try_init`
+- `effective_log_filter(settings_level) -> String` — resolves WTD_LOG env override vs settings level
+- `LogLevel::to_tracing_level()` / `as_filter_str()` — conversion methods
+
+**Integration:**
+- `wtd-host/main.rs`: calls `init_host_logging`, uses `tracing::info!/warn!/error!` macros
+- `wtd-cli/main.rs`: calls `init_stderr_logging`, respects `--verbose` flag (bumps to Debug)
+- `wtd-ui/main.rs`: calls `init_stderr_logging`, uses tracing macros for host events
+
+**Gate test:** `crates/wtd-host/tests/gate_m6_diagnostics.rs` — 24 tests covering §31.1 (log file creation, rotation config, log dir path), §31.2 (level filtering, env override, YAML config), §29 (error message clarity for 16+ error types)
+
+**Design decisions:**
+- `tracing-appender` uses daily rotation (not size-based) — size-based rotation not available in tracing-appender; daily + MAX_LOG_FILES=5 approximates §31.1 target
+- `WorkerGuard` must be held alive for the host process lifetime (non-blocking writer flushes on drop)
+- `init_host_logging` calls `.init()` (panics if already set); test helpers use `.try_init()` (no-ops if already set)
+- `tracing` added as regular dependency to all binary crates (not just dev-dep) so macros are available in library code too
