@@ -9,6 +9,8 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::input::{current_modifiers, vk_to_char, vk_to_key_name, KeyEvent};
+
 // ── Paint / resize signals (atomics) ─────────────────────────────────────────
 
 /// Signals that a `WM_PAINT` was received and the window needs repainting.
@@ -71,6 +73,48 @@ fn mouse_queue() -> &'static Mutex<Vec<MouseEvent>> {
 pub fn drain_mouse_events() -> Vec<MouseEvent> {
     let mut queue = mouse_queue().lock().unwrap();
     std::mem::take(&mut *queue)
+}
+
+// ── Keyboard events ──────────────────────────────────────────────────────────
+
+static KEY_EVENTS: OnceLock<Mutex<Vec<KeyEvent>>> = OnceLock::new();
+
+fn key_queue() -> &'static Mutex<Vec<KeyEvent>> {
+    KEY_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Drain all pending keyboard events from the queue.
+pub fn drain_key_events() -> Vec<KeyEvent> {
+    let mut queue = key_queue().lock().unwrap();
+    std::mem::take(&mut *queue)
+}
+
+/// Build a `KeyEvent` from a Win32 WM_KEYDOWN / WM_SYSKEYDOWN message and
+/// push it to the event queue. Modifier-only keys (Shift, Ctrl, Alt) are
+/// ignored.
+fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
+    let vk = (wparam.0 & 0xFFFF) as u16;
+    let scan_code = ((lparam.0 >> 16) & 0xFF) as u16;
+
+    // Ignore modifier-only keys
+    match vk {
+        0x10 | 0x11 | 0x12 | // VK_SHIFT, VK_CONTROL, VK_MENU
+        0xA0 | 0xA1 |        // VK_LSHIFT, VK_RSHIFT
+        0xA2 | 0xA3 |        // VK_LCONTROL, VK_RCONTROL
+        0xA4 | 0xA5 => return, // VK_LMENU, VK_RMENU
+        _ => {}
+    }
+
+    if let Some(key) = vk_to_key_name(vk) {
+        let modifiers = current_modifiers();
+        let character = vk_to_char(vk, scan_code);
+
+        key_queue().lock().unwrap().push(KeyEvent {
+            key,
+            modifiers,
+            character,
+        });
+    }
 }
 
 // ── Window management ────────────────────────────────────────────────────────
@@ -207,6 +251,20 @@ unsafe extern "system" fn wndproc(
                 x,
                 y,
             });
+            LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            push_key_event(wparam, lparam);
+            LRESULT(0)
+        }
+        WM_SYSKEYDOWN => {
+            // Alt+F4 → let Windows handle (WM_CLOSE → WM_DESTROY)
+            let vk = (wparam.0 & 0xFFFF) as u16;
+            if vk == 0x73 {
+                // VK_F4
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
+            push_key_event(wparam, lparam);
             LRESULT(0)
         }
         WM_DESTROY => {
