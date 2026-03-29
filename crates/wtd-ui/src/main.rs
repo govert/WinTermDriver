@@ -1,16 +1,19 @@
 //! `wtd-ui` — WinTermDriver UI process.
 //!
-//! Demonstrates the tab strip and terminal rendering pipeline: creates a Win32
-//! window with a tab strip at the top, feeds VT sequences into a ScreenBuffer,
-//! and renders everything using Direct2D + DirectWrite.
+//! Demonstrates the tab strip, pane layout, and terminal rendering pipeline:
+//! creates a Win32 window with a tab strip at the top, a multi-pane split
+//! layout, and renders everything using Direct2D + DirectWrite.
 
+use wtd_core::ids::PaneId;
+use wtd_core::layout::LayoutTree;
 use wtd_pty::ScreenBuffer;
+use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
 use wtd_ui::window::{self, MouseEventKind};
 
 fn main() {
-    eprintln!("wtd-ui: tab strip + rendering prototype");
+    eprintln!("wtd-ui: tab strip + pane layout + rendering prototype");
 
     if let Err(e) = run() {
         eprintln!("fatal: {e}");
@@ -22,9 +25,20 @@ fn run() -> anyhow::Result<()> {
     let cols: u16 = 80;
     let rows: u16 = 24;
 
-    // Create a screen buffer and feed VT content into it.
-    let mut screen = ScreenBuffer::new(cols, rows, 1000);
-    feed_demo_content(&mut screen);
+    // Create a layout tree with a multi-pane split.
+    let mut layout_tree = LayoutTree::new();
+    let p1 = layout_tree.focus();
+    let _p2 = layout_tree.split_right(p1.clone()).unwrap();
+    let _p3 = layout_tree.split_down(p1.clone()).unwrap();
+
+    // Create screen buffers for each pane.
+    let mut screens: std::collections::HashMap<PaneId, ScreenBuffer> =
+        std::collections::HashMap::new();
+    for pane_id in layout_tree.panes() {
+        let mut screen = ScreenBuffer::new(cols, rows, 1000);
+        feed_pane_content(&mut screen, &pane_id);
+        screens.insert(pane_id, screen);
+    }
 
     // Create window.
     let hwnd = window::create_terminal_window("WinTermDriver", 1000, 600)?;
@@ -35,8 +49,12 @@ fn run() -> anyhow::Result<()> {
 
     let (cell_w, cell_h) = renderer.cell_size();
     eprintln!(
-        "cell size: {:.1}x{:.1}px, grid: {}x{}",
-        cell_w, cell_h, cols, rows
+        "cell size: {:.1}x{:.1}px, grid: {}x{}, panes: {}",
+        cell_w,
+        cell_h,
+        cols,
+        rows,
+        layout_tree.pane_count()
     );
 
     // Create the tab strip with demo tabs.
@@ -47,14 +65,27 @@ fn run() -> anyhow::Result<()> {
     tab_strip.set_active(0);
 
     let mut window_width: f32 = 1000.0;
+    let mut window_height: f32 = 600.0;
     tab_strip.layout(window_width);
+
+    // Create the pane layout manager.
+    let mut pane_layout = PaneLayout::new(cell_w, cell_h);
+    let content_rows = ((window_height - tab_strip.height()) / cell_h) as u16;
+    let content_cols = (window_width / cell_w) as u16;
+    pane_layout.update(
+        &layout_tree,
+        0.0,
+        tab_strip.height(),
+        content_cols,
+        content_rows,
+    );
 
     // Set initial window title.
     let title = tab_strip.window_title("WinTermDriver");
     window::set_window_title(hwnd, &title);
 
     // Initial paint.
-    paint_all(&renderer, &tab_strip, &screen)?;
+    paint_all(&renderer, &tab_strip, &pane_layout, &layout_tree, &screens)?;
 
     // Message loop with repaint on WM_PAINT / WM_SIZE / mouse events.
     loop {
@@ -67,47 +98,95 @@ fn run() -> anyhow::Result<()> {
             if w > 0 && h > 0 {
                 let _ = renderer.resize(w, h);
                 window_width = w as f32;
+                window_height = h as f32;
                 tab_strip.layout(window_width);
+
+                let content_rows = ((window_height - tab_strip.height()) / cell_h) as u16;
+                let content_cols = (window_width / cell_w) as u16;
+                pane_layout.update(
+                    &layout_tree,
+                    0.0,
+                    tab_strip.height(),
+                    content_cols,
+                    content_rows,
+                );
                 needs_paint = true;
             }
         }
 
         // Process mouse events.
         for event in window::drain_mouse_events() {
-            let action = match event.kind {
-                MouseEventKind::Down => tab_strip.on_mouse_down(event.x, event.y),
-                MouseEventKind::Up => tab_strip.on_mouse_up(event.x, event.y),
-                MouseEventKind::Move => tab_strip.on_mouse_move(event.x, event.y),
-            };
+            // First try the tab strip if event is in the tab strip area.
+            if event.y < tab_strip.height() {
+                let action = match event.kind {
+                    MouseEventKind::Down => tab_strip.on_mouse_down(event.x, event.y),
+                    MouseEventKind::Up => tab_strip.on_mouse_up(event.x, event.y),
+                    MouseEventKind::Move => tab_strip.on_mouse_move(event.x, event.y),
+                };
 
-            if let Some(action) = action {
-                match action {
-                    TabAction::WindowClose => {
-                        unsafe {
-                            let _ =
-                                windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+                if let Some(action) = action {
+                    match action {
+                        TabAction::WindowClose => {
+                            unsafe {
+                                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(
+                                    hwnd,
+                                );
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
+                        TabAction::Create => {
+                            let n = tab_strip.tab_count() + 1;
+                            tab_strip.add_tab(format!("tab-{n}"));
+                            tab_strip.set_active(tab_strip.tab_count() - 1);
+                            tab_strip.layout(window_width);
+                        }
+                        TabAction::Close(_) => {
+                            tab_strip.layout(window_width);
+                        }
+                        TabAction::Reorder { .. } => {
+                            tab_strip.layout(window_width);
+                        }
+                        TabAction::SwitchTo(_) => {}
                     }
-                    TabAction::Create => {
-                        let n = tab_strip.tab_count() + 1;
-                        tab_strip.add_tab(format!("tab-{n}"));
-                        tab_strip.set_active(tab_strip.tab_count() - 1);
-                        tab_strip.layout(window_width);
-                    }
-                    TabAction::Close(_) => {
-                        tab_strip.layout(window_width);
-                    }
-                    TabAction::Reorder { .. } => {
-                        tab_strip.layout(window_width);
-                    }
-                    TabAction::SwitchTo(_) => {}
+                    let title = tab_strip.window_title("WinTermDriver");
+                    window::set_window_title(hwnd, &title);
                 }
-                let title = tab_strip.window_title("WinTermDriver");
-                window::set_window_title(hwnd, &title);
+            } else {
+                // Pane layout area — handle splitter drag and pane focus.
+                let action = match event.kind {
+                    MouseEventKind::Down => pane_layout.on_mouse_down(event.x, event.y),
+                    MouseEventKind::Up => pane_layout.on_mouse_up(event.x, event.y),
+                    MouseEventKind::Move => pane_layout.on_mouse_move(event.x, event.y),
+                };
+
+                if let Some(action) = action {
+                    match action {
+                        PaneLayoutAction::FocusPane(pane_id) => {
+                            let _ = layout_tree.set_focus(pane_id);
+                        }
+                        PaneLayoutAction::Resize {
+                            pane_id,
+                            direction,
+                            cells,
+                        } => {
+                            let content_rows =
+                                ((window_height - tab_strip.height()) / cell_h) as u16;
+                            let content_cols = (window_width / cell_w) as u16;
+                            let total =
+                                wtd_core::layout::Rect::new(0, 0, content_cols, content_rows);
+                            let _ = layout_tree.resize_pane(pane_id, direction, cells, total);
+                            pane_layout.update(
+                                &layout_tree,
+                                0.0,
+                                tab_strip.height(),
+                                content_cols,
+                                content_rows,
+                            );
+                        }
+                    }
+                }
             }
 
-            // Any mouse activity may change hover state, so repaint.
             needs_paint = true;
         }
 
@@ -116,14 +195,12 @@ fn run() -> anyhow::Result<()> {
         }
 
         if needs_paint {
-            paint_all(&renderer, &tab_strip, &screen)?;
+            paint_all(&renderer, &tab_strip, &pane_layout, &layout_tree, &screens)?;
         }
 
-        // Sleep briefly to avoid busy-looping (prototype only — a real UI
-        // would use MsgWaitForMultipleObjects or similar).
+        // Sleep briefly to avoid busy-looping (prototype only).
         std::thread::sleep(std::time::Duration::from_millis(16));
 
-        // Check if the window was closed.
         if !is_window_valid(hwnd) {
             break;
         }
@@ -135,121 +212,94 @@ fn run() -> anyhow::Result<()> {
 fn paint_all(
     renderer: &TerminalRenderer,
     tab_strip: &TabStrip,
-    screen: &ScreenBuffer,
+    pane_layout: &PaneLayout,
+    layout_tree: &LayoutTree,
+    screens: &std::collections::HashMap<PaneId, ScreenBuffer>,
 ) -> anyhow::Result<()> {
     renderer.begin_draw();
     renderer.clear_background();
+
+    // Tab strip.
     let tab_result = tab_strip.paint(renderer.render_target());
-    let screen_result = renderer.paint_screen(screen, tab_strip.height());
+
+    // Pane content: render each pane's screen buffer at its pixel rect.
+    let (cell_w, cell_h) = renderer.cell_size();
+    for pane_id in layout_tree.panes() {
+        if let (Some(rect), Some(screen)) = (
+            pane_layout.pane_pixel_rect(&pane_id),
+            screens.get(&pane_id),
+        ) {
+            // Paint the screen at the pane's position using paint_screen_at.
+            paint_pane_screen(renderer, screen, rect.x, rect.y, rect.width, rect.height, cell_w, cell_h)?;
+        }
+    }
+
+    // Pane borders, splitters, and focus indicator.
+    let focused = layout_tree.focus();
+    let layout_result = pane_layout.paint(renderer.render_target(), &focused);
+
     let end_result = renderer.end_draw();
     tab_result.map_err(|e| anyhow::anyhow!("{e}"))?;
-    screen_result.map_err(|e| anyhow::anyhow!("{e}"))?;
+    layout_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     end_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
+}
+
+/// Paint a screen buffer within a specific pane rectangle.
+fn paint_pane_screen(
+    renderer: &TerminalRenderer,
+    screen: &ScreenBuffer,
+    _x: f32,
+    y: f32,
+    _width: f32,
+    _height: f32,
+    _cell_w: f32,
+    _cell_h: f32,
+) -> anyhow::Result<()> {
+    // For now, use paint_screen with the pane's y offset.
+    // Full per-pane clipping will be added in psx.3 (pane viewport rendering).
+    renderer
+        .paint_screen(screen, y)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn is_window_valid(hwnd: windows::Win32::Foundation::HWND) -> bool {
     unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(hwnd).as_bool() }
 }
 
-/// Feed a variety of VT sequences to demonstrate rendering capabilities.
-fn feed_demo_content(screen: &mut ScreenBuffer) {
+/// Feed VT content that identifies the pane.
+fn feed_pane_content(screen: &mut ScreenBuffer, pane_id: &PaneId) {
     let mut vt = Vec::new();
 
-    // Line 1: Title — bold white on blue
-    vt.extend_from_slice(b"\x1b[1;44;37m WinTermDriver Rendering Prototype \x1b[0m\r\n");
-    vt.extend_from_slice(b"\r\n");
-
-    // Line 3: Standard ANSI colors (foreground)
-    vt.extend_from_slice(b"  Standard colors: ");
-    for i in 0..8u8 {
-        let code = 30 + i;
-        vt.extend_from_slice(format!("\x1b[{code}m\u{2588}\u{2588}").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-
-    // Line 4: Bright ANSI colors (foreground)
-    vt.extend_from_slice(b"  Bright colors:   ");
-    for i in 0..8u8 {
-        let code = 90 + i;
-        vt.extend_from_slice(format!("\x1b[{code}m\u{2588}\u{2588}").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-
-    // Line 5: Background colors
-    vt.extend_from_slice(b"  Backgrounds:     ");
-    for i in 0..8u8 {
-        let code = 40 + i;
-        vt.extend_from_slice(format!("\x1b[{code}m  ").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-
-    // Line 6: Bright backgrounds
-    vt.extend_from_slice(b"  Bright BG:       ");
-    for i in 0..8u8 {
-        let code = 100 + i;
-        vt.extend_from_slice(format!("\x1b[{code}m  ").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-    vt.extend_from_slice(b"\r\n");
-
-    // Line 8: Text attributes
-    vt.extend_from_slice(b"  \x1b[1mBold\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[2mDim\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[3mItalic\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[4mUnderline\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[7mInverse\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[9mStrikethrough\x1b[0m\r\n");
-
-    // Line 9: Combined attributes
-    vt.extend_from_slice(b"  \x1b[1;3mBold+Italic\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[1;4mBold+Underline\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[1;3;4mBold+Italic+UL\x1b[0m\r\n");
-    vt.extend_from_slice(b"\r\n");
-
-    // Line 11: 256-color samples
-    vt.extend_from_slice(b"  256-color: ");
-    for i in (16..52u8).step_by(1) {
-        vt.extend_from_slice(format!("\x1b[38;5;{i}m\u{2588}").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-
-    // Line 12: RGB truecolor gradient
-    vt.extend_from_slice(b"  Truecolor: ");
-    for i in (0..=255u16).step_by(8) {
-        let r = i.min(255) as u8;
-        let g = 0u8;
-        let b = (255 - i.min(255)) as u8;
-        vt.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m\u{2588}").as_bytes());
-    }
-    vt.extend_from_slice(b"\x1b[0m\r\n");
-    vt.extend_from_slice(b"\r\n");
-
-    // Line 14: Colored text samples
-    vt.extend_from_slice(b"  \x1b[31mRed text\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[32mGreen text\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[33mYellow text\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[34mBlue text\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[35mMagenta text\x1b[0m\r\n");
-
-    // Line 15: Bold colored text
-    vt.extend_from_slice(b"  \x1b[1;31mBold Red\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[1;32mBold Green\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[1;33mBold Yellow\x1b[0m  ");
-    vt.extend_from_slice(b"\x1b[1;34mBold Blue\x1b[0m\r\n");
-    vt.extend_from_slice(b"\r\n");
-
-    // Line 17: Prompt-like output
-    vt.extend_from_slice(b"  \x1b[32muser@host\x1b[0m:\x1b[34m~/projects\x1b[0m$ ls -la\r\n");
+    // Pane header.
     vt.extend_from_slice(
-        b"  drwxr-xr-x  2 user user 4096 Mar 28 10:00 \x1b[1;34msrc\x1b[0m\r\n",
+        format!("\x1b[1;44;37m Pane {} \x1b[0m\r\n", pane_id).as_bytes(),
     );
-    vt.extend_from_slice(
-        b"  -rw-r--r--  1 user user  256 Mar 28 10:00 \x1b[0mCargo.toml\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"  -rwxr-xr-x  1 user user 8192 Mar 28 10:00 \x1b[1;32mtarget\x1b[0m\r\n",
-    );
+    vt.extend_from_slice(b"\r\n");
+
+    // Colored content per pane.
+    match pane_id.0 {
+        1 => {
+            vt.extend_from_slice(
+                b"  \x1b[32muser@host\x1b[0m:\x1b[34m~/projects\x1b[0m$ ls -la\r\n",
+            );
+            vt.extend_from_slice(
+                b"  drwxr-xr-x  2 user user 4096 Mar 28 \x1b[1;34msrc\x1b[0m\r\n",
+            );
+            vt.extend_from_slice(
+                b"  -rw-r--r--  1 user user  256 Mar 28 \x1b[0mCargo.toml\x1b[0m\r\n",
+            );
+        }
+        2 => {
+            vt.extend_from_slice(b"  \x1b[33mcargo build\x1b[0m\r\n");
+            vt.extend_from_slice(b"  \x1b[32m   Compiling\x1b[0m wtd-core v0.1.0\r\n");
+            vt.extend_from_slice(b"  \x1b[32m   Compiling\x1b[0m wtd-ui v0.1.0\r\n");
+            vt.extend_from_slice(b"  \x1b[32m    Finished\x1b[0m dev target(s)\r\n");
+        }
+        _ => {
+            vt.extend_from_slice(b"  \x1b[36mReady.\x1b[0m\r\n");
+        }
+    }
 
     screen.advance(&vt);
 }

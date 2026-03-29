@@ -653,3 +653,49 @@ Comprehensive E2E test suite in `crates/wtd-cli/tests/e2e_commands.rs` (27 tests
 - Colors: dark theme matching terminal bg (#1a1a26); accent #4ec9b0 for active indicator
 - `close_tab` on last tab returns `WindowClose` (caller should destroy window)
 - Tab strip paints within caller's BeginDraw/EndDraw session (no own draw cycle)
+
+---
+
+## wintermdriver-psx.2: Pane layout component
+
+`PaneLayout` lives in `wtd_ui::pane_layout`. Renders pane borders, splitter bars, and focus indicators. Handles mouse interaction for splitter dragging and pane focusing.
+
+**Key types:**
+- `PaneLayout` — manages pane pixel rects, splitter detection, drag state, and painting
+- `PixelRect` — `{ x, y, width, height }` in f32 pixel coordinates
+- `PaneLayoutAction` — enum: `FocusPane(PaneId) | Resize { pane_id, direction, cells }`
+- `CursorHint` — enum: `Arrow | ResizeHorizontal | ResizeVertical`
+
+**Public API:**
+- `PaneLayout::new(cell_width, cell_height)` — create with cell dimensions
+- `update(&mut self, tree, origin_x, origin_y, cols, rows)` — recompute from LayoutTree
+- `paint(&self, rt, focused_pane) -> Result<()>` — render borders, splitters, focus indicator
+- `pane_pixel_rect(pane_id) -> Option<PixelRect>` — get pixel rect for a pane
+- `pane_pixel_rects() -> &HashMap<PaneId, PixelRect>` — all pane rects
+- `on_mouse_down/move/up(x, y) -> Option<PaneLayoutAction>` — mouse interaction
+- `cursor_hint(x, y) -> CursorHint` — what cursor shape to show
+- `is_dragging() -> bool` — whether a splitter drag is active
+- `splitter_count() -> usize` — number of detected splitters
+
+**Splitter detection:** Derived from pane cell rects — finds shared edges between adjacent panes (right edge == left edge for vertical splitters, bottom edge == top edge for horizontal). Segments at the same position are merged.
+
+**Splitter drag:** On mouse down near a splitter, enters drag mode. Mouse move accumulates pixel delta, converts to cell increments, and emits `PaneLayoutAction::Resize` with `ResizeDirection`. Caller applies via `LayoutTree::resize_pane()` then calls `update()`.
+
+**Compositing pattern:**
+```rust
+renderer.begin_draw();
+renderer.clear_background();
+tab_strip.paint(renderer.render_target())?;
+// paint each pane's screen buffer at its pixel rect
+pane_layout.paint(renderer.render_target(), &focused_pane)?;
+renderer.end_draw()?;
+```
+
+**Design decisions:**
+- Splitter thickness: 2px visual, 4px hit zone each side (8px total hit area)
+- Focus border: 2px accent (#4ec9b0) matching tab strip accent color
+- Unfocused pane border: 1px subtle (#2d2d3a)
+- Splitter color: #3c3c4b normal, #5a5a6e on hover/drag
+- Orientation naming: `Orientation::Horizontal` split has a vertical splitter line (divides left/right)
+- `pane_before` in SplitterInfo is the pane to the left/above — used for resize direction
+- Per-pane viewport clipping deferred to psx.3 (terminal content rendering in pane viewports)
