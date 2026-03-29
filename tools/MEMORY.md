@@ -370,3 +370,9 @@ Integration test in `crates/wtd-host/tests/gate_ipc_round_trip.rs` verifies the 
 **IPC client test pattern:** Use `connect_client()` (retry loop for pipe availability), `do_handshake()`, `poll_capture_until()` (polls Capture with a predicate and timeout). The `message::Send` payload type name-conflicts with `std::marker::Send` — import as `wtd_ipc::message::Send` or use qualified `message::Send`.
 
 **Key insight:** When polling for echoed output, poll until the marker appears **at least twice** (once in the command echo line, once in the output line) rather than polling for first appearance then checking count separately — avoids timing races between the poll returning and the final capture.
+
+---
+
+## wintermdriver-in5.1: M1 Acceptance Gate
+
+`crates/wtd-host/tests/gate_m1_acceptance.rs` — dedicated M1 milestone acceptance test (§37.5). Explicitly validates all six M1 criteria: YAML parsing, profile resolution, ConPTY launch, IPC send, screen buffer population, and capture returning expected output. Uses inline YAML (not fixture file) with its own `M1Handler`. This is the milestone sign-off test; all prior gate tests (g4u.1–g4u.3) validated individual pipeline stages.
