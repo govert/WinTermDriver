@@ -1058,3 +1058,29 @@ Integration test in `crates/wtd-ui/tests/gate_host_to_pane.rs` verifies the full
 - `server.broadcast_to_ui()` only called after all request/response interactions complete
 - Base64 encode/decode implemented locally in test (same algorithm as `host_bridge.rs`)
 - Hidden test window via Win32 `CreateWindowExW` + `WS_OVERLAPPEDWINDOW` (not shown)
+
+---
+
+## wintermdriver-jxt.3: Gate — Status bar and failed pane display
+
+Integration tests in `crates/wtd-ui/tests/gate_status_bar_failed_pane.rs` (8 tests) verify status bar rendering and failed/exited pane overlays per §24.5, §24.8. Closes Slice 3.
+
+**Test coverage:**
+1. Status bar shows workspace name, pane path, and running state
+2. Status bar renders all `SessionStatus` variants (Creating, Running, Exited, Failed, Restarting)
+3. Status bar renders prefix-active indicator (Ctrl+B badge)
+4. Failed pane overlay with `failed_pane_message()` + `RESTART_HINT`
+5. Exited pane overlay with `exited_pane_message()` for various exit codes
+6. Full composited frame: tab strip + live pane + failed pane overlay + status bar
+7. Composited frame with exited pane and status bar reflecting exited state
+8. Status bar state transitions (creating → running → exited → restarting cycle)
+
+**Compositing pattern for failed/exited panes:**
+```rust
+// For attached panes:
+renderer.paint_pane_viewport(&screen, rect.x, rect.y, rect.width, rect.height, None)?;
+// For detached/failed panes:
+renderer.paint_failed_pane(&message, rect.x, rect.y, rect.width, rect.height)?;
+// Status bar at bottom:
+status_bar.paint(renderer.render_target(), window_height - status_bar.height())?;
+```
