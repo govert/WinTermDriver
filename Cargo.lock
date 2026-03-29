@@ -646,7 +646,9 @@ dependencies = [
  "thiserror",
  "tokio",
  "wtd-core",
+ "wtd-host",
  "wtd-ipc",
+ "wtd-pty",
 ]
 
 [[package]]
