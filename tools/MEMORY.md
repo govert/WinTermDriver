@@ -1168,3 +1168,17 @@ Tracing infrastructure lives in `wtd-core::logging` (§31). All three processes 
 - `WorkerGuard` must be held alive for the host process lifetime (non-blocking writer flushes on drop)
 - `init_host_logging` calls `.init()` (panics if already set); test helpers use `.try_init()` (no-ops if already set)
 - `tracing` added as regular dependency to all binary crates (not just dev-dep) so macros are available in library code too
+
+---
+
+## wintermdriver-gp6.5: CLI request timeout protection
+
+`IpcClient` now has a `timeout: Duration` field (default `DEFAULT_TIMEOUT = 30s`). `set_timeout(&mut self, Duration)` allows callers to override.
+
+**Changes:**
+- `ClientError::RequestTimeout(f64)` — new variant with duration in seconds
+- `IpcClient::request()` wraps `read_frame_async` in `tokio::time::timeout`; handshake also uses timeout
+- `--timeout <seconds>` global CLI flag (f64, applies to all commands via `dispatch::run`)
+- `exit_code::TIMEOUT = 10` used for timeout errors in dispatch
+
+**Test:** `crates/wtd-cli/tests/test_request_timeout.rs` — `NeverRespondHandler` returns `None` so server sends no response; client with 500ms timeout verifies `RequestTimeout` error and timing.
