@@ -149,3 +149,35 @@ All IPC message types live in `wtd-ipc::message`. Framing in `wtd-ipc::framing`.
 - `Send.newline` defaults to `true`; `InvokeAction.args` defaults to `{}`
 - State snapshots in results (e.g. `AttachWorkspaceResult.state`) use `serde_json::Value` — concrete types deferred to host implementation beads
 - `IpcError` extended with `MessageTooLarge` and `FrameTooShort` variants
+
+---
+
+## wintermdriver-8w8.2: Session manager with restart and backoff
+
+Session lifecycle lives in `wtd-host::session`. Backoff logic in `wtd-host::backoff`. The `wtd-host` crate is now lib+bin (has both `src/lib.rs` and `src/main.rs`).
+
+**Key types:**
+- `Session` — owns a `PtySession`, `ScreenBuffer`, reader thread, and backoff state
+- `SessionState` — enum: `Creating | Running | Exited { exit_code } | Failed { error } | Restarting { attempt }`
+- `SessionConfig` — `executable`, `args`, `cwd`, `env`, `restart_policy`, `startup_command`, `size`, `name`, `max_scrollback`
+- `SessionError` — `Pty(PtyError)` | `NotRunning`
+- `BackoffState` — tracks restart count and computes exponential delays
+
+**Public API:**
+- `Session::new(id, config)` — create in `Creating` state
+- `Session::start()` — spawn ConPTY child, start reader thread, deliver startup command after 100ms
+- `Session::write_input(data)` — write to child stdin
+- `Session::process_pending_output()` — drain reader thread into screen buffer
+- `Session::check_exit() -> Option<u32>` — poll for exit, returns exit code if exited
+- `Session::should_restart() -> bool` — evaluate restart policy against current state
+- `Session::next_restart_delay() -> Duration` — get next backoff delay
+- `Session::restart()` — tear down old child, clear screen, spawn fresh
+
+**Design decisions:**
+- Reader thread uses raw HANDLE passed as `usize` across thread boundary (HANDLE wraps `*mut c_void` which is `!Send`)
+- Output flows via `mpsc::channel<Vec<u8>>` from reader thread; `process_pending_output()` drains into ScreenBuffer
+- Startup command delivered by a detached thread that sleeps 100ms then writes to the raw input handle
+- `PtySession::process_handle()` added to expose the child process HANDLE for `GetExitCodeProcess`
+- On restart, PtySession is dropped (closes ConPTY + handles), reader thread detects pipe close and exits, then new PTY is spawned
+- `PtySession::spawn` does NOT yet accept environment variables; env from `SessionConfig` is not passed to CreateProcess (future bead needed)
+- Backoff formula: `min(500 * 2^(count-1), 30000)` ms; resets after 60s stable run

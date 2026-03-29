@@ -260,6 +260,13 @@ impl PtySession {
     pub fn input_write_handle(&self) -> HANDLE {
         self.input_write.0
     }
+
+    /// Returns the raw process handle for the child process.
+    ///
+    /// Callers can use this with `GetExitCodeProcess` or other Win32 APIs.
+    pub fn process_handle(&self) -> HANDLE {
+        self.process_handle.0
+    }
 }
 
 impl Drop for PtySession {
