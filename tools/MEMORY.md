@@ -1119,3 +1119,23 @@ status_bar.paint(renderer.render_target(), window_height - status_bar.height())?
 - `AttachSnapshot` does not implement `Serialize`; build JSON manually in handler
 - `new_for_test_multi` is `#[cfg(test)] pub(crate)` — not accessible from integration tests; use `WorkspaceInstance::open` with YAML instead
 - SID format varies (S-1-5- for NT Authority, S-1-12- for AzureAD); check for `S-1-` not `S-1-5-`
+
+---
+
+## wintermdriver-nae.2: M6 Performance Gate
+
+`crates/wtd-host/tests/gate_m6_performance.rs` — validates all §30 performance targets with 6 tests.
+
+**Tests:**
+1. `capture_response_under_100ms` — IPC capture round-trip latency (20 iterations, median)
+2. `keystroke_to_echo_under_50ms` — Direct session: write_input → process_pending_output → screen buffer (single char echo)
+3. `workspace_open_5_sessions_under_2s` — 5-pane YAML → WorkspaceInstance::open via IPC
+4. `screen_buffer_throughput_100mbps` — ScreenBuffer::advance() with colored VT content
+5. `screen_buffer_frame_advance_under_16ms` — Single full-screen VT repaint (50 iterations, median)
+6. `concurrent_sessions_20_plus` — 24 long-running cmd.exe sessions, startup command polling, concurrent write verification
+
+**Design decisions:**
+- Debug vs release targets: throughput (5 MB/s debug / 100 MB/s release), keystroke echo (100ms debug / 50ms release) — `cfg!(debug_assertions)` gates
+- Keystroke test uses direct Session access (not IPC polling) to avoid artificial polling latency
+- Concurrent test uses long-running `cmd.exe` (no `/c`) with startup commands; polls for READY markers
+- Throughput test scales data volume: 10 MB debug, 100 MB release
