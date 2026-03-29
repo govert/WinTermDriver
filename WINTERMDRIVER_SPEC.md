@@ -2710,6 +2710,14 @@ Proves the full interaction model. The application is usable as a real terminal 
 
 Draws from worksets: W6 (status bar, failed pane display), W7 (keyboard pipeline, prefix chords, mouse, clipboard, command palette).
 
+#### Slice 5: End-to-end integration
+
+Start `wtd-host` with a real request handler, open a workspace via `wtd open`, send input via `wtd send`, capture output via `wtd capture`, invoke actions, and verify the full lifecycle from CLI to ConPTY and back. Attach a UI client and verify it receives live session output broadcasts.
+
+Proves that all independently-tested components are wired together into a working application. This is the integration validation that was missing after W1–W7 completed.
+
+Draws from worksets: W8 (host request handler, session I/O broadcast, workspace runtime loading, action dispatch wiring, CLI timeouts, AttachWorkspace state).
+
 ### 37.2 Worksets
 
 Each workset is a major capability area. Worksets are larger than beads but smaller than the full design. Each one answers: "what meaningful capability becomes real when this is done?"
@@ -2799,6 +2807,19 @@ Gated on W5 (rendering technology decision).
 - Implement clipboard operations: copy strips VT formatting, paste supports bracketed paste mode, copy-on-select is configurable (§24.7).
 - Build the command palette with fuzzy search, action listing with keybinding hints, and target selection for targeted actions (§24.6).
 
+#### W8: Host runtime wiring
+
+**Capability outcome:** The host process is a working application, not a collection of independently-tested components. The `StubHandler` is replaced with a real `HostRequestHandler` that dispatches IPC requests to the existing workspace manager, session manager, and action dispatcher. ConPTY output flows from sessions through IPC to connected UI clients in real time. Workspaces can be loaded from YAML files at runtime via IPC. The CLI has timeout protection against unresponsive hosts.
+
+**Candidate beads:**
+
+- Replace `StubHandler` in `wtd-host/src/main.rs` with a real `HostRequestHandler` that owns a `WorkspaceManager`, `SessionManager`, and `ActionDispatcher`, and dispatches all IPC request types (`OpenWorkspace`, `AttachWorkspace`, `Send`, `Capture`, `InvokeAction`, `ListWorkspaces`, `ListPanes`, `InspectPane`, `CloseWorkspace`) to the appropriate component (§8.1, §13.9–13.13).
+- Wire session I/O broadcasting: a background task drains `ConPTY` output from each session's reader thread, feeds it to the session's `ScreenBuffer`, and broadcasts `SessionOutput` messages to all connected UI clients via `IpcServer::broadcast_to_ui` (§13.10, §14.2).
+- Populate `AttachWorkspaceResult` with the full workspace state — layout tree, session IDs and states, pane-session map — so UI clients can initialize their view on attach (§13.12).
+- Wire runtime workspace loading: when `OpenWorkspace` includes a `file` path, read the file, call `load_workspace_definition`, create a `WorkspaceInstance`, spawn ConPTY sessions, and register the instance in the host's workspace registry (§8.1, §10.3).
+- Add request timeout protection to the CLI IPC client: wrap `read_frame_async` with `tokio::time::timeout` (default 30s), return a clear error on timeout, and expose a `--timeout` flag on all CLI commands (§9.2).
+- Wire the `ActionDispatcher` into the host request handler: `InvokeAction` messages resolve the target workspace and pane, call `dispatcher.dispatch`, handle the `ActionResult`, and return success or a structured error (§18.1–18.3).
+
 ### 37.3 Dependency structure
 
 #### Workset dependencies
@@ -2812,13 +2833,19 @@ W2 (terminal core) ──────┘         │
 W5 (rendering spike) ──► W6 (UI rendering) ──► W7 (UI interaction)
                                    │                    │
                                    └──► Slice 3         └──► Slice 4
+
+W3 + W4 ──► W8 (host runtime wiring) ──► Slice 5 (end-to-end integration)
+                     │
+                     └──► W6 (UI IPC client needs real host responses)
 ```
 
 W5 (rendering spike) has no dependency on W1–W4 and should start early, running in parallel with Slices 1–2.
 
+W8 (host runtime wiring) depends on W1–W4 being complete — it wires together the components those worksets produced. It is a prerequisite for any end-to-end integration testing.
+
 #### Critical path
 
-W1 → W3 (session manager, workspace instance manager) → W3 (IPC server) → W4 (CLI client) → Slice 1 → Slice 2.
+W1 → W3 (session manager, workspace instance manager) → W3 (IPC server) → W4 (CLI client) → Slice 1 → Slice 2 → W8 → Slice 5.
 
 The UI path is: W5 → W6 → W7 → Slice 3 → Slice 4.
 
@@ -2853,6 +2880,12 @@ These can proceed concurrently:
 | Mouse input | Terminal content rendering |
 | Clipboard | Terminal content rendering (for selection) |
 | Command palette | Window and tab chrome, action registry |
+| Host request handler | IPC server, session manager, workspace instance manager, action dispatcher |
+| Session I/O broadcast | Session manager (output reader), IPC server (broadcast_to_ui) |
+| Workspace runtime loading | Workspace definition parsing, profile resolution, session manager |
+| CLI request timeouts | CLI IPC client |
+| Action dispatch wiring | Host request handler, action dispatcher |
+| AttachWorkspace state | Workspace instance manager, layout tree |
 
 ### 37.4 Risks and ambiguities
 
@@ -2884,6 +2917,7 @@ Milestones are mapped to slice completions. Each milestone has a concrete defini
 | **M4: Visual terminal** | Slice 3 | A window displays tabs and split panes with live terminal content from the host. Tab switching works. Pane focus indicators are visible. The status bar shows workspace and pane information. |
 | **M5: Interactive workspace** | Slice 4 | Typing works in panes. Single-stroke keybindings dispatch actions. Prefix chords work (`Ctrl+B,%` splits right). Mouse click changes pane focus. Text selection and copy/paste work. The command palette opens, searches, and dispatches actions. |
 | **M6: Validated release** | Post-Slice 4 | All acceptance criteria (§36) pass. Performance targets (§30) are met. Logging is operational. Error messages are clear and complete. |
+| **M7: Runnable application** | Slice 5 | `wtd-host` starts with a real request handler. `wtd open dev.yaml` creates a workspace with live ConPTY sessions. `wtd send` and `wtd capture` work end-to-end. A UI client receives live session output via IPC broadcast. Actions dispatched via CLI modify the workspace layout. The application is runnable, not just testable. |
 
 ### 37.6 Recommended bead generation order
 
@@ -2899,7 +2933,9 @@ Generate beads in slice order. For each slice, generate beads from the contribut
 
 **Fifth bead set (Slice 4):** Generate W7 beads after W6 beads are substantially complete.
 
-**Validation beads:** Generate after Slice 4 for end-to-end acceptance testing, performance validation, and error message review. These are cross-cutting and draw from §30, §32, and §36.
+**Sixth bead set (Slice 5):** Generate W8 beads after W1–W4 beads are complete. These wire the independently-tested components into a working host process. The host request handler, session I/O broadcast, workspace runtime loading, and action dispatch wiring are the critical path to a runnable application.
+
+**Validation beads:** Generate after Slice 5 for end-to-end acceptance testing, performance validation, and error message review. These are cross-cutting and draw from §30, §32, and §36.
 
 ---
 
