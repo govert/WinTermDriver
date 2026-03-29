@@ -1,0 +1,270 @@
+{
+  "_comment": "Expected WinTermDriver keybinding preset mirroring Windows Terminal defaults. Used by tests for the windows-terminal preset (wintermdriver-h35.3). Source: microsoft/terminal defaults.json + WT documentation.",
+  "preset_name": "windows-terminal",
+  "source_version": "Windows Terminal 1.21 (main branch, 2025)",
+  "bindings": {
+    "prefix": null,
+    "prefix_timeout": null,
+    "keys": {
+      "Ctrl+Shift+T":    "new-tab",
+      "Ctrl+Shift+W":    "close-pane",
+      "Ctrl+Shift+C":    "copy",
+      "Ctrl+Shift+V":    "paste",
+      "Ctrl+Tab":        "next-tab",
+      "Ctrl+Shift+Tab":  "prev-tab",
+      "Ctrl+Shift+P":    "toggle-command-palette",
+      "F11":             "toggle-fullscreen",
+      "Alt+Shift+Plus":  "split-right",
+      "Alt+Shift+Minus": "split-down",
+      "Alt+Down":        "focus-pane-down",
+      "Alt+Up":          "focus-pane-up",
+      "Alt+Left":        "focus-pane-left",
+      "Alt+Right":       "focus-pane-right",
+      "Alt+Shift+Down":  "resize-pane-grow-down",
+      "Alt+Shift+Up":    "resize-pane-shrink-down",
+      "Alt+Shift+Right": "resize-pane-grow-right",
+      "Alt+Shift+Left":  "resize-pane-shrink-right",
+      "Ctrl+Insert":     "copy",
+      "Shift+Insert":    "paste"
+    },
+    "chords": null
+  },
+  "wt_actions_omitted": [
+    {
+      "wt_command": "openNewTabDropdown",
+      "wt_keys": ["ctrl+shift+space"],
+      "reason": "WT-specific profile picker dropdown; no WTD equivalent (command palette uses Ctrl+Shift+P instead)"
+    },
+    {
+      "wt_command": "openSettings (settingsUI)",
+      "wt_keys": ["ctrl+,"],
+      "reason": "No WTD settings UI in v1"
+    },
+    {
+      "wt_command": "openSettings (settingsFile)",
+      "wt_keys": ["ctrl+shift+,"],
+      "reason": "No WTD in-app settings file editor"
+    },
+    {
+      "wt_command": "openSettings (defaultsFile)",
+      "wt_keys": ["ctrl+alt+,"],
+      "reason": "No WTD defaults file editor"
+    },
+    {
+      "wt_command": "find",
+      "wt_keys": ["ctrl+shift+f"],
+      "reason": "In-pane text search not in WTD v1 action catalog"
+    },
+    {
+      "wt_command": "newWindow",
+      "wt_keys": ["ctrl+shift+n"],
+      "reason": "WTD new-window action exists but requires workspace context; omitted from preset"
+    },
+    {
+      "wt_command": "duplicateTab",
+      "wt_keys": ["ctrl+shift+d"],
+      "reason": "No WTD duplicate-tab action"
+    },
+    {
+      "wt_command": "switchToTab (0..7)",
+      "wt_keys": ["ctrl+alt+1", "ctrl+alt+2", "ctrl+alt+3", "ctrl+alt+4", "ctrl+alt+5", "ctrl+alt+6", "ctrl+alt+7", "ctrl+alt+8"],
+      "reason": "WTD goto-tab action exists but no profile-index-based launch"
+    },
+    {
+      "wt_command": "switchToTab (last)",
+      "wt_keys": ["ctrl+alt+9"],
+      "reason": "WTD goto-tab has no 'last' semantic"
+    },
+    {
+      "wt_command": "newTab (profile by index)",
+      "wt_keys": ["ctrl+shift+1", "ctrl+shift+2", "ctrl+shift+3", "ctrl+shift+4", "ctrl+shift+5", "ctrl+shift+6", "ctrl+shift+7", "ctrl+shift+8", "ctrl+shift+9"],
+      "reason": "WTD new-tab does not support profile-index parameter"
+    },
+    {
+      "wt_command": "selectAll",
+      "wt_keys": ["ctrl+shift+a"],
+      "reason": "No WTD select-all action in v1"
+    },
+    {
+      "wt_command": "markMode",
+      "wt_keys": ["ctrl+shift+m"],
+      "reason": "No WTD mark mode action in v1"
+    },
+    {
+      "wt_command": "scrollUp",
+      "wt_keys": ["ctrl+shift+up"],
+      "reason": "WTD uses enter-scrollback-mode (modal); no line-scroll action in v1"
+    },
+    {
+      "wt_command": "scrollDown",
+      "wt_keys": ["ctrl+shift+down"],
+      "reason": "WTD uses enter-scrollback-mode (modal); no line-scroll action in v1"
+    },
+    {
+      "wt_command": "scrollUpPage",
+      "wt_keys": ["ctrl+shift+pgup"],
+      "reason": "WTD uses enter-scrollback-mode (modal); no page-scroll action in v1"
+    },
+    {
+      "wt_command": "scrollDownPage",
+      "wt_keys": ["ctrl+shift+pgdn"],
+      "reason": "WTD uses enter-scrollback-mode (modal); no page-scroll action in v1"
+    },
+    {
+      "wt_command": "scrollToTop",
+      "wt_keys": ["ctrl+shift+home"],
+      "reason": "No WTD scroll-to-top action in v1"
+    },
+    {
+      "wt_command": "scrollToBottom",
+      "wt_keys": ["ctrl+shift+end"],
+      "reason": "No WTD scroll-to-bottom action in v1"
+    },
+    {
+      "wt_command": "clearBuffer",
+      "wt_keys": ["ctrl+shift+k"],
+      "reason": "No WTD clear-buffer action in v1"
+    },
+    {
+      "wt_command": "adjustFontSize (increase)",
+      "wt_keys": ["ctrl+plus", "ctrl+numpad_plus"],
+      "reason": "No WTD font size action; numpad keys not representable in WTD key specs"
+    },
+    {
+      "wt_command": "adjustFontSize (decrease)",
+      "wt_keys": ["ctrl+minus", "ctrl+numpad_minus"],
+      "reason": "No WTD font size action; numpad keys not representable in WTD key specs"
+    },
+    {
+      "wt_command": "resetFontSize",
+      "wt_keys": ["ctrl+0", "ctrl+numpad_0"],
+      "reason": "No WTD reset-font-size action; numpad keys not representable in WTD key specs"
+    },
+    {
+      "wt_command": "closeWindow",
+      "wt_keys": ["alt+f4"],
+      "reason": "OS-level close; WTD close-window action requires workspace context"
+    },
+    {
+      "wt_command": "toggleFullscreen (alt+enter)",
+      "wt_keys": ["alt+enter"],
+      "reason": "Secondary binding omitted; F11 is sufficient and matches WTD default"
+    },
+    {
+      "wt_command": "openSystemMenu",
+      "wt_keys": ["alt+space"],
+      "reason": "OS system menu; not applicable to WTD"
+    },
+    {
+      "wt_command": "quakeMode",
+      "wt_keys": ["win+sc(41)"],
+      "reason": "Quake/summon mode not in WTD v1; scan code keys not supported in WTD"
+    },
+    {
+      "wt_command": "showSuggestions",
+      "wt_keys": ["ctrl+shift+."],
+      "reason": "Shell suggestion feature not in WTD v1"
+    }
+  ],
+  "wt_to_wtd_action_map": {
+    "closeWindow": "close-window",
+    "toggleFullscreen": "toggle-fullscreen",
+    "commandPalette": "toggle-command-palette",
+    "newTab": "new-tab",
+    "newWindow": "new-window",
+    "nextTab": "next-tab",
+    "prevTab": "prev-tab",
+    "switchToTab": "goto-tab",
+    "closePane": "close-pane",
+    "moveTab_forward": "move-tab-right",
+    "moveTab_backward": "move-tab-left",
+    "renameTab": "rename-tab",
+    "splitPane_right": "split-right",
+    "splitPane_down": "split-down",
+    "moveFocus_down": "focus-pane-down",
+    "moveFocus_up": "focus-pane-up",
+    "moveFocus_left": "focus-pane-left",
+    "moveFocus_right": "focus-pane-right",
+    "moveFocus_nextInOrder": "focus-next-pane",
+    "moveFocus_prevInOrder": "focus-prev-pane",
+    "togglePaneZoom": "zoom-pane",
+    "resizePane_down": "resize-pane-grow-down",
+    "resizePane_up": "resize-pane-shrink-down",
+    "resizePane_right": "resize-pane-grow-right",
+    "resizePane_left": "resize-pane-shrink-right",
+    "restartConnection": "restart-session",
+    "copy": "copy",
+    "paste": "paste"
+  },
+  "wt_actions_no_wtd_equivalent": [
+    "toggleFocusMode",
+    "toggleAlwaysOnTop",
+    "openNewTabDropdown",
+    "openSettings",
+    "find",
+    "findMatch",
+    "searchWeb",
+    "selectAll",
+    "markMode",
+    "toggleBlockSelection",
+    "switchSelectionEndpoint",
+    "expandSelectionToWord",
+    "showContextMenu",
+    "scrollUp",
+    "scrollDown",
+    "scrollUpPage",
+    "scrollDownPage",
+    "scrollToTop",
+    "scrollToBottom",
+    "clearBuffer",
+    "exportBuffer",
+    "adjustFontSize",
+    "resetFontSize",
+    "adjustOpacity",
+    "toggleShaderEffects",
+    "setColorScheme",
+    "openAbout",
+    "openCWD",
+    "openSystemMenu",
+    "identifyWindow",
+    "openWindowRenamer",
+    "quakeMode",
+    "restoreLastClosed",
+    "quit",
+    "swapPane",
+    "toggleSplitOrientation",
+    "toggleBroadcastInput",
+    "movePane",
+    "movePaneToNewWindow",
+    "closeOtherPanes",
+    "duplicateTab",
+    "closeOtherTabs",
+    "closeTabsAfter",
+    "moveTabToNewWindow",
+    "openTabColorPicker",
+    "toggleReadOnlyMode",
+    "enableReadOnlyMode",
+    "disableReadOnlyMode",
+    "showSuggestions",
+    "quickFix",
+    "experimental.openTasks"
+  ],
+  "wtd_actions_no_wt_equivalent": [
+    "open-workspace",
+    "close-workspace",
+    "recreate-workspace",
+    "save-workspace",
+    "focus-pane",
+    "rename-pane",
+    "enter-scrollback-mode"
+  ],
+  "key_translation_notes": {
+    "casing": "WT uses lowercase (ctrl+shift+t). WTD uses Title Case (Ctrl+Shift+T).",
+    "plus_key": "WT 'plus' = WTD 'Plus' (the + key). Not the same as the + separator.",
+    "numpad": "WT defines numpad keys (numpad_plus, numpad0, etc). WTD KeyName enum has no numpad variants.",
+    "scan_codes": "WT supports scan code specs like sc(41). WTD has no scan code support.",
+    "alt_enter": "WT binds alt+enter to toggleFullscreen. WTD only uses F11 for this action.",
+    "alt_shift_plus": "WT uses alt+shift+plus for split-right. WTD default uses Alt+Shift+D. The preset changes WTD to match WT.",
+    "ctrl_alt_left": "WT binds ctrl+alt+left to moveFocus(prevInOrder). This conflicts with Win10/11 virtual desktop switching."
+  }
+}
