@@ -546,3 +546,29 @@ CLI client lives in `wtd-cli::client`. Command dispatch in `wtd-cli::dispatch`. 
 - `ID2D1HwndRenderTarget` does not expose inherited `ID2D1RenderTarget` methods directly — must `.cast::<ID2D1RenderTarget>()` first
 - `D2D1_BRUSH_PROPERTIES` requires `Foundation_Numerics` feature (contains `Matrix3x2`)
 - Use `D2D1_PRESENT_OPTIONS_IMMEDIATELY` to bypass vsync for benchmarking
+
+---
+
+## wintermdriver-rul.4: E2E CLI command test suite
+
+Comprehensive E2E test suite in `crates/wtd-cli/tests/e2e_commands.rs` (27 tests) per §32.2.
+
+**Test harness:**
+- `TestHost` struct — starts `IpcServer` with unique pipe name, provides `connect()` → `IpcClient`
+- `E2eHandler` implements `RequestHandler` — manages workspace instances via `Mutex<E2eState>`
+- Handles all message types: OpenWorkspace, CloseWorkspace, ListWorkspaces/Instances/Panes/Sessions, Send, Capture, Scrollback, Follow, Inspect, FocusPane, RenamePane, InvokeAction, Keys, AttachWorkspace, RecreateWorkspace, SaveWorkspace
+- Special "AMBIGUOUS" target name triggers `ErrorCode::TargetAmbiguous` response with candidates
+
+**Test coverage:**
+- Full lifecycle: open → list workspaces/instances/panes/sessions → send → capture → scrollback → inspect → close
+- Additional commands: attach, recreate, save, focus, rename, action, keys
+- Error exit codes per §22.9: target-not-found (2), workspace-not-found (2), ambiguous (3) — tested for send, capture, inspect, scrollback, follow, focus, rename, keys, open, close, list panes, list sessions
+- JSON output structure validation for all response types
+- Concurrent input from two simultaneous IPC clients with no crash or hang
+
+**Pattern for testing CLI output layer:**
+- Use `IpcClient::connect_to(pipe_name)` for test-specific pipes (bypasses auto-start)
+- Use `output::format_response(&response, json_mode)` to validate formatting and exit codes
+- Use `poll_capture_until()` with predicate for async ConPTY output
+
+**Dev-dependencies added to `wtd-cli`:** `wtd-host`, `wtd-pty`
