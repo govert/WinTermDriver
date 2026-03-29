@@ -613,3 +613,43 @@ Comprehensive E2E test suite in `crates/wtd-cli/tests/e2e_commands.rs` (27 tests
 **Test coverage:** 30 tests (12 unit in renderer, 18 integration in `tests/render_prototype.rs`) covering color mapping, attribute resolution, VT parsing, and end-to-end rendering pipeline
 
 **wtd-ui dependencies added:** `wtd-pty` (for ScreenBuffer access)
+
+---
+
+## wintermdriver-psx.1: Tab strip component
+
+`TabStrip` lives in `wtd_ui::tab_strip`. Renders a horizontal tab bar using Direct2D + DirectWrite.
+
+**Key types:**
+- `TabStrip` — owns tab list, layout zones, drag state, DW text formats; renders via `paint(&self, rt: &ID2D1RenderTarget)`
+- `Tab` — `{ id: u64, name: String }`
+- `TabAction` — enum: `SwitchTo(usize) | Close(usize) | Create | Reorder { from, to } | WindowClose`
+
+**Public API:**
+- `TabStrip::new(dw_factory) -> Result<Self>` — create with DirectWrite factory
+- `add_tab(name) -> u64`, `close_tab(index) -> TabAction`, `set_active(index)`, `reorder(from, to)`
+- `layout(available_width)` — recompute hit zones (call after tab/size changes)
+- `on_mouse_down/up/move(x, y) -> Option<TabAction>` — mouse interaction
+- `paint(rt) -> Result<()>` — render within an active BeginDraw session
+- `window_title(workspace_name) -> String` — "workspace — tab" format
+- `height() -> f32` — constant `TAB_STRIP_HEIGHT` (32px)
+
+**TerminalRenderer compositing additions:**
+- `begin_draw()`, `clear_background()`, `end_draw()` — split paint lifecycle
+- `paint_screen(screen, y_offset)` — render ScreenBuffer at vertical offset
+- `render_target()` / `dw_factory()` — access D2D/DW resources for shared use
+- Original `paint(screen)` still works as convenience method
+
+**Window module additions:**
+- `MouseEvent { kind, x, y }` / `MouseEventKind` — captured from WM_LBUTTONDOWN/UP/MOUSEMOVE
+- `drain_mouse_events()` — drain pending mouse event queue
+- `set_window_title(hwnd, title)` — update window title text
+
+**Design decisions:**
+- Tab strip uses Segoe UI 12pt (not terminal monospace) for tab labels
+- Text measurement via `IDWriteFactory::CreateTextLayout` for accurate tab widths
+- Tab width clamped to [80, 200] px; overflow triggers scroll arrows (20px wide)
+- Drag threshold 5px before reorder activates; drop position based on zone midpoints
+- Colors: dark theme matching terminal bg (#1a1a26); accent #4ec9b0 for active indicator
+- `close_tab` on last tab returns `WindowClose` (caller should destroy window)
+- Tab strip paints within caller's BeginDraw/EndDraw session (no own draw cycle)
