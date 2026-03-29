@@ -2840,6 +2840,17 @@ Gated on W5 (rendering technology decision).
 - Write an agent guidance document (`docs/AGENT_GUIDE.md`) that explains how an AI agent can drive terminal sessions through WinTermDriver — opening workspaces, sending commands, capturing output, inspecting state — with worked examples and best practices for orchestrating multi-session workflows.
 - Capture screenshots of the running system (window with tabs and split panes, terminal output, command palette, prefix chord indicator, status bar) and add them to the README with captions.
 
+#### W11: Windows Terminal default keybindings
+
+**Capability outcome:** WinTermDriver ships a built-in "Windows Terminal compatible" keybinding preset that mirrors the default keybindings of Windows Terminal. Users migrating from Windows Terminal find familiar shortcuts working out of the box. The current tmux-style defaults (Ctrl+B prefix, chord-based splits) remain available as an alternative preset. Users can select a preset in global settings or per-workspace.
+
+**Candidate beads:**
+
+- Audit the Windows Terminal default keybinding set (from the WT source `defaults.json`) and produce a mapping table: WT action → WinTermDriver action, WT key → WinTermDriver key spec. Identify gaps where WT actions have no WinTermDriver equivalent and vice versa. Output: a reference document (`docs/WT_KEYBINDING_MAP.md`) and a test fixture with the full mapping.
+- Implement a keybinding preset system: add a `preset` field to `BindingsDefinition` (values: `"windows-terminal"`, `"tmux"`, `"none"`) that loads a predefined set of keys and chords as the base, before applying user overrides. Change the default preset from the current hardcoded tmux-style bindings to `"windows-terminal"`. Preserve the current tmux-style bindings as the `"tmux"` preset.
+- Populate the `"windows-terminal"` preset with the full set of WT-compatible single-stroke keybindings: tab management (`Ctrl+Shift+T` new tab, `Ctrl+Shift+W` close pane, `Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs, `Ctrl+Alt+<n>` go to tab N), pane management (`Alt+Shift+Plus` split right, `Alt+Shift+Minus` split down, `Alt+Arrow` move focus, `Alt+Shift+Arrow` resize pane), clipboard (`Ctrl+Shift+C` copy, `Ctrl+Shift+V` paste, `Ctrl+C` copy-or-interrupt), scrollback (`Ctrl+Shift+Up`/`Down` scroll, `Ctrl+Shift+PgUp`/`PgDn` scroll page), and UI (`F11` fullscreen, `Ctrl+Shift+P` command palette, `Ctrl+Shift+F` find). Include all WT defaults that have WinTermDriver action equivalents.
+- Add integration tests that verify the preset system: loading `"windows-terminal"` preset produces the expected binding set, loading `"tmux"` preset produces the legacy bindings, user overrides on top of a preset work correctly, and switching presets in a workspace definition is respected.
+
 ### 37.3 Dependency structure
 
 #### Workset dependencies
@@ -2861,6 +2872,8 @@ W3 + W4 ──► W8 (host runtime wiring) ──► Slice 5 (end-to-end integra
                                                └──► M7 (runnable application)
 
 W9 (CI pipeline) ── no dependency on W8 (can start now, builds and tests existing code)
+
+W11 (WT keybindings) ── depends on W1 (bindings model) + W7 (interaction model)
 ```
 
 W5 (rendering spike) has no dependency on W1–W4 and should start early, running in parallel with Slices 1–2.
@@ -2920,6 +2933,10 @@ These can proceed concurrently:
 | README run instructions | M7 (runnable application) |
 | Agent guidance document | M7 (runnable application) |
 | Screenshots | README run instructions (screenshots go in README) |
+| WT keybinding audit | None (reference work) |
+| Keybinding preset system | Global settings (W1), BindingsDefinition model |
+| WT keybinding preset data | WT keybinding audit, keybinding preset system |
+| Keybinding preset tests | WT keybinding preset data |
 
 ### 37.4 Risks and ambiguities
 
@@ -2973,6 +2990,8 @@ Generate beads in slice order. For each slice, generate beads from the contribut
 **Seventh bead set (parallel with Slice 5):** Generate the W9 CI pipeline bead immediately — it builds and tests existing code with no dependency on W8. The release build config and GitHub Release workflow beads should be generated after the CI pipeline is working.
 
 **Eighth bead set (post-M7):** Generate W10 beads after M7. README run instructions, agent guidance document, and screenshots all require a working application. Also generate the W9 release workflow bead if not already done.
+
+**Ninth bead set (parallel):** Generate W11 beads (Windows Terminal keybindings) at any time after W1 and W7 are complete. The audit bead can start immediately. The preset system and data beads follow sequentially.
 
 **Validation beads:** Generate after Slice 5 for end-to-end acceptance testing, performance validation, and error message review. These are cross-cutting and draw from §30, §32, and §36.
 
