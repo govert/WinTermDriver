@@ -737,3 +737,38 @@ renderer.end_draw()?;
 - Selection: 50% opacity filled rectangles per row, color #3a6496
 - Viewport clips to exact pixel rect; only visible rows/cols rendered for performance
 - `paint_screen()` still available for non-pane use cases (also uses shaped cursor now)
+
+---
+
+## wintermdriver-psx.5: Failed/exited pane overlay rendering
+
+`TerminalRenderer::paint_failed_pane()` in `wtd_ui::renderer` renders centered error/exit messages in pane viewports.
+
+**New public API:**
+- `TerminalRenderer::paint_failed_pane(message, x, y, width, height) -> Result<()>` — clipped viewport overlay
+- `exited_pane_message(exit_code: u32) -> String` — formats "Session exited (code N)"
+- `failed_pane_message(error: &str) -> String` — formats "Session failed: error"
+- `RESTART_HINT: &str` — "Press Enter to restart  ·  Ctrl+B, r"
+
+**Compositing pattern (updated):**
+```rust
+for pane_id in layout_tree.panes() {
+    let rect = pane_layout.pane_pixel_rect(&pane_id);
+    match pane_state {
+        PaneState::Attached { session_id } => {
+            renderer.paint_pane_viewport(&screen, rect.x, rect.y, rect.width, rect.height, None)?;
+        }
+        PaneState::Detached { error } => {
+            renderer.paint_failed_pane(&error, rect.x, rect.y, rect.width, rect.height)?;
+        }
+    }
+}
+```
+
+**Design decisions:**
+- Background: dark fill (#1e1e2a), slightly distinct from terminal bg (#1a1a26)
+- Message color: muted red (#cc7878) — noticeable but not alarming
+- Hint color: dim gray (#8c8ca0) — secondary information
+- Text centered both horizontally and vertically as a two-line block
+- Uses DirectWrite `CreateTextLayout` for measurement, ensuring accurate centering regardless of text length
+- Clipped via D2D `PushAxisAlignedClip` (same pattern as `paint_pane_viewport`)
