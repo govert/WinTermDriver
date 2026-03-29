@@ -222,15 +222,15 @@ fn paint_all(
     // Tab strip.
     let tab_result = tab_strip.paint(renderer.render_target());
 
-    // Pane content: render each pane's screen buffer at its pixel rect.
-    let (cell_w, cell_h) = renderer.cell_size();
+    // Pane content: render each pane's screen buffer clipped to its viewport.
     for pane_id in layout_tree.panes() {
         if let (Some(rect), Some(screen)) = (
             pane_layout.pane_pixel_rect(&pane_id),
             screens.get(&pane_id),
         ) {
-            // Paint the screen at the pane's position using paint_screen_at.
-            paint_pane_screen(renderer, screen, rect.x, rect.y, rect.width, rect.height, cell_w, cell_h)?;
+            renderer
+                .paint_pane_viewport(screen, rect.x, rect.y, rect.width, rect.height, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
     }
 
@@ -243,24 +243,6 @@ fn paint_all(
     layout_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     end_result.map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
-}
-
-/// Paint a screen buffer within a specific pane rectangle.
-fn paint_pane_screen(
-    renderer: &TerminalRenderer,
-    screen: &ScreenBuffer,
-    _x: f32,
-    y: f32,
-    _width: f32,
-    _height: f32,
-    _cell_w: f32,
-    _cell_h: f32,
-) -> anyhow::Result<()> {
-    // For now, use paint_screen with the pane's y offset.
-    // Full per-pane clipping will be added in psx.3 (pane viewport rendering).
-    renderer
-        .paint_screen(screen, y)
-        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn is_window_valid(hwnd: windows::Win32::Foundation::HWND) -> bool {

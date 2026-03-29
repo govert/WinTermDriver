@@ -6,7 +6,7 @@
 
 use wtd_pty::{Cell, CellAttrs, Color, ScreenBuffer};
 use wtd_ui::renderer::{
-    color_to_rgb, resolve_cell_colors, RendererConfig, TerminalRenderer,
+    color_to_rgb, resolve_cell_colors, RendererConfig, TerminalRenderer, TextSelection,
 };
 
 use windows::core::*;
@@ -356,4 +356,275 @@ fn renderer_resize_succeeds() {
         .expect("paint after resize should succeed");
 
     destroy_test_window(hwnd);
+}
+
+// ── Pane viewport rendering ─────────────────────────────────────────────────
+
+#[test]
+fn paint_pane_viewport_basic() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"Hello viewport");
+
+    let hwnd = create_test_window("viewport_basic");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen, 10.0, 32.0, cw * 40.0, ch * 12.0, None)
+        .expect("viewport paint should succeed");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_with_selection() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"Line 1 text\r\nLine 2 text\r\nLine 3 text");
+
+    let sel = TextSelection {
+        start_row: 0,
+        start_col: 5,
+        end_row: 1,
+        end_col: 8,
+    };
+
+    let hwnd = create_test_window("viewport_sel");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen, 0.0, 0.0, cw * 80.0, ch * 24.0, Some(&sel))
+        .expect("viewport with selection should succeed");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_multiple_panes() {
+    let mut screen1 = ScreenBuffer::new(40, 12, 0);
+    screen1.advance(b"\x1b[32mPane 1\x1b[0m");
+    let mut screen2 = ScreenBuffer::new(40, 12, 0);
+    screen2.advance(b"\x1b[31mPane 2\x1b[0m");
+
+    let hwnd = create_test_window("viewport_multi");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    // Left pane
+    renderer
+        .paint_pane_viewport(&screen1, 0.0, 0.0, cw * 40.0, ch * 12.0, None)
+        .expect("left pane should paint");
+    // Right pane
+    renderer
+        .paint_pane_viewport(&screen2, cw * 40.0, 0.0, cw * 40.0, ch * 12.0, None)
+        .expect("right pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_with_colors_and_attributes() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    // Bold + red + underline
+    screen.advance(b"\x1b[1;31;4mBold red underline\x1b[0m\r\n");
+    // Italic + green + strikethrough
+    screen.advance(b"\x1b[3;32;9mItalic green strike\x1b[0m\r\n");
+    // Inverse
+    screen.advance(b"\x1b[7mInverse text\x1b[0m\r\n");
+    // 256-color
+    screen.advance(b"\x1b[38;5;208mOrange 256\x1b[0m\r\n");
+    // Truecolor
+    screen.advance(b"\x1b[38;2;100;200;50mTruecolor\x1b[0m");
+
+    let hwnd = create_test_window("viewport_attrs");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen, 5.0, 5.0, cw * 80.0, ch * 24.0, None)
+        .expect("viewport with colors/attributes should succeed");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_with_cursor_shapes() {
+    // Block cursor
+    let mut screen_block = ScreenBuffer::new(40, 12, 0);
+    screen_block.advance(b"Block cursor");
+
+    // Underline cursor
+    let mut screen_uline = ScreenBuffer::new(40, 12, 0);
+    screen_uline.advance(b"\x1b[3 qUnderline");
+
+    // Bar cursor
+    let mut screen_bar = ScreenBuffer::new(40, 12, 0);
+    screen_bar.advance(b"\x1b[5 qBar cursor");
+
+    let hwnd = create_test_window("viewport_cursors");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen_block, 0.0, 0.0, cw * 40.0, ch * 12.0, None)
+        .expect("block cursor pane should paint");
+    renderer
+        .paint_pane_viewport(&screen_uline, cw * 40.0, 0.0, cw * 40.0, ch * 12.0, None)
+        .expect("underline cursor pane should paint");
+    renderer
+        .paint_pane_viewport(&screen_bar, 0.0, ch * 12.0, cw * 40.0, ch * 12.0, None)
+        .expect("bar cursor pane should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_alternate_screen() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    // Write on primary
+    screen.advance(b"primary content");
+    // Switch to alternate screen (like vim/htop)
+    screen.advance(b"\x1b[?1049h");
+    // Write on alternate
+    screen.advance(b"\x1b[1;1HTUI App Header\r\n\x1b[32mStatus: OK\x1b[0m");
+
+    let hwnd = create_test_window("viewport_altscreen");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen, 0.0, 0.0, cw * 80.0, ch * 24.0, None)
+        .expect("alternate screen viewport should paint");
+    renderer.end_draw().unwrap();
+
+    // Verify we're on alternate screen
+    assert!(screen.on_alternate());
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_hidden_cursor() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"text");
+    screen.advance(b"\x1b[?25l"); // hide cursor
+    assert!(!screen.cursor().visible);
+
+    let hwnd = create_test_window("viewport_hidden_cursor");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    let (cw, ch) = renderer.cell_size();
+
+    renderer.begin_draw();
+    renderer.clear_background();
+    renderer
+        .paint_pane_viewport(&screen, 0.0, 0.0, cw * 80.0, ch * 24.0, None)
+        .expect("hidden cursor viewport should paint");
+    renderer.end_draw().unwrap();
+
+    destroy_test_window(hwnd);
+}
+
+// ── TextSelection unit tests ────────────────────────────────────────────────
+
+#[test]
+fn selection_normalised_forward() {
+    let sel = TextSelection {
+        start_row: 0,
+        start_col: 5,
+        end_row: 2,
+        end_col: 10,
+    };
+    assert_eq!(sel.normalised(), (0, 5, 2, 10));
+}
+
+#[test]
+fn selection_normalised_backward() {
+    let sel = TextSelection {
+        start_row: 3,
+        start_col: 8,
+        end_row: 1,
+        end_col: 2,
+    };
+    assert_eq!(sel.normalised(), (1, 2, 3, 8));
+}
+
+#[test]
+fn selection_contains_single_row() {
+    let sel = TextSelection {
+        start_row: 2,
+        start_col: 3,
+        end_row: 2,
+        end_col: 7,
+    };
+    assert!(!sel.contains(2, 2));
+    assert!(sel.contains(2, 3));
+    assert!(sel.contains(2, 5));
+    assert!(sel.contains(2, 7));
+    assert!(!sel.contains(2, 8));
+    assert!(!sel.contains(1, 5));
+    assert!(!sel.contains(3, 5));
+}
+
+#[test]
+fn selection_contains_multi_row() {
+    let sel = TextSelection {
+        start_row: 1,
+        start_col: 5,
+        end_row: 3,
+        end_col: 10,
+    };
+    // Row 0: outside
+    assert!(!sel.contains(0, 5));
+    // Row 1: from col 5 to end
+    assert!(!sel.contains(1, 4));
+    assert!(sel.contains(1, 5));
+    assert!(sel.contains(1, 79));
+    // Row 2: entire row
+    assert!(sel.contains(2, 0));
+    assert!(sel.contains(2, 79));
+    // Row 3: from start to col 10
+    assert!(sel.contains(3, 0));
+    assert!(sel.contains(3, 10));
+    assert!(!sel.contains(3, 11));
+    // Row 4: outside
+    assert!(!sel.contains(4, 0));
+}
+
+#[test]
+fn selection_contains_backward() {
+    // Same as multi-row but with reversed start/end
+    let sel = TextSelection {
+        start_row: 3,
+        start_col: 10,
+        end_row: 1,
+        end_col: 5,
+    };
+    assert!(sel.contains(2, 0));
+    assert!(sel.contains(1, 5));
+    assert!(sel.contains(3, 10));
+    assert!(!sel.contains(3, 11));
 }

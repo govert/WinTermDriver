@@ -220,17 +220,30 @@ impl Grid {
 
 // ── Cursor ───────────────────────────────────────────────────────────────────
 
+/// Cursor shape as set by DECSCUSR (`CSI Ps SP q`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorShape {
+    /// Default blinking block (DECSCUSR 0 or 1).
+    #[default]
+    Block,
+    /// Underline (DECSCUSR 3 or 4).
+    Underline,
+    /// Vertical bar / I-beam (DECSCUSR 5 or 6).
+    Bar,
+}
+
 /// Cursor state.
 #[derive(Debug, Clone, Default)]
 pub struct Cursor {
     pub row: usize,
     pub col: usize,
     pub visible: bool,
+    pub shape: CursorShape,
 }
 
 impl Cursor {
     fn default_visible() -> Self {
-        Cursor { row: 0, col: 0, visible: true }
+        Cursor { row: 0, col: 0, visible: true, shape: CursorShape::Block }
     }
 }
 
@@ -886,6 +899,15 @@ impl Perform for ScreenBuffer {
                     }
                 }
             }
+            // DECSCUSR — set cursor style (CSI Ps SP q)
+            ([b' '], 'q') => {
+                self.cursor.shape = match p0(0, 0) {
+                    0 | 1 | 2 => CursorShape::Block,
+                    3 | 4 => CursorShape::Underline,
+                    5 | 6 => CursorShape::Bar,
+                    _ => CursorShape::Block,
+                };
+            }
             // DEC private modes
             ([b'?'], 'h') => {
                 for sub in params.iter() {
@@ -930,6 +952,7 @@ impl Perform for ScreenBuffer {
                 self.on_alternate = false;
                 self.scrollback.clear();
                 self.cursor = Cursor::default_visible();
+                self.cursor.shape = CursorShape::Block;
                 self.saved_cursor = None;
                 self.alt_saved_cursor = None;
                 self.reset_sgr();
@@ -1287,5 +1310,69 @@ mod tests {
         feed(&mut b, "\x1b8");      // DECRC restore
         assert_eq!(b.cursor().row, 4);
         assert_eq!(b.cursor().col, 9);
+    }
+
+    // ── DECSCUSR cursor shape ────────────────────────────────────────────────
+
+    #[test]
+    fn cursor_shape_default_is_block() {
+        let b = buf(80, 24);
+        assert_eq!(b.cursor().shape, CursorShape::Block);
+    }
+
+    #[test]
+    fn cursor_shape_block() {
+        let mut b = buf(80, 24);
+        // DECSCUSR 0 → block (default)
+        feed(&mut b, "\x1b[0 q");
+        assert_eq!(b.cursor().shape, CursorShape::Block);
+        // DECSCUSR 1 → blinking block
+        feed(&mut b, "\x1b[1 q");
+        assert_eq!(b.cursor().shape, CursorShape::Block);
+        // DECSCUSR 2 → steady block
+        feed(&mut b, "\x1b[2 q");
+        assert_eq!(b.cursor().shape, CursorShape::Block);
+    }
+
+    #[test]
+    fn cursor_shape_underline() {
+        let mut b = buf(80, 24);
+        // DECSCUSR 3 → blinking underline
+        feed(&mut b, "\x1b[3 q");
+        assert_eq!(b.cursor().shape, CursorShape::Underline);
+        // DECSCUSR 4 → steady underline
+        feed(&mut b, "\x1b[4 q");
+        assert_eq!(b.cursor().shape, CursorShape::Underline);
+    }
+
+    #[test]
+    fn cursor_shape_bar() {
+        let mut b = buf(80, 24);
+        // DECSCUSR 5 → blinking bar
+        feed(&mut b, "\x1b[5 q");
+        assert_eq!(b.cursor().shape, CursorShape::Bar);
+        // DECSCUSR 6 → steady bar
+        feed(&mut b, "\x1b[6 q");
+        assert_eq!(b.cursor().shape, CursorShape::Bar);
+    }
+
+    #[test]
+    fn cursor_shape_resets_on_ris() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b[5 q"); // bar
+        assert_eq!(b.cursor().shape, CursorShape::Bar);
+        feed(&mut b, "\x1bc"); // RIS
+        assert_eq!(b.cursor().shape, CursorShape::Block);
+    }
+
+    #[test]
+    fn cursor_shape_changes_across_sequences() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b[3 q"); // underline
+        assert_eq!(b.cursor().shape, CursorShape::Underline);
+        feed(&mut b, "\x1b[5 q"); // bar
+        assert_eq!(b.cursor().shape, CursorShape::Bar);
+        feed(&mut b, "\x1b[2 q"); // block
+        assert_eq!(b.cursor().shape, CursorShape::Block);
     }
 }

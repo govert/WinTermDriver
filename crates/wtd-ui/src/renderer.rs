@@ -11,7 +11,52 @@ use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
-use wtd_pty::{Cell, CellAttrs, Color, Cursor, ScreenBuffer};
+use wtd_pty::{Cell, CellAttrs, Color, Cursor, CursorShape, ScreenBuffer};
+
+// ── Selection ────────────────────────────────────────────────────────────────
+
+/// A text selection range in screen coordinates (row, col).
+///
+/// `start` is where the user began selecting, `end` is the current position.
+/// They may be in any order — rendering normalises them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextSelection {
+    pub start_row: usize,
+    pub start_col: usize,
+    pub end_row: usize,
+    pub end_col: usize,
+}
+
+impl TextSelection {
+    /// Return the selection normalised so that start <= end in reading order.
+    pub fn normalised(&self) -> (usize, usize, usize, usize) {
+        if (self.start_row, self.start_col) <= (self.end_row, self.end_col) {
+            (self.start_row, self.start_col, self.end_row, self.end_col)
+        } else {
+            (self.end_row, self.end_col, self.start_row, self.start_col)
+        }
+    }
+
+    /// Return true if the cell at (row, col) is within this selection.
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        let (sr, sc, er, ec) = self.normalised();
+        if row < sr || row > er {
+            return false;
+        }
+        if row == sr && row == er {
+            return col >= sc && col <= ec;
+        }
+        if row == sr {
+            return col >= sc;
+        }
+        if row == er {
+            return col <= ec;
+        }
+        true
+    }
+}
+
+const SELECTION_COLOR: (u8, u8, u8) = (58, 100, 150);
 
 // ── Default theme colors ─────────────────────────────────────────────────────
 
@@ -297,7 +342,7 @@ impl TerminalRenderer {
             }
             let cursor = screen.cursor();
             if cursor.visible && cursor.row < rows && cursor.col < cols {
-                self.paint_cursor(cursor, y_offset)?;
+                self.paint_shaped_cursor(cursor, 0.0, y_offset)?;
             }
         }
         Ok(())
@@ -315,6 +360,77 @@ impl TerminalRenderer {
         let end_result = self.end_draw();
         paint_result?;
         end_result
+    }
+
+    /// Paint a [`ScreenBuffer`] clipped to a pane viewport rectangle.
+    ///
+    /// The viewport is specified as pixel coordinates `(x, y, width, height)`.
+    /// A D2D axis-aligned clip rect confines all drawing to this area.
+    /// Only the rows/columns visible within the viewport are rendered.
+    /// An optional [`TextSelection`] highlights selected cells.
+    pub fn paint_pane_viewport(
+        &self,
+        screen: &ScreenBuffer,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        selection: Option<&TextSelection>,
+    ) -> Result<()> {
+        let clip = D2D_RECT_F {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        };
+        unsafe {
+            self.rt
+                .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+
+        let result = self.paint_viewport_inner(screen, x, y, width, height, selection);
+
+        unsafe {
+            self.rt.PopAxisAlignedClip();
+        }
+        result
+    }
+
+    fn paint_viewport_inner(
+        &self,
+        screen: &ScreenBuffer,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        selection: Option<&TextSelection>,
+    ) -> Result<()> {
+        let rows = screen.rows();
+        let cols = screen.cols();
+
+        // Only render the rows/cols that fit in the viewport.
+        let visible_rows = ((height / self.cell_height).ceil() as usize).min(rows);
+        let visible_cols = ((width / self.cell_width).ceil() as usize).min(cols);
+
+        unsafe {
+            for row in 0..visible_rows {
+                let py = y + row as f32 * self.cell_height;
+                self.paint_row_backgrounds_at(screen, row, visible_cols, x, py)?;
+                self.paint_row_text_at(screen, row, visible_cols, x, py)?;
+            }
+
+            // Selection highlight.
+            if let Some(sel) = selection {
+                self.paint_selection(sel, x, y, visible_rows, visible_cols)?;
+            }
+
+            // Cursor.
+            let cursor = screen.cursor();
+            if cursor.visible && cursor.row < visible_rows && cursor.col < visible_cols {
+                self.paint_shaped_cursor(cursor, x, y)?;
+            }
+        }
+        Ok(())
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -474,21 +590,244 @@ impl TerminalRenderer {
         Ok(())
     }
 
-    /// Paint the cursor as a filled rectangle at the given vertical offset.
-    unsafe fn paint_cursor(&self, cursor: &Cursor, y_offset: f32) -> Result<()> {
+    /// Paint non-default cell backgrounds for a single row at an x,y origin.
+    unsafe fn paint_row_backgrounds_at(
+        &self,
+        screen: &ScreenBuffer,
+        row: usize,
+        cols: usize,
+        x_origin: f32,
+        y: f32,
+    ) -> Result<()> {
+        let mut col = 0;
+        while col < cols {
+            let cell = match screen.cell(row, col) {
+                Some(c) => c,
+                None => {
+                    col += 1;
+                    continue;
+                }
+            };
+            let (_, bg_rgb) = resolve_cell_colors(cell);
+            if bg_rgb == DEFAULT_BG {
+                col += 1;
+                continue;
+            }
+
+            let run_start = col;
+            col += 1;
+            while col < cols {
+                if let Some(next) = screen.cell(row, col) {
+                    let (_, next_bg) = resolve_cell_colors(next);
+                    if next_bg == bg_rgb {
+                        col += 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            let brush = self
+                .rt
+                .CreateSolidColorBrush(&rgb_to_d2d(bg_rgb.0, bg_rgb.1, bg_rgb.2), None)?;
+            let rect = D2D_RECT_F {
+                left: x_origin + run_start as f32 * self.cell_width,
+                top: y,
+                right: x_origin + col as f32 * self.cell_width,
+                bottom: y + self.cell_height,
+            };
+            self.rt.FillRectangle(&rect, &brush);
+        }
+        Ok(())
+    }
+
+    /// Paint text for a single row at an x,y origin, with run-based batching.
+    unsafe fn paint_row_text_at(
+        &self,
+        screen: &ScreenBuffer,
+        row: usize,
+        cols: usize,
+        x_origin: f32,
+        y: f32,
+    ) -> Result<()> {
+        let mut col = 0;
+        while col < cols {
+            let cell = match screen.cell(row, col) {
+                Some(c) => c,
+                None => {
+                    col += 1;
+                    continue;
+                }
+            };
+            if cell.wide_continuation {
+                col += 1;
+                continue;
+            }
+            if cell.character == ' ' && cell.attrs == CellAttrs::default() {
+                col += 1;
+                continue;
+            }
+
+            let (fg_rgb, _) = resolve_cell_colors(cell);
+            let tf = self.text_format_for_attrs(&cell.attrs);
+            let run_start = col;
+            let mut run_text = String::new();
+            run_text.push(cell.character);
+
+            col += 1;
+            while col < cols {
+                if let Some(next) = screen.cell(row, col) {
+                    if next.wide_continuation {
+                        col += 1;
+                        continue;
+                    }
+                    let (next_fg, _) = resolve_cell_colors(next);
+                    let next_tf_matches = self.attrs_same_format(&cell.attrs, &next.attrs);
+                    if next_fg == fg_rgb && next_tf_matches {
+                        run_text.push(next.character);
+                        col += 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            let utf16: Vec<u16> = run_text.encode_utf16().collect();
+            let brush = self
+                .rt
+                .CreateSolidColorBrush(&rgb_to_d2d(fg_rgb.0, fg_rgb.1, fg_rgb.2), None)?;
+            let run_len = run_text.chars().count();
+            let rect = D2D_RECT_F {
+                left: x_origin + run_start as f32 * self.cell_width,
+                top: y,
+                right: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                bottom: y + self.cell_height,
+            };
+            self.rt.DrawText(
+                &utf16,
+                tf,
+                &rect,
+                &brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+
+            if cell.attrs.is_set(CellAttrs::UNDERLINE) {
+                let underline_y = y + self.cell_height - 2.0;
+                let p0 = D2D_POINT_2F {
+                    x: x_origin + run_start as f32 * self.cell_width,
+                    y: underline_y,
+                };
+                let p1 = D2D_POINT_2F {
+                    x: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                    y: underline_y,
+                };
+                self.rt.DrawLine(p0, p1, &brush, 1.0, None);
+            }
+
+            if cell.attrs.is_set(CellAttrs::STRIKETHROUGH) {
+                let strike_y = y + self.cell_height / 2.0;
+                let p0 = D2D_POINT_2F {
+                    x: x_origin + run_start as f32 * self.cell_width,
+                    y: strike_y,
+                };
+                let p1 = D2D_POINT_2F {
+                    x: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                    y: strike_y,
+                };
+                self.rt.DrawLine(p0, p1, &brush, 1.0, None);
+            }
+        }
+        Ok(())
+    }
+
+    /// Paint the cursor with shape support at a given origin.
+    unsafe fn paint_shaped_cursor(
+        &self,
+        cursor: &Cursor,
+        x_origin: f32,
+        y_origin: f32,
+    ) -> Result<()> {
         let (r, g, b) = CURSOR_COLOR;
         let brush = self
             .rt
             .CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
-        let rect = D2D_RECT_F {
-            left: cursor.col as f32 * self.cell_width,
-            top: y_offset + cursor.row as f32 * self.cell_height,
-            right: (cursor.col + 1) as f32 * self.cell_width,
-            bottom: y_offset + (cursor.row + 1) as f32 * self.cell_height,
-        };
-        // Use 50% opacity for the cursor so text underneath is visible.
+
+        let cell_left = x_origin + cursor.col as f32 * self.cell_width;
+        let cell_top = y_origin + cursor.row as f32 * self.cell_height;
+
+        match cursor.shape {
+            CursorShape::Block => {
+                let rect = D2D_RECT_F {
+                    left: cell_left,
+                    top: cell_top,
+                    right: cell_left + self.cell_width,
+                    bottom: cell_top + self.cell_height,
+                };
+                brush.SetOpacity(0.5);
+                self.rt.FillRectangle(&rect, &brush);
+            }
+            CursorShape::Underline => {
+                let thickness = 2.0_f32;
+                let rect = D2D_RECT_F {
+                    left: cell_left,
+                    top: cell_top + self.cell_height - thickness,
+                    right: cell_left + self.cell_width,
+                    bottom: cell_top + self.cell_height,
+                };
+                self.rt.FillRectangle(&rect, &brush);
+            }
+            CursorShape::Bar => {
+                let thickness = 2.0_f32;
+                let rect = D2D_RECT_F {
+                    left: cell_left,
+                    top: cell_top,
+                    right: cell_left + thickness,
+                    bottom: cell_top + self.cell_height,
+                };
+                self.rt.FillRectangle(&rect, &brush);
+            }
+        }
+        Ok(())
+    }
+
+    /// Paint selection highlight rectangles.
+    unsafe fn paint_selection(
+        &self,
+        sel: &TextSelection,
+        x_origin: f32,
+        y_origin: f32,
+        visible_rows: usize,
+        visible_cols: usize,
+    ) -> Result<()> {
+        let (sr, sc, er, ec) = sel.normalised();
+        let (r, g, b) = SELECTION_COLOR;
+        let brush = self
+            .rt
+            .CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
         brush.SetOpacity(0.5);
-        self.rt.FillRectangle(&rect, &brush);
+
+        for row in sr..=er {
+            if row >= visible_rows {
+                break;
+            }
+            let col_start = if row == sr { sc } else { 0 };
+            let col_end = if row == er {
+                (ec + 1).min(visible_cols)
+            } else {
+                visible_cols
+            };
+            if col_start >= col_end {
+                continue;
+            }
+            let rect = D2D_RECT_F {
+                left: x_origin + col_start as f32 * self.cell_width,
+                top: y_origin + row as f32 * self.cell_height,
+                right: x_origin + col_end as f32 * self.cell_width,
+                bottom: y_origin + (row + 1) as f32 * self.cell_height,
+            };
+            self.rt.FillRectangle(&rect, &brush);
+        }
         Ok(())
     }
 
