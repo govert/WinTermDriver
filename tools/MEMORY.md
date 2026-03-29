@@ -299,3 +299,38 @@ Action system lives in `wtd-host::action`. Registry of named actions and dispatc
 - Resolve target pane: explicit `target_pane_id` if given, otherwise focused pane of first (active) tab
 - Pane existence checked in both pane records AND layout trees (split-created panes only exist in layout)
 - Actions that require host-level context (workspace lifecycle, tab management, clipboard, UI) return `NotImplemented` for the host request handler to dispatch at a higher level
+
+---
+
+## wintermdriver-8w8.6: Host lifecycle (single-instance, auto-start, PID file, shutdown)
+
+Host lifecycle lives in `wtd-host::host_lifecycle`. Auto-start/connect helpers in `wtd-ipc::connect`.
+
+**Key types and functions:**
+- `LifecycleError` — error enum for lifecycle operations
+- `SingleInstanceCheck` — `Available | AlreadyRunning | StalePidCleaned`
+- `data_dir()` → `%APPDATA%\WinTermDriver` (overridable via `WTD_DATA_DIR` env)
+- PID file ops: `write_pid_file_in(dir)`, `read_pid_in(dir)`, `remove_pid_in(dir)`, `clean_stale_pid_in(dir)` — all accept `&Path` for test isolation; parameterless variants use default `data_dir()`
+- `check_single_instance_in(pipe_name, dir)` — pipe check + stale PID cleanup
+- `install_ctrl_handler(watch::Sender<bool>)` — `SetConsoleCtrlHandler` for CTRL_C/CLOSE/LOGOFF/SHUTDOWN
+- `run_host(pipe_name, handler, shutdown_rx, dir)` — writes PID, runs IPC server, removes PID on exit
+- `is_process_running(pid)` — `OpenProcess` + `GetExitCodeProcess` check for STILL_ACTIVE
+
+**Auto-start helpers (`wtd-ipc::connect`):**
+- `is_host_pipe_available(pipe_name)` — `WaitNamedPipeW` with 1ms timeout, non-consuming probe
+- `find_host_executable()` — searches near current binary
+- `start_host_detached()` — `CreateProcess` with `DETACHED_PROCESS` flag
+- `ensure_host_running(pipe_name)` — check pipe → launch host → poll 50ms×100
+
+**Host `main.rs` flow:** pipe_name → single-instance check → shutdown channel → ctrl handler → `run_host` → exit
+
+**Design decisions:**
+- Pipe name (`\\.\pipe\wtd-{SID}`) is the single-instance mutex; checked via `WaitNamedPipeW` (no pipe instance consumed)
+- `pipe_name_for_current_user()` remains in `wtd-host::pipe_security`; `wtd-ipc::connect` does NOT have it (avoids duplicating SID retrieval). CLI/UI beads will need to add their own pipe name resolution or share it
+- PID file functions accept `&Path dir` parameter for test isolation; tests use unique temp directories
+- Ctrl handler uses `OnceLock<watch::Sender<bool>>` — can only be installed once per process
+- `run_host` does NOT install the ctrl handler (caller responsibility) — keeps tests simple
+- Shutdown sequence steps 1-2 (notify UI clients, close workspace instances) deferred to workspace management bead
+- No `StopHost` IPC message type yet — shutdown is triggered via `watch::Sender` (ctrl handler or programmatic)
+- Idle shutdown timeout (§16.3 `hostIdleShutdown`) not implemented — requires workspace instance tracking
+- `main.rs` uses a `StubHandler` that returns `None` for all requests; real dispatching deferred to a future bead

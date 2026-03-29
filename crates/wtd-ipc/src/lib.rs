@@ -4,6 +4,7 @@
 //! Messages are framed with a 4-byte LE length prefix followed by a UTF-8 JSON
 //! envelope. See spec §13 for the full IPC architecture.
 
+pub mod connect;
 pub mod error;
 pub mod framing;
 pub mod message;
