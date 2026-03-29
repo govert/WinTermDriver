@@ -334,3 +334,14 @@ Host lifecycle lives in `wtd-host::host_lifecycle`. Auto-start/connect helpers i
 - No `StopHost` IPC message type yet — shutdown is triggered via `watch::Sender` (ctrl handler or programmatic)
 - Idle shutdown timeout (§16.3 `hostIdleShutdown`) not implemented — requires workspace instance tracking
 - `main.rs` uses a `StubHandler` that returns `None` for all requests; real dispatching deferred to a future bead
+
+---
+
+## wintermdriver-g4u.1: Gate — YAML to running ConPTY
+
+Integration tests in `crates/wtd-host/tests/gate_yaml_to_conpty.rs` verify the full pipeline: YAML fixture → `load_workspace_definition` → `WorkspaceInstance::open` → sessions reach `Running` with live ConPTY output.
+
+**Fixtures:** `crates/wtd-host/tests/fixtures/simple-workspace.yaml` (single pane) and `split-workspace.yaml` (two-pane split)
+
+**WorkspaceInstance additions:**
+- `sessions_mut()` — mutable access to sessions HashMap (for draining output via `process_pending_output()`)
