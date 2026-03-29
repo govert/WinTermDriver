@@ -14,4 +14,7 @@ pub mod screen;
 pub use error::PtyError;
 pub use job::JobObject;
 pub use pty::{PtySession, PtySize};
-pub use screen::{Cell, CellAttrs, Color, Cursor, CursorShape, MouseMode, ScreenBuffer};
+pub use screen::{
+    cells_to_string, Cell, CellAttrs, CaptureExtendedResult, Color, Cursor, CursorShape, MouseMode,
+    ScreenBuffer,
+};

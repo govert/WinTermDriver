@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 
+use regex::Regex;
 use vte::{Params, Perform};
 
 // ── Color ────────────────────────────────────────────────────────────────────
@@ -92,6 +93,25 @@ pub enum MouseMode {
     ButtonEvent,
     /// Any-event tracking (DECSET 1003): report all motion even without buttons.
     AnyEvent,
+}
+
+// ── CaptureExtendedResult ─────────────────────────────────────────────────────
+
+/// Result returned by [`ScreenBuffer::capture_extended`].
+#[derive(Debug, Clone)]
+pub struct CaptureExtendedResult {
+    /// Captured text, one line per row, each terminated with `\n`.
+    /// Empty string when `count_only` is `true`.
+    pub text: String,
+    /// Number of lines captured (rows from `cursor` to end of buffer).
+    pub lines: u32,
+    /// Total lines in the combined buffer (`scrollback.len() + rows`).
+    pub total_lines: u32,
+    /// Whether the `after`/`after_regex` anchor was found.
+    /// `None` when no anchor was specified.
+    pub anchor_found: Option<bool>,
+    /// Absolute line index of the capture start (0 = oldest scrollback row).
+    pub cursor: u32,
 }
 
 // ── Grid ─────────────────────────────────────────────────────────────────────
@@ -219,6 +239,11 @@ impl Grid {
         }
     }
 
+    fn row_slice(&self, row: usize) -> &[Cell] {
+        let start = row * self.cols;
+        &self.cells[start..start + self.cols]
+    }
+
     fn resize(&mut self, new_cols: usize, new_rows: usize) {
         let mut new_cells = vec![Cell::blank(); new_cols * new_rows];
         let copy_rows = self.rows.min(new_rows);
@@ -231,6 +256,30 @@ impl Grid {
         self.cols = new_cols;
         self.rows = new_rows;
         self.cells = new_cells;
+    }
+}
+
+// ── Helper functions ──────────────────────────────────────────────────────────
+
+/// Extract plain text from a cell slice, skipping wide-char continuation cells.
+pub fn cells_to_string(cells: &[Cell]) -> String {
+    let mut s = String::with_capacity(cells.len());
+    for cell in cells {
+        if !cell.wide_continuation {
+            s.push(cell.character);
+        }
+    }
+    s
+}
+
+/// Compute the default capture start line based on `lines`/`all` flags.
+fn default_capture_start(lines: Option<u32>, all: bool, sb_len: usize, total: usize) -> usize {
+    if let Some(n) = lines {
+        total.saturating_sub(n as usize)
+    } else if all {
+        0
+    } else {
+        sb_len
     }
 }
 
@@ -424,6 +473,110 @@ impl ScreenBuffer {
     /// A row from scrollback (0 = oldest).
     pub fn scrollback_row(&self, idx: usize) -> Option<&Vec<Cell>> {
         self.scrollback.get(idx)
+    }
+
+    // ── Capture extended ─────────────────────────────────────────────────────
+
+    /// Capture text from the combined buffer (scrollback + visible screen).
+    ///
+    /// The virtual line space is: `scrollback[0]` (oldest) …
+    /// `scrollback[N-1]` (newest), then visible rows 0 … `rows-1`.
+    /// `total_lines = scrollback.len() + self.rows`.
+    ///
+    /// Selection logic (in priority order):
+    /// 1. **Anchor** (`after` / `after_regex`): search newest-first; on match
+    ///    `start = match_index`.  If not found, fall through to 2–4.
+    /// 2. **`lines`**: `start = total_lines - lines`.
+    /// 3. **`all`**: `start = 0`.
+    /// 4. **Default**: `start = scrollback.len()` (visible screen only).
+    ///
+    /// `max_lines` clamps the capture window by advancing `start` forward.
+    /// `count_only` returns `""` for `text` but still computes `lines`.
+    pub fn capture_extended(
+        &self,
+        lines: Option<u32>,
+        all: bool,
+        after: Option<&str>,
+        after_regex: Option<&Regex>,
+        max_lines: Option<u32>,
+        count_only: bool,
+    ) -> CaptureExtendedResult {
+        let sb_len = self.scrollback.len();
+        let total = sb_len + self.rows;
+        let total_lines = total as u32;
+
+        let mut anchor_found: Option<bool> = None;
+
+        // ── Anchor search (newest-first) ──────────────────────────────────
+        let anchor_start: Option<usize> = if after.is_some() || after_regex.is_some() {
+            let mut found_at: Option<usize> = None;
+            for i in (0..total).rev() {
+                let line_text = if i < sb_len {
+                    cells_to_string(&self.scrollback[i])
+                } else {
+                    cells_to_string(self.primary.row_slice(i - sb_len))
+                };
+
+                let matched = if let Some(pattern) = after {
+                    line_text.contains(pattern)
+                } else if let Some(re) = after_regex {
+                    re.is_match(&line_text)
+                } else {
+                    false
+                };
+
+                if matched {
+                    found_at = Some(i);
+                    break;
+                }
+            }
+            anchor_found = Some(found_at.is_some());
+            found_at
+        } else {
+            None
+        };
+
+        let mut start = anchor_start
+            .unwrap_or_else(|| default_capture_start(lines, all, sb_len, total));
+
+        // ── Apply max_lines cap ───────────────────────────────────────────
+        if let Some(max) = max_lines {
+            let max = max as usize;
+            if total - start > max {
+                start = total - max;
+            }
+        }
+
+        let cursor = start as u32;
+        let line_count = (total - start) as u32;
+
+        // ── Build text ────────────────────────────────────────────────────
+        let text = if count_only {
+            String::new()
+        } else {
+            let mut out = String::new();
+            for i in start..total {
+                if i < sb_len {
+                    let raw = cells_to_string(&self.scrollback[i]);
+                    out.push_str(raw.trim_end_matches(' '));
+                    out.push('\n');
+                } else {
+                    let row = i - sb_len;
+                    let raw = cells_to_string(self.primary.row_slice(row));
+                    out.push_str(&raw);
+                    out.push('\n');
+                }
+            }
+            out
+        };
+
+        CaptureExtendedResult {
+            text,
+            lines: line_count,
+            total_lines,
+            anchor_found,
+            cursor,
+        }
     }
 
     // ── Resize ───────────────────────────────────────────────────────────────
@@ -1440,5 +1593,128 @@ mod tests {
         assert!(b.bracketed_paste());
         feed(&mut b, "\x1bc"); // RIS
         assert!(!b.bracketed_paste());
+    }
+
+    // ── capture_extended ──────────────────────────────────────────────────────
+
+    /// Build a 10-wide, 3-row buffer with 4 scrollback rows and 3 visible rows.
+    ///
+    /// After writing lines 0-5 (each ending \r\n):
+    /// - scrollback[0..3] (oldest→newest): "line0", "line1", "line2", "line3"
+    /// - visible rows 0-2: "line4     ", "line5     ", "          "
+    /// - total_lines = 7
+    fn make_capture_buf() -> ScreenBuffer {
+        let mut b = ScreenBuffer::new(10, 3, 100);
+        for i in 0..6_u32 {
+            feed(&mut b, &format!("line{}\r\n", i));
+        }
+        b
+    }
+
+    #[test]
+    fn capture_extended_default_visible_only() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(None, false, None, None, None, false);
+        assert_eq!(r.total_lines, 7);
+        assert_eq!(r.lines, 3);
+        assert_eq!(r.cursor, 4);
+        assert!(r.anchor_found.is_none());
+        // Visible rows keep full width (trailing spaces to cols=10)
+        assert!(r.text.contains("line4     "), "got: {:?}", r.text);
+        assert!(r.text.contains("line5     "), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_lines_5() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(Some(5), false, None, None, None, false);
+        assert_eq!(r.total_lines, 7);
+        assert_eq!(r.lines, 5);
+        assert_eq!(r.cursor, 2); // total(7) - 5 = 2
+        // Scrollback rows are trimmed; visible rows keep full width
+        assert!(r.text.starts_with("line2\n"), "got: {:?}", r.text);
+        assert!(r.text.contains("line3\n"), "got: {:?}", r.text);
+        assert!(r.text.contains("line4     \n"), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_all() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(None, true, None, None, None, false);
+        assert_eq!(r.total_lines, 7);
+        assert_eq!(r.lines, 7);
+        assert_eq!(r.cursor, 0);
+        assert!(r.text.starts_with("line0\n"), "got: {:?}", r.text);
+        assert!(r.text.contains("line3\n"), "got: {:?}", r.text);
+        assert!(r.text.contains("line4     \n"), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_after_found() {
+        let b = make_capture_buf();
+        // "line2" is in scrollback[2]; search newest-first finds it
+        let r = b.capture_extended(None, false, Some("line2"), None, None, false);
+        assert_eq!(r.anchor_found, Some(true));
+        assert_eq!(r.cursor, 2);
+        assert_eq!(r.lines, 5); // lines 2..6 (total 7)
+        assert!(r.text.starts_with("line2\n"), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_after_not_found_falls_back_to_lines() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(Some(10), false, Some("MISSING"), None, None, false);
+        assert_eq!(r.anchor_found, Some(false));
+        // lines=10 with total=7 → start = 7.saturating_sub(10) = 0
+        assert_eq!(r.cursor, 0);
+        assert_eq!(r.lines, 7);
+    }
+
+    #[test]
+    fn capture_extended_after_regex_found() {
+        use regex::Regex;
+        let b = make_capture_buf();
+        // Matches "line3" in scrollback[3] (newest-first search finds it first)
+        let re = Regex::new(r"line[23]").unwrap();
+        let r = b.capture_extended(None, false, None, Some(&re), None, false);
+        assert_eq!(r.anchor_found, Some(true));
+        assert_eq!(r.cursor, 3); // scrollback[3] = "line3     "
+        assert_eq!(r.lines, 4);  // lines 3..6
+        assert!(r.text.starts_with("line3\n"), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_max_lines_caps_output() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(None, true, None, None, Some(3), false);
+        assert_eq!(r.lines, 3);
+        assert_eq!(r.cursor, 4); // total(7) - max(3) = 4
+        // Only visible rows returned
+        assert!(r.text.contains("line4     "), "got: {:?}", r.text);
+        assert!(!r.text.contains("line3"), "should not contain scrollback: {:?}", r.text);
+    }
+
+    #[test]
+    fn capture_extended_count_only() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(None, false, None, None, None, true);
+        assert_eq!(r.text, "");
+        assert_eq!(r.lines, 3); // visible only (default)
+        assert_eq!(r.cursor, 4);
+        assert_eq!(r.total_lines, 7);
+    }
+
+    #[test]
+    fn capture_extended_cursor_value_all() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(None, true, None, None, None, false);
+        assert_eq!(r.cursor, 0);
+    }
+
+    #[test]
+    fn capture_extended_cursor_value_lines() {
+        let b = make_capture_buf();
+        let r = b.capture_extended(Some(3), false, None, None, None, false);
+        assert_eq!(r.cursor, 4); // total(7) - 3 = 4
     }
 }
