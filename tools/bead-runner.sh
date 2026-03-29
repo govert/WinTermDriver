@@ -133,9 +133,10 @@ for raw in sys.stdin:
         result_text = msg.get("result", "")
         prefix = dim(f"[{elapsed:>4d}s]")
         if sub == "success":
-            print(f"  {prefix} {bold(green(\"DONE\"))} ({turns} turns, ${cost:.2f})", file=sys.stderr, flush=True)
+            label = bold(green("DONE"))
         else:
-            print(f"  {prefix} {bold(yellow(f\"EXIT: {sub}\"))} ({turns} turns, ${cost:.2f})", file=sys.stderr, flush=True)
+            label = bold(yellow("EXIT: " + sub))
+        print(f"  {prefix} {label} ({turns} turns, ${cost:.2f})", file=sys.stderr, flush=True)
         if result_text:
             # Print first 3 lines of result
             for rline in result_text.strip().split("\n")[:3]:
