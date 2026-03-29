@@ -113,6 +113,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         CaptureResult       => CaptureResult,
         ScrollbackResult    => ScrollbackResult,
         InspectResult       => InspectResult,
+        InvokeActionResult  => InvokeActionResult,
         FollowData          => FollowData,
         FollowEnd           => FollowEnd,
         SessionOutput       => SessionOutput,
@@ -172,6 +173,7 @@ pub enum TypedMessage {
     CaptureResult(CaptureResult),
     ScrollbackResult(ScrollbackResult),
     InspectResult(InspectResult),
+    InvokeActionResult(InvokeActionResult),
     FollowData(FollowData),
     FollowEnd(FollowEnd),
     SessionOutput(SessionOutput),
@@ -583,6 +585,18 @@ pub struct InspectResult {
     pub data: Value,
 }
 impl_payload!(InspectResult, "InspectResult");
+
+/// Result of invoking an action (§18.1–18.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvokeActionResult {
+    /// Outcome kind: `"ok"`, `"pane-created"`, or `"pane-closed"`.
+    pub result: String,
+    /// New or closed pane ID (present for pane-created and pane-closed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+}
+impl_payload!(InvokeActionResult, "InvokeActionResult");
 
 /// §13.10 — Streaming output chunk (text or raw).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

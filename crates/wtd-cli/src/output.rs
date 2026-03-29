@@ -57,6 +57,7 @@ fn format_text(response: &Envelope) -> OutputResult {
         "CaptureResult" => format_capture(response),
         "ScrollbackResult" => format_scrollback(response),
         "InspectResult" => format_inspect(response),
+        "InvokeActionResult" => format_invoke_action(response),
         "FollowData" => format_follow_data(response),
         "FollowEnd" => format_follow_end(response),
         other => OutputResult {
@@ -215,6 +216,22 @@ fn format_inspect(response: &Envelope) -> OutputResult {
     let stdout = serde_json::to_string_pretty(&response.payload).unwrap_or_default();
     OutputResult {
         stdout: format!("{stdout}\n"),
+        stderr: String::new(),
+        exit_code: exit_code::SUCCESS,
+    }
+}
+
+fn format_invoke_action(response: &Envelope) -> OutputResult {
+    let result: InvokeActionResult = match response.extract_payload() {
+        Ok(r) => r,
+        Err(_) => return format_ok_msg("Action completed"),
+    };
+    let stdout = match result.pane_id {
+        Some(pane_id) => format!("{} (pane {})\n", result.result, pane_id),
+        None => String::new(),
+    };
+    OutputResult {
+        stdout,
         stderr: String::new(),
         exit_code: exit_code::SUCCESS,
     }

@@ -427,6 +427,105 @@ impl WorkspaceInstance {
         Ok(())
     }
 
+    /// Spawn a session for a pane created by a split action.
+    ///
+    /// Uses the default profile from `global_settings`. Registers the pane
+    /// record and session; on failure the pane is recorded as `Detached`.
+    pub fn spawn_session_for_pane(
+        &mut self,
+        pane_id: &PaneId,
+        pane_name: String,
+        global_settings: &GlobalSettings,
+        host_env: &HashMap<String, String>,
+        find_exe: &impl Fn(&str) -> bool,
+    ) {
+        let session_def = SessionLaunchDefinition::default();
+        // Minimal workspace def — split panes use the global default profile.
+        let workspace_def = WorkspaceDefinition {
+            version: 1,
+            name: self.name.clone(),
+            description: None,
+            defaults: None,
+            profiles: None,
+            bindings: None,
+            windows: None,
+            tabs: None,
+        };
+
+        let resolved = match resolve_launch_spec(
+            &session_def,
+            &workspace_def,
+            global_settings,
+            host_env,
+            find_exe,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                self.panes.insert(
+                    pane_id.clone(),
+                    PaneRecord {
+                        name: pane_name,
+                        state: PaneState::Detached {
+                            error: e.to_string(),
+                        },
+                        original_def: None,
+                    },
+                );
+                return;
+            }
+        };
+
+        let session_id = SessionId(self.next_session_id);
+        self.next_session_id += 1;
+
+        let config = SessionConfig {
+            executable: resolved.executable,
+            args: resolved.args,
+            cwd: resolved.cwd,
+            env: resolved.env,
+            restart_policy: RestartPolicy::Never,
+            startup_command: None,
+            size: PtySize::new(80, 24),
+            name: pane_name.clone(),
+            max_scrollback: 10_000,
+        };
+
+        let mut session = Session::new(session_id.clone(), config);
+
+        match session.start() {
+            Ok(()) => {
+                #[cfg(windows)]
+                {
+                    self.add_to_job(&session);
+                }
+                self.panes.insert(
+                    pane_id.clone(),
+                    PaneRecord {
+                        name: pane_name,
+                        state: PaneState::Attached {
+                            session_id: session_id.clone(),
+                        },
+                        original_def: None,
+                    },
+                );
+            }
+            Err(e) => {
+                self.panes.insert(
+                    pane_id.clone(),
+                    PaneRecord {
+                        name: pane_name,
+                        state: PaneState::Detached {
+                            error: e.to_string(),
+                        },
+                        original_def: None,
+                    },
+                );
+            }
+        }
+
+        self.sessions.insert(session_id, session);
+    }
+
     /// Create a minimal instance for testing (no real sessions or job objects).
     #[cfg(test)]
     pub fn new_for_test(name: &str) -> Self {

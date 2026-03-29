@@ -851,6 +851,7 @@ impl HostRequestHandler {
             }
         };
 
+        let settings = state.settings.clone();
         let inst = state.workspaces.get_mut(&workspace_name).unwrap();
 
         // Resolve target pane id
@@ -869,7 +870,49 @@ impl HostRequestHandler {
         let dispatcher = ActionDispatcher::new(registry, viewport);
 
         match dispatcher.dispatch(inst, &action.action, &action.args, target_pane) {
-            Ok(_result) => Some(Envelope::new(id, &OkResponse {})),
+            Ok(result) => {
+                use crate::action::ActionResult;
+
+                match result {
+                    ActionResult::PaneCreated { pane_id } => {
+                        // Spawn a session for the newly created pane.
+                        let pane_name = format!("pane-{}", pane_id.0);
+                        let env = host_env();
+                        inst.spawn_session_for_pane(
+                            &pane_id,
+                            pane_name,
+                            &settings,
+                            &env,
+                            &find_exe,
+                        );
+                        Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: "pane-created".to_string(),
+                                pane_id: Some(format!("{}", pane_id.0)),
+                            },
+                        ))
+                    }
+                    ActionResult::PaneClosed { pane_id, .. } => {
+                        Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: "pane-closed".to_string(),
+                                pane_id: Some(format!("{}", pane_id.0)),
+                            },
+                        ))
+                    }
+                    ActionResult::Ok => {
+                        Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: "ok".to_string(),
+                                pane_id: None,
+                            },
+                        ))
+                    }
+                }
+            }
             Err(e) => {
                 let code = match &e {
                     crate::action::ActionError::UnknownAction(_) => ErrorCode::InvalidAction,
