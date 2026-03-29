@@ -181,3 +181,43 @@ Session lifecycle lives in `wtd-host::session`. Backoff logic in `wtd-host::back
 - On restart, PtySession is dropped (closes ConPTY + handles), reader thread detects pipe close and exits, then new PTY is spawned
 - `PtySession::spawn` does NOT yet accept environment variables; env from `SessionConfig` is not passed to CreateProcess (future bead needed)
 - Backoff formula: `min(500 * 2^(count-1), 30000)` ms; resets after 60s stable run
+
+---
+
+## wintermdriver-8w8.3: Workspace instance manager
+
+Workspace lifecycle lives in `wtd-host::workspace_instance`. Manages running workspace instances with pane-session attachments.
+
+**Key types:**
+- `WorkspaceInstance` — owns tabs, sessions, pane records, and a Windows Job Object
+- `WorkspaceState` — enum: `Creating | Active | Closing | Closed | Recreating` (§27.2)
+- `PaneState` — `Attached { session_id }` | `Detached { error }` (§29.2)
+- `TabInstance` — runtime tab: `TabId`, name, `LayoutTree`
+- `AttachSnapshot` / `TabSnapshot` — read-only state for attach (§26.2)
+- `WorkspaceError` — `InvalidState`, `JobObject`, `ProfileResolution`
+
+**Public API:**
+- `WorkspaceInstance::open(id, workspace_def, global_settings, host_env, find_exe)` — create from definition
+- `close()` — terminate all sessions, release job object
+- `recreate(workspace_def, ...)` — tear down and re-create from definition
+- `save() -> WorkspaceDefinition` — reconstruct definition from runtime state
+- `attach_snapshot() -> AttachSnapshot` — read-only state snapshot
+- Accessors: `sessions()`, `session()`, `pane_state()`, `pane_name()`, `tabs()`, `running_session_count()`, `failed_pane_count()`
+
+**LayoutTree additions:**
+- `LayoutTree::from_pane_node(node) -> (LayoutTree, Vec<(String, PaneId)>)` — build tree from definition with pane name mappings
+- `LayoutTree::to_pane_node(leaf_fn) -> PaneNode` — reconstruct definition from runtime tree
+
+**Session additions:**
+- `Session::stop()` — public method to terminate and clean up
+- `Session::config()` — access immutable config
+- `Session::name()` — convenience accessor
+- `Session::process_handle_raw()` — raw HANDLE as usize for Job Object assignment
+
+**Design decisions:**
+- Internal `populate()` method shared between `open()` and `recreate()` to avoid duplication
+- Depth-first traversal of `PaneNode` creates sessions in same order as `LayoutTree::from_pane_node` pane mappings
+- Partial failure (§29.2–29.3): failed sessions are recorded as `PaneState::Detached`, workspace still moves to Active
+- Job Object created per instance; each child process added on successful start
+- Session IDs are monotonically increasing across recreates (never reused)
+- `save()` uses `to_pane_node` with original `SessionLaunchDefinition` stored per pane
