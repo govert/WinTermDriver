@@ -8,6 +8,27 @@ WinTermDriver combines three ideas:
 2. A persistent workspace model that can save and recreate named layouts and session launch definitions.
 3. A controller plane that can drive any pane or session programmatically without breaking ordinary interactive use.
 
+![WinTermDriver workspace with tabs, split panes, and colored terminal output](docs/images/workspace-overview.png)
+*A workspace with three tabs and split panes showing git status, build output, and test results.*
+
+### Command palette
+
+Press `Ctrl+Shift+Space` to open the command palette. Fuzzy search filters the full action catalog in real time:
+
+![Command palette overlay with fuzzy search filtering actions](docs/images/command-palette.png)
+
+### Prefix chord shortcuts
+
+Tmux-style prefix chords (`Ctrl+B` followed by a key) provide quick split, focus, and tab management. The status bar shows when the prefix is active:
+
+![Status bar showing active Ctrl+B prefix chord indicator](docs/images/prefix-chord.png)
+
+### Error display
+
+When a session fails to launch or exits unexpectedly, the pane shows a clear error message with restart instructions:
+
+![Split panes with one pane showing a session failure message and restart hint](docs/images/failed-pane.png)
+
 ## Quickstart
 
 ### 1. Install

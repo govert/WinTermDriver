@@ -8,6 +8,7 @@ members = [
     "crates/wtd-ui",
     "crates/wtd-cli",
     "crates/eval-renderer",
+    "crates/screenshot-gen",
 ]
 
 [workspace.package]

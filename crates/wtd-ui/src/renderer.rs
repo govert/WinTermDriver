@@ -112,6 +112,9 @@ pub struct TerminalRenderer {
 pub struct RendererConfig {
     pub font_family: String,
     pub font_size: f32,
+    /// Use software rendering. Slower, but the render target is GDI-compatible
+    /// which allows pixel capture via `BitBlt`/`GetDIBits`.
+    pub software_rendering: bool,
 }
 
 impl Default for RendererConfig {
@@ -119,6 +122,7 @@ impl Default for RendererConfig {
         Self {
             font_family: "Cascadia Mono".to_string(),
             font_size: 14.0,
+            software_rendering: false,
         }
     }
 }
@@ -212,7 +216,19 @@ impl TerminalRenderer {
             height: (rect.bottom - rect.top) as u32,
         };
 
-        let rt_props = D2D1_RENDER_TARGET_PROPERTIES::default();
+        let rt_props = if config.software_rendering {
+            D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                usage: D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
+                ..Default::default()
+            }
+        } else {
+            D2D1_RENDER_TARGET_PROPERTIES::default()
+        };
         let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd,
             pixelSize: size,
