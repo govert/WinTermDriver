@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build & Release (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable MSVC
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Run packaging script
+        shell: bash
+        run: ./tools/package-release.sh --version "${{ steps.version.outputs.version }}"
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          ARCHIVE="wtd-${{ steps.version.outputs.version }}-windows-x86_64.zip"
+          cd target/package
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          echo "Checksum:"
+          cat "${ARCHIVE}.sha256"
+
+      - name: Determine pre-release
+        id: prerelease
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ "$TAG" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          ARCHIVE="wtd-${VERSION}-windows-x86_64.zip"
+          CHECKSUM="${ARCHIVE}.sha256"
+          DRAFT="${{ steps.prerelease.outputs.draft }}"
+          PRERELEASE="${{ steps.prerelease.outputs.is_prerelease }}"
+
+          ARGS=(
+            "$TAG"
+            "target/package/${ARCHIVE}"
+            "target/package/${CHECKSUM}"
+            --title "WinTermDriver ${TAG}"
+            --generate-notes
+          )
+
+          if [[ "$DRAFT" == "true" ]]; then
+            ARGS+=(--draft)
+          fi
+
+          if [[ "$PRERELEASE" == "true" ]]; then
+            ARGS+=(--prerelease)
+          fi
+
+          gh release create "${ARGS[@]}"
