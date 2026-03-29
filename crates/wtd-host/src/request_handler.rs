@@ -152,17 +152,6 @@ fn find_pane<'a>(
     None
 }
 
-/// Get visible text for a pane's session.
-fn get_pane_screen_text(inst: &WorkspaceInstance, pane_id: &PaneId) -> String {
-    match inst.pane_state(pane_id) {
-        Some(PaneState::Attached { session_id }) => inst
-            .session(session_id)
-            .map(|s| s.screen().visible_text())
-            .unwrap_or_default(),
-        _ => String::new(),
-    }
-}
-
 /// Get scrollback lines for a pane's session.
 fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) -> Vec<String> {
     match inst.pane_state(pane_id) {
@@ -751,15 +740,64 @@ impl HostRequestHandler {
             }
         };
 
-        let text = get_pane_screen_text(inst, &pane_id);
-        let line_count = if text.is_empty() { 0 } else { text.lines().count() as u32 };
-        Some(Envelope::new(id, &CaptureResult {
-            text,
-            lines: line_count,
-            total_lines: line_count,
-            anchor_found: None,
-            cursor: None,
-        }))
+        // Get the session's screen buffer and run capture_extended.
+        let result = match inst.pane_state(&pane_id) {
+            Some(PaneState::Attached { session_id }) => {
+                match inst.session(session_id) {
+                    Some(session) => {
+                        // Compile anchor regex if provided.
+                        let compiled_regex = match &capture.after_regex {
+                            Some(pattern) => {
+                                match regex::Regex::new(pattern) {
+                                    Ok(re) => Some(re),
+                                    Err(e) => {
+                                        return Some(error_envelope(
+                                            id,
+                                            ErrorCode::InvalidArgument,
+                                            &format!("invalid after_regex '{}': {}", pattern, e),
+                                        ));
+                                    }
+                                }
+                            }
+                            None => None,
+                        };
+
+                        let screen = session.screen();
+                        let ext = screen.capture_extended(
+                            capture.lines,
+                            capture.all.unwrap_or(false),
+                            capture.after.as_deref(),
+                            compiled_regex.as_ref(),
+                            capture.max_lines,
+                            capture.count.unwrap_or(false),
+                        );
+                        CaptureResult {
+                            text: ext.text,
+                            lines: ext.lines,
+                            total_lines: ext.total_lines,
+                            anchor_found: ext.anchor_found,
+                            cursor: Some(ext.cursor),
+                        }
+                    }
+                    None => CaptureResult {
+                        text: String::new(),
+                        lines: 0,
+                        total_lines: 0,
+                        anchor_found: None,
+                        cursor: None,
+                    },
+                }
+            }
+            _ => CaptureResult {
+                text: String::new(),
+                lines: 0,
+                total_lines: 0,
+                anchor_found: None,
+                cursor: None,
+            },
+        };
+
+        Some(Envelope::new(id, &result))
     }
 
     fn handle_scrollback(&self, id: &str, scrollback: &Scrollback) -> Option<Envelope> {

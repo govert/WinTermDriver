@@ -237,7 +237,7 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             _ => None,
@@ -427,6 +427,7 @@ async fn do_capture(
             "cap",
             &Capture {
                 target: target.to_string(),
+                ..Default::default()
             },
         ),
     )

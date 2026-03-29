@@ -194,7 +194,7 @@ impl RequestHandler for M1Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             _ => None,
@@ -246,7 +246,7 @@ async fn do_capture(
 ) -> String {
     write_frame(
         client,
-        &Envelope::new("cap", &Capture { target: target.to_string() }),
+        &Envelope::new("cap", &Capture { target: target.to_string(), ..Default::default() }),
     )
     .await
     .unwrap();

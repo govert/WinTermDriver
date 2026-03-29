@@ -200,6 +200,7 @@ async fn exit_codes_match_error_types() {
             "r2",
             &Capture {
                 target: "foo".into(),
+                ..Default::default()
             },
         ))
         .await

@@ -203,6 +203,7 @@ async fn poll_capture_until(
                 &next_id(),
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ),
         )

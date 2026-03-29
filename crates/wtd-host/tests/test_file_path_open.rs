@@ -83,6 +83,7 @@ async fn poll_capture_until(
                 "cap",
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ),
         )

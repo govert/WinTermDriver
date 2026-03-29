@@ -149,7 +149,7 @@ async fn poll_capture_until(
     let start = tokio::time::Instant::now();
     let mut last_text = String::new();
     while start.elapsed() < timeout {
-        let resp = request(client, &Capture { target: target.to_string() }).await;
+        let resp = request(client, &Capture { target: target.to_string(), ..Default::default() }).await;
         if resp.msg_type == CaptureResult::TYPE_NAME {
             let cap: CaptureResult = resp.extract_payload().unwrap();
             last_text = cap.text;
@@ -240,7 +240,7 @@ async fn s5_cli_to_host_full_round_trip() {
     // Verify CLI capture output formatting.
     let cap_resp = request(
         &mut client,
-        &Capture { target: "shell".to_string() },
+        &Capture { target: "shell".to_string(), ..Default::default() },
     )
     .await;
     let cap_out = output::format_response(&cap_resp, false);

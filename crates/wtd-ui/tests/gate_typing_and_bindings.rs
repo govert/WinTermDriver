@@ -262,7 +262,7 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             _ => None,
@@ -564,6 +564,7 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
                 "kb-ready",
                 &Capture {
                     target: "shell".to_string(),
+                    ..Default::default()
                 },
             ))
             .await
@@ -647,6 +648,7 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
                 "kb-cap",
                 &Capture {
                     target: "shell".to_string(),
+                    ..Default::default()
                 },
             ))
             .await

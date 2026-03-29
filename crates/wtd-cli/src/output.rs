@@ -189,8 +189,14 @@ fn format_capture(response: &Envelope) -> OutputResult {
         Ok(r) => r,
         Err(e) => return parse_error(e),
     };
+    // Count mode: print the line count as a number
+    let stdout = if result.text.is_empty() && result.lines > 0 {
+        format!("{}\n", result.lines)
+    } else {
+        result.text
+    };
     OutputResult {
-        stdout: result.text,
+        stdout,
         stderr: String::new(),
         exit_code: exit_code::SUCCESS,
     }

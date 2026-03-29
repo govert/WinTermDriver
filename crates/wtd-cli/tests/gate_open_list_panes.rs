@@ -373,7 +373,7 @@ impl RequestHandler for GateHandler {
                     ));
                 }
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             TypedMessage::CloseWorkspace(close) => {
@@ -412,6 +412,7 @@ async fn poll_capture_until(
                 &next_id(),
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ))
             .await

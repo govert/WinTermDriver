@@ -553,7 +553,7 @@ impl RequestHandler for S2Handler {
                 };
 
                 let text = get_pane_screen_text(inst, &pane_id);
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             TypedMessage::Scrollback(scrollback) => {
@@ -693,6 +693,7 @@ async fn poll_capture_until(
                 &next_id(),
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ))
             .await
@@ -906,6 +907,7 @@ async fn s2_all_commands_full_lifecycle() {
             &next_id(),
             &Capture {
                 target: "editor".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1157,6 +1159,7 @@ async fn exit_code_2_target_not_found_all_commands() {
             &next_id(),
             &Capture {
                 target: "ghost".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1383,6 +1386,7 @@ async fn exit_code_3_ambiguous_target() {
             &next_id(),
             &Capture {
                 target: "AMBIGUOUS".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1501,6 +1505,7 @@ async fn json_output_structure_all_response_types() {
             &next_id(),
             &Capture {
                 target: "editor".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1570,6 +1575,7 @@ async fn json_output_structure_all_response_types() {
             &next_id(),
             &Capture {
                 target: "nonexistent".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1716,6 +1722,7 @@ async fn error_json_output_valid_for_all_error_types() {
             &next_id(),
             &Capture {
                 target: "ghost".to_string(),
+                ..Default::default()
             },
         ))
         .await

@@ -468,7 +468,7 @@ impl RequestHandler for E2eHandler {
                 };
 
                 let text = get_pane_screen_text(inst, &pane_id);
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             TypedMessage::Scrollback(scrollback) => {
@@ -668,7 +668,7 @@ async fn poll_capture_until(
     let mut last_text = String::new();
     while start.elapsed() < timeout {
         let resp = client
-            .request(&Envelope::new(&next_id(), &Capture { target: target.to_string() }))
+            .request(&Envelope::new(&next_id(), &Capture { target: target.to_string(), ..Default::default() }))
             .await
             .unwrap();
         if resp.msg_type == CaptureResult::TYPE_NAME {
@@ -834,6 +834,7 @@ async fn full_lifecycle_open_list_send_capture_inspect_close() {
             &next_id(),
             &Capture {
                 target: "shell".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -996,6 +997,7 @@ async fn error_capture_target_not_found() {
             &next_id(),
             &Capture {
                 target: "nonexistent".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1230,6 +1232,7 @@ async fn error_ambiguous_capture() {
             &next_id(),
             &Capture {
                 target: "AMBIGUOUS".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1418,6 +1421,7 @@ async fn json_output_capture() {
             &next_id(),
             &Capture {
                 target: "shell".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -1475,6 +1479,7 @@ async fn json_output_error() {
             &next_id(),
             &Capture {
                 target: "nonexistent".to_string(),
+                ..Default::default()
             },
         ))
         .await

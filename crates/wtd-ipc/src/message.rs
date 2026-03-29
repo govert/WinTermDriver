@@ -327,7 +327,7 @@ impl_payload!(Keys, "Keys");
 ///
 /// `max_lines` always caps the output (trims oldest first).
 /// `count` suppresses text and returns metadata only.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Capture {
     /// Required: target pane path.
@@ -590,7 +590,7 @@ pub struct SessionInfo {
 }
 
 /// §13.14 — Result of a Capture request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureResult {
     /// Captured text (empty when `count` mode was requested).

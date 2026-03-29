@@ -335,7 +335,7 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             TypedMessage::CloseWorkspace(close) => {
@@ -374,6 +374,7 @@ async fn poll_capture_until(
                 &next_id(),
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ))
             .await
@@ -485,6 +486,7 @@ async fn send_and_capture_round_trip() {
             &next_id(),
             &Capture {
                 target: "dev/server".to_string(),
+                ..Default::default()
             },
         ))
         .await
@@ -590,6 +592,7 @@ async fn capture_nonexistent_target_returns_error() {
             &next_id(),
             &Capture {
                 target: "dev/nonexistent".to_string(),
+                ..Default::default()
             },
         ))
         .await

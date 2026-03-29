@@ -226,6 +226,7 @@ async fn poll_capture_until(
                 &next_id(),
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ),
         )
@@ -830,6 +831,7 @@ tabs:
         &mut cli,
         &Capture {
             target: "no-such-pane".to_string(),
+            ..Default::default()
         },
     )
     .await;

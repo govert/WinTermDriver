@@ -394,7 +394,7 @@ impl RequestHandler for M5Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             _ => None,
@@ -419,6 +419,7 @@ async fn poll_capture_until(
                 "m5-poll",
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ))
             .await
@@ -600,6 +601,7 @@ async fn m5_interactive_workspace_acceptance() {
                 "m5-cap-type",
                 &Capture {
                     target: "editor".to_string(),
+                    ..Default::default()
                 },
             ))
             .await

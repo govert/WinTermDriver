@@ -152,12 +152,20 @@ fn build_request(command: &Command) -> Option<Envelope> {
                 keys: key_specs.clone(),
             },
         )),
-        Command::Capture { target } => Some(Envelope::new(
-            &id,
-            &Capture {
-                target: target.clone(),
-            },
-        )),
+        Command::Capture { target, lines, all, after, after_regex, max_lines, count } => {
+            Some(Envelope::new(
+                &id,
+                &Capture {
+                    target: target.clone(),
+                    lines: *lines,
+                    all: if *all { Some(true) } else { None },
+                    after: after.clone(),
+                    after_regex: after_regex.clone(),
+                    max_lines: *max_lines,
+                    count: if *count { Some(true) } else { None },
+                },
+            ))
+        }
         Command::Scrollback { target, tail } => Some(Envelope::new(
             &id,
             &Scrollback {

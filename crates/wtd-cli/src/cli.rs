@@ -143,6 +143,24 @@ pub enum Command {
     Capture {
         /// Target path (e.g. workspace/pane).
         target: String,
+        /// Return last N lines (scrollback + visible, counted from bottom).
+        #[arg(long)]
+        lines: Option<u32>,
+        /// Return entire buffer (all scrollback + visible).
+        #[arg(long)]
+        all: bool,
+        /// Exact substring anchor — capture from match line to end.
+        #[arg(long, value_name = "STRING")]
+        after: Option<String>,
+        /// Regex anchor — capture from first match line to end.
+        #[arg(long, value_name = "PATTERN")]
+        after_regex: Option<String>,
+        /// Cap total lines returned.
+        #[arg(long)]
+        max_lines: Option<u32>,
+        /// Return metadata only (line count), no text.
+        #[arg(long)]
+        count: bool,
     },
 
     /// Capture scrollback lines.
@@ -483,7 +501,33 @@ mod tests {
     #[test]
     fn capture_basic() {
         let cli = parse(&["capture", "dev/server"]).unwrap();
-        assert!(matches!(cli.command, Command::Capture { ref target } if target == "dev/server"));
+        if let Command::Capture { target, lines, all, after, after_regex, max_lines, count } = &cli.command {
+            assert_eq!(target, "dev/server");
+            assert!(lines.is_none());
+            assert!(!all);
+            assert!(after.is_none());
+            assert!(after_regex.is_none());
+            assert!(max_lines.is_none());
+            assert!(!count);
+        } else {
+            panic!("expected Capture command");
+        }
+    }
+
+    #[test]
+    fn capture_with_flags() {
+        let cli = parse(&["capture", "dev/server", "--lines", "50", "--all", "--after", "START", "--after-regex", "^\\$", "--max-lines", "100", "--count"]).unwrap();
+        if let Command::Capture { target, lines, all, after, after_regex, max_lines, count } = &cli.command {
+            assert_eq!(target, "dev/server");
+            assert_eq!(*lines, Some(50));
+            assert!(*all);
+            assert_eq!(after.as_deref(), Some("START"));
+            assert_eq!(after_regex.as_deref(), Some("^\\$"));
+            assert_eq!(*max_lines, Some(100));
+            assert!(*count);
+        } else {
+            panic!("expected Capture command");
+        }
     }
 
     #[test]
@@ -699,30 +743,32 @@ mod tests {
     #[test]
     fn single_segment_target() {
         let cli = parse(&["capture", "server"]).unwrap();
-        assert!(matches!(cli.command, Command::Capture { ref target } if target == "server"));
+        if let Command::Capture { target, .. } = &cli.command {
+            assert_eq!(target, "server");
+        } else { panic!("expected Capture"); }
     }
 
     #[test]
     fn two_segment_target() {
         let cli = parse(&["capture", "dev/server"]).unwrap();
-        assert!(matches!(cli.command, Command::Capture { ref target } if target == "dev/server"));
+        if let Command::Capture { target, .. } = &cli.command {
+            assert_eq!(target, "dev/server");
+        } else { panic!("expected Capture"); }
     }
 
     #[test]
     fn three_segment_target() {
         let cli = parse(&["capture", "dev/backend/server"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Capture { ref target } if target == "dev/backend/server"
-        ));
+        if let Command::Capture { target, .. } = &cli.command {
+            assert_eq!(target, "dev/backend/server");
+        } else { panic!("expected Capture"); }
     }
 
     #[test]
     fn four_segment_target() {
         let cli = parse(&["capture", "dev/main/backend/server"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Capture { ref target } if target == "dev/main/backend/server"
-        ));
+        if let Command::Capture { target, .. } = &cli.command {
+            assert_eq!(target, "dev/main/backend/server");
+        } else { panic!("expected Capture"); }
     }
 }

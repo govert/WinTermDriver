@@ -638,7 +638,7 @@ impl RequestHandler for M6Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text }))
+                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
             }
 
             TypedMessage::Scrollback(sb) => {
@@ -816,6 +816,7 @@ async fn poll_capture_until(
                 "m6-poll",
                 &Capture {
                     target: target.to_string(),
+                    ..Default::default()
                 },
             ))
             .await
