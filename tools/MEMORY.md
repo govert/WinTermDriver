@@ -125,3 +125,27 @@ All definition types live in `wtd-core::workspace` (§9.1). Loader + validation 
 - Clamping uses recursive `min_dim()`: stacked same-orientation splits sum minimums, perpendicular splits take max
 - Min pane size: 2 cols × 1 row (§18.4); ratio additionally bounded to [0.1, 0.9] (§18.3)
 - Directional focus uses Euclidean distance² between geometric centres
+
+---
+
+## wintermdriver-8w8.1: IPC message types and framing
+
+All IPC message types live in `wtd-ipc::message`. Framing in `wtd-ipc::framing`.
+
+**Envelope:** `Envelope { id: String, msg_type: String, payload: serde_json::Value }` — serializes to `{"id":"...","type":"...","payload":{...}}` per §13.5. The `msg_type` field uses `#[serde(rename = "type")]`.
+
+**MessagePayload trait:** Every payload struct implements `MessagePayload` with a `TYPE_NAME` constant. Use `Envelope::new(id, &payload)` to construct and `envelope.extract_payload::<T>()` to extract typed payloads.
+
+**parse_envelope:** `parse_envelope(&Envelope) -> Result<TypedMessage, ParseError>` dispatches on `msg_type` string to deserialize into the correct variant of the `TypedMessage` enum (covers all 40+ message types).
+
+**Framing (§13.4):** `wtd_ipc::framing::encode/decode` — 4-byte u32 LE length prefix + UTF-8 JSON. Max 16 MiB (`MAX_MESSAGE_SIZE`). `read_length_prefix()` for incremental pipe reading.
+
+**Key design decisions:**
+- Single `Envelope` struct (not generic over direction) — framing layer doesn't know sender/receiver
+- No separate `ClientMessage`/`HostMessage` enums — `TypedMessage` enum contains all variants; downstream can match only the ones they expect
+- Payload field names use camelCase on wire (`#[serde(rename_all = "camelCase")]` on payload structs)
+- IDs are `String` (not uuid crate) — caller generates UUIDs
+- `ErrorCode` enum serializes to kebab-case strings (e.g. `"target-not-found"`)
+- `Send.newline` defaults to `true`; `InvokeAction.args` defaults to `{}`
+- State snapshots in results (e.g. `AttachWorkspaceResult.state`) use `serde_json::Value` — concrete types deferred to host implementation beads
+- `IpcError` extended with `MessageTooLarge` and `FrameTooShort` variants
