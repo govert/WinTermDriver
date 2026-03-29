@@ -810,3 +810,46 @@ renderer.end_draw()?;
 - Vertical separators between segments
 - Background matches tab strip (#1e1e28); top border line for visual separation
 - `SessionStatus` is a UI-side enum (not importing from `wtd-host::session`) to avoid circular dependency
+
+---
+
+## wintermdriver-w0y.1: Keyboard input classifier
+
+`InputClassifier` lives in `wtd_ui::input`. Parses binding configs and classifies keyboard events per §21.1 and §21.4.
+
+**Key types:**
+- `KeySpec` — parsed key specification: `{ modifiers: Modifiers, key: KeyName }` with `parse("Ctrl+Shift+T")` and `matches(&KeyEvent)`
+- `KeyName` — enum: `Char('A'..'Z')`, `Digit(0..9)`, `F(1..12)`, `Enter`, `Tab`, `Escape`, `Space`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `Up`, `Down`, `Left`, `Right`, `Plus`, `Minus`, punctuation variants
+- `Modifiers` — flags: `CTRL | ALT | SHIFT` with bitwise ops
+- `KeyEvent` — `{ key: KeyName, modifiers: Modifiers, character: Option<char> }`
+- `InputAction` — enum: `PrefixKey | ChordBinding(ActionReference) | SingleStrokeBinding(ActionReference) | RawInput(Vec<u8>)`
+- `InputClassifier` — built from `BindingsDefinition`, classifies via `classify(&KeyEvent, prefix_active: bool)`
+- `KeySpecError` — parse errors
+
+**Public API:**
+- `InputClassifier::from_bindings(bindings) -> Result<Self, KeySpecError>` — parse all binding strings
+- `InputClassifier::classify(event, prefix_active) -> InputAction` — main classification
+- `InputClassifier::prefix_key()`, `prefix_timeout_ms()`, `find_chord()`, `find_single_stroke()`
+- `key_event_to_bytes(event) -> Vec<u8>` — raw terminal byte conversion (VT sequences, control codes, UTF-8)
+- `vk_to_key_name(vk: u16) -> Option<KeyName>` — Win32 VK code mapping
+- `current_modifiers() -> Modifiers` — read modifier state from `GetKeyState`
+- `vk_to_char(vk, scan_code) -> Option<char>` — character prediction via `ToUnicode`
+
+**Window module additions:**
+- `drain_key_events() -> Vec<KeyEvent>` — keyboard event queue (same pattern as `drain_mouse_events()`)
+- WM_KEYDOWN handler — captures all non-modifier keys
+- WM_SYSKEYDOWN handler — captures Alt combos (Alt+F4 passed through to DefWindowProc)
+
+**Classification precedence (§21.4):**
+1. Prefix key wins over single-stroke for same key
+2. Chords checked only when `prefix_active == true`
+3. Single-strokes checked only when `prefix_active == false`
+4. Unbound keys → `RawInput` with terminal bytes
+
+**Chord matching:** Single-character chord keys (e.g. `%`, `o`) match on `event.character`; multi-character chord keys (e.g. `Up`, `F11`) match on `event.key` (KeyName)
+
+**Design decisions:**
+- Caller manages prefix state (§21.3 state machine) and passes `prefix_active` flag — classifier is stateless
+- `Win32_UI_Input_KeyboardAndMouse` feature added to wtd-ui for `GetKeyState`, `ToUnicode`, `GetKeyboardState`
+- Modifier-only key presses (VK_SHIFT, VK_CONTROL, VK_MENU) are filtered out in the wndproc
+- `KeyName::Char` stores uppercase-normalized letters; matching is case-insensitive via normalization
