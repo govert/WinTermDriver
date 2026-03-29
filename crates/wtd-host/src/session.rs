@@ -154,12 +154,26 @@ impl Session {
         &self.screen
     }
 
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    pub fn name(&self) -> &str {
+        &self.config.name
+    }
+
     pub fn restart_policy(&self) -> &RestartPolicy {
         &self.config.restart_policy
     }
 
     pub fn backoff(&self) -> &BackoffState {
         &self.backoff
+    }
+
+    /// The child process handle as a raw `usize`, for use with Job Objects.
+    #[cfg(windows)]
+    pub fn process_handle_raw(&self) -> Option<usize> {
+        self.pty.as_ref().map(|p| p.process_handle().0 as usize)
     }
 
     // ── I/O ──────────────────────────────────────────────────────────────
@@ -206,6 +220,14 @@ impl Session {
 
         self.state = SessionState::Exited { exit_code };
         Some(exit_code)
+    }
+
+    /// Stop the session: terminate the child process and clean up.
+    pub fn stop(&mut self) {
+        self.stop_pty();
+        if self.state == SessionState::Running || self.state == SessionState::Creating {
+            self.state = SessionState::Exited { exit_code: 0 };
+        }
     }
 
     /// Whether the session should restart given its current state and policy.

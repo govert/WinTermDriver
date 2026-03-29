@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use crate::ids::PaneId;
-use crate::workspace::Orientation;
+use crate::workspace::{Orientation, PaneLeaf, PaneNode, SplitNode};
 
 /// Minimum pane width in character cells (§18.4).
 pub const MIN_PANE_COLS: u16 = 2;
@@ -135,6 +135,29 @@ impl LayoutTree {
         }
     }
 
+    /// Build a tree from a workspace definition [`PaneNode`].
+    ///
+    /// Returns the tree and a list of `(pane_name, PaneId)` mappings in
+    /// depth-first order. The first pane is focused by default.
+    pub fn from_pane_node(node: &PaneNode) -> (Self, Vec<(String, PaneId)>) {
+        let mut tree = Self {
+            nodes: Vec::new(),
+            root: 0,
+            focus: PaneId(0), // placeholder — set below
+            zoomed: None,
+            next_pane_id: 1,
+            pane_index: HashMap::new(),
+            free_list: Vec::new(),
+        };
+        let mut mappings = Vec::new();
+        let root_idx = tree.build_from_node(node, &mut mappings);
+        tree.root = root_idx;
+        if let Some((_, ref id)) = mappings.first() {
+            tree.focus = id.clone();
+        }
+        (tree, mappings)
+    }
+
     // ── Queries ───────────────────────────────────────────────────────────────
 
     /// Currently focused pane.
@@ -178,6 +201,15 @@ impl LayoutTree {
         }
         self.rects_recursive(self.root, total, &mut out);
         out
+    }
+
+    /// Reconstruct a [`PaneNode`] tree from this layout, using `leaf_fn` to
+    /// populate each leaf's name and session definition.
+    pub fn to_pane_node<F>(&self, leaf_fn: F) -> PaneNode
+    where
+        F: Fn(&PaneId) -> PaneLeaf,
+    {
+        self.node_to_pane_node(self.root, &leaf_fn)
     }
 
     // ── Split ─────────────────────────────────────────────────────────────────
@@ -468,6 +500,67 @@ impl LayoutTree {
         let id = PaneId(self.next_pane_id);
         self.next_pane_id += 1;
         id
+    }
+
+    fn node_to_pane_node<F>(&self, idx: Idx, leaf_fn: &F) -> PaneNode
+    where
+        F: Fn(&PaneId) -> PaneLeaf,
+    {
+        match &self.node(idx).kind {
+            NodeKind::Pane { id } => PaneNode::Pane(leaf_fn(id)),
+            NodeKind::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => PaneNode::Split(SplitNode {
+                orientation: orientation.clone(),
+                ratio: Some(*ratio),
+                children: vec![
+                    self.node_to_pane_node(*first, leaf_fn),
+                    self.node_to_pane_node(*second, leaf_fn),
+                ],
+            }),
+        }
+    }
+
+    fn build_from_node(
+        &mut self,
+        node: &PaneNode,
+        mappings: &mut Vec<(String, PaneId)>,
+    ) -> Idx {
+        match node {
+            PaneNode::Pane(leaf) => {
+                let id = self.alloc_pane_id();
+                let idx = self.alloc_node(Node {
+                    parent: None,
+                    kind: NodeKind::Pane { id: id.clone() },
+                });
+                self.pane_index.insert(id.clone(), idx);
+                mappings.push((leaf.name.clone(), id));
+                idx
+            }
+            PaneNode::Split(SplitNode {
+                orientation,
+                ratio,
+                children,
+            }) => {
+                let first_idx = self.build_from_node(&children[0], mappings);
+                let second_idx = self.build_from_node(&children[1], mappings);
+                let split_idx = self.alloc_node(Node {
+                    parent: None,
+                    kind: NodeKind::Split {
+                        orientation: orientation.clone(),
+                        ratio: ratio.unwrap_or(0.5),
+                        first: first_idx,
+                        second: second_idx,
+                    },
+                });
+                self.node_mut(first_idx).parent = Some(split_idx);
+                self.node_mut(second_idx).parent = Some(split_idx);
+                split_idx
+            }
+        }
     }
 
     fn split(

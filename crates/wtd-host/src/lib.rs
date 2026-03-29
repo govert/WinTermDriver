@@ -2,3 +2,4 @@
 
 pub mod backoff;
 pub mod session;
+pub mod workspace_instance;
