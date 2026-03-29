@@ -7,6 +7,8 @@
 
 #[cfg(windows)]
 mod run {
+    use wtd_core::logging::init_host_logging;
+    use wtd_core::GlobalSettings;
     use wtd_host::host_lifecycle::*;
     use wtd_host::ipc_server::{ClientId, RequestHandler};
     use wtd_host::pipe_security::pipe_name_for_current_user;
@@ -33,16 +35,18 @@ mod run {
         let pipe_name = pipe_name_for_current_user()?;
         let dir = data_dir();
 
+        // 0. Initialise logging (§31.1): file + stderr.
+        let settings = GlobalSettings::default();
+        let _log_guard = init_host_logging(&settings.log_level, &dir);
+
         // 2. Single-instance check.
         match check_single_instance_in(&pipe_name, &dir) {
             SingleInstanceCheck::AlreadyRunning => {
-                eprintln!("wtd-host: another instance is already running");
+                tracing::error!("another instance is already running");
                 std::process::exit(1);
             }
             SingleInstanceCheck::StalePidCleaned => {
-                eprintln!(
-                    "wtd-host: cleaned stale PID file from previous crash"
-                );
+                tracing::warn!("cleaned stale PID file from previous crash");
             }
             SingleInstanceCheck::Available => {}
         }
@@ -52,18 +56,15 @@ mod run {
 
         // 4. Install console ctrl handler for graceful shutdown (§16.3).
         if let Err(e) = install_ctrl_handler(shutdown_tx) {
-            eprintln!(
-                "wtd-host: warning: could not install ctrl handler: {}",
-                e
-            );
+            tracing::warn!("could not install ctrl handler: {}", e);
         }
 
-        eprintln!("wtd-host: started (PID {})", std::process::id());
+        tracing::info!(pid = std::process::id(), "wtd-host started");
 
         // 5. Run the IPC server until shutdown.
         run_host(&pipe_name, StubHandler, shutdown_rx, &dir).await?;
 
-        eprintln!("wtd-host: shut down");
+        tracing::info!("wtd-host shut down");
         Ok(())
     }
 }

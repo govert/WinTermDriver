@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
+use wtd_core::logging::init_stderr_logging;
+use wtd_core::LogLevel;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
@@ -19,16 +21,19 @@ use wtd_ui::tab_strip::{TabAction, TabStrip};
 use wtd_ui::window::{self, MouseEventKind};
 
 fn main() {
+    // §31.1: UI logs to stderr.
+    init_stderr_logging(&LogLevel::default());
+
     let workspace_name = parse_workspace_arg();
 
     if let Some(ref name) = workspace_name {
-        eprintln!("wtd-ui: connecting to workspace '{name}'");
+        tracing::info!(workspace = %name, "connecting to workspace");
     } else {
-        eprintln!("wtd-ui: running in demo mode (no workspace specified)");
+        tracing::info!("running in demo mode (no workspace specified)");
     }
 
     if let Err(e) = run(workspace_name) {
-        eprintln!("fatal: {e}");
+        tracing::error!("{e}");
         std::process::exit(1);
     }
 }
@@ -157,7 +162,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     HostEvent::Connected { .. } => {
                         connected = true;
                         status_bar.set_session_status(SessionStatus::Running);
-                        eprintln!("wtd-ui: attached to workspace");
+                        tracing::info!("attached to workspace");
                         needs_paint = true;
                     }
                     HostEvent::SessionOutput { session_id, data } => {
@@ -174,9 +179,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         new_state,
                         exit_code,
                     } => {
-                        eprintln!(
-                            "wtd-ui: session {session_id} -> {new_state}{}",
-                            exit_code.map_or(String::new(), |c| format!(" (code {c})"))
+                        tracing::info!(
+                            session_id = %session_id,
+                            new_state = %new_state,
+                            exit_code = ?exit_code,
+                            "session state changed"
                         );
                         // Update status bar if this is the focused pane's session.
                         let focused = layout_tree.focus();
@@ -200,7 +207,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         needs_paint = true;
                     }
                     HostEvent::TitleChanged { session_id, title } => {
-                        eprintln!("wtd-ui: session {session_id} title -> {title}");
+                        tracing::debug!(session_id = %session_id, title = %title, "session title changed");
                         // Update window title if it's the focused pane.
                         let focused = layout_tree.focus();
                         if pane_sessions
@@ -219,20 +226,20 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     HostEvent::LayoutChanged { .. } => {
                         // Layout changes from host — would rebuild layout tree.
                         // Full implementation deferred to downstream beads.
-                        eprintln!("wtd-ui: layout changed notification received");
+                        tracing::debug!("layout changed notification received");
                         needs_paint = true;
                     }
                     HostEvent::WorkspaceStateChanged {
                         workspace,
                         new_state,
                     } => {
-                        eprintln!("wtd-ui: workspace {workspace} -> {new_state}");
+                        tracing::info!(workspace = %workspace, new_state = %new_state, "workspace state changed");
                     }
                     HostEvent::Error { message } => {
-                        eprintln!("wtd-ui: host error: {message}");
+                        tracing::error!(message = %message, "host error");
                     }
                     HostEvent::Disconnected { reason } => {
-                        eprintln!("wtd-ui: disconnected: {reason}");
+                        tracing::warn!(reason = %reason, "disconnected from host");
                         connected = false;
                         status_bar.set_session_status(SessionStatus::Failed {
                             error: reason,

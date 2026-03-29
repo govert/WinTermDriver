@@ -35,6 +35,11 @@ vte = "0.13"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
 # Windows APIs (ConPTY, named pipes, Win32) — Windows-only project
 windows = { version = "0.58", features = [
     "Win32_Foundation",
