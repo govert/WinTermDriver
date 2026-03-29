@@ -424,3 +424,27 @@ Workspace file discovery lives in `wtd-core::workspace_discovery` (§12).
 - Extension priority: `.yaml` > `.yml` > `.json` — first match in that order wins
 - Listing returns both local and user entries even for the same name (per §12.4)
 - `data_dir()` is private within the module — mirrors `wtd-host::host_lifecycle::data_dir()` pattern
+
+---
+
+## wintermdriver-rul.1: CLI command parser
+
+All CLI parsing lives in `wtd-cli::cli` (§22.1–22.4). Uses clap derive macros.
+
+**Key types:**
+- `Cli` — top-level `#[derive(Parser)]` with global flags and `Command` subcommand
+- `Command` — enum of all commands: `Open`, `Attach`, `Recreate`, `Close`, `Save`, `List`, `Focus`, `Rename`, `Action`, `Send`, `Keys`, `Capture`, `Scrollback`, `Follow`, `Inspect`, `Host`, `Completions`
+- `ListCommand` — subcommands of `list`: `Workspaces`, `Instances`, `Panes { workspace }`, `Sessions { workspace }`
+- `HostCommand` — subcommands of `host`: `Status`, `Stop`
+
+**Global flags:** `--json` (bool), `--verbose` (bool), `--id <uuid>` (Option<String>) — all `global = true` so they work before or after subcommands.
+
+**Shell completions:** Hidden `completions <shell>` subcommand using `clap_complete` crate. `print_completions(shell)` writes to stdout.
+
+**Workspace dependency added:** `clap_complete = "4"` at workspace level.
+
+**Design decisions:**
+- `action` command uses `trailing_var_arg = true` for extra args after the action name
+- `keys` requires at least one key spec (`#[arg(required = true)]`)
+- `scrollback --tail` is a required `u32` flag (clap validates numeric)
+- Command dispatch is not yet implemented — `main.rs` parses then exits with "not yet implemented"
