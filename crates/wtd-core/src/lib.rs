@@ -12,6 +12,9 @@ pub mod profile_resolver;
 pub mod workspace;
 pub mod workspace_loader;
 
-pub use global_settings::GlobalSettings;
+pub use global_settings::{
+    default_bindings, load_global_settings, merge_bindings, FontConfig, GlobalSettings, LogLevel,
+    SettingsLoadError, ThemeConfig,
+};
 pub use profile_resolver::{resolve_launch_spec, ResolveError, ResolvedLaunchSpec};
 pub use workspace_loader::{load_workspace_definition, LoadError, ValidationError};

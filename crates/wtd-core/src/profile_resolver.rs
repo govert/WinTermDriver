@@ -844,6 +844,7 @@ mod tests {
         let mut global = GlobalSettings {
             default_profile: "my-default".to_string(),
             profiles: HashMap::new(),
+            ..GlobalSettings::default()
         };
         global.profiles.insert(
             "my-default".to_string(),
