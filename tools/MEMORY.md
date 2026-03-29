@@ -1182,3 +1182,37 @@ Tracing infrastructure lives in `wtd-core::logging` (§31). All three processes 
 - `exit_code::TIMEOUT = 10` used for timeout errors in dispatch
 
 **Test:** `crates/wtd-cli/tests/test_request_timeout.rs` — `NeverRespondHandler` returns `None` so server sends no response; client with 500ms timeout verifies `RequestTimeout` error and timing.
+
+---
+
+## wintermdriver-gp6.1: HostRequestHandler replaces StubHandler
+
+`HostRequestHandler` lives in `wtd-host::request_handler`. Replaces the `StubHandler` in `main.rs` — dispatches all IPC request types to real workspace instances.
+
+**Key type:**
+- `HostRequestHandler` — owns `Mutex<HostState>` containing `HashMap<String, WorkspaceInstance>`, `GlobalSettings`, and instance counter
+
+**Public API:**
+- `HostRequestHandler::new(settings: GlobalSettings) -> Self` — create handler
+- Implements `RequestHandler` — handles all IPC message types
+
+**Message types handled:**
+- Workspace lifecycle: `OpenWorkspace`, `CloseWorkspace`, `AttachWorkspace`, `RecreateWorkspace`, `SaveWorkspace`
+- Listing: `ListWorkspaces` (merges disk discovery + running instances), `ListInstances`, `ListPanes`, `ListSessions`
+- Session I/O: `Send` (text + newline), `Keys` (raw key specs), `SessionInput` (base64 fire-and-forget)
+- Screen: `Capture` (drains pending output first), `Scrollback`
+- Metadata: `Inspect`, `Follow` (ack only)
+- Actions: `InvokeAction` — creates v1_registry + ActionDispatcher per call
+- Pane: `FocusPane`, `RenamePane`
+
+**Design decisions:**
+- `OpenWorkspace` uses `wtd_core::find_workspace()` for disk discovery (searches CWD/.wtd/ and user dir); file-based loading from `open.file` path deferred to gp6.4
+- `RecreateWorkspace` clones `settings` before getting `&mut` workspace (avoids borrow conflict)
+- `InvokeAction` creates ActionDispatcher per call with default 80×24 viewport — full viewport tracking deferred to gp6.6
+- `SessionInput` decodes base64 internally (hand-rolled, same pattern as `host_bridge.rs`)
+- `ListWorkspaces` merges on-disk workspace definitions with running instances (adds "running" source for instances not on disk)
+- `AttachWorkspace` returns empty state object (full snapshot population in gp6.3)
+- `SaveWorkspace` calls `inst.save()` but does not write to file (gp6.4)
+- Pane targeting uses `find_pane_by_name` across all workspaces (no target-path resolution yet)
+
+**Test:** `crates/wtd-host/tests/test_real_handler.rs` — 3 tests: full IPC round-trip (open+send+capture+list+inspect+close), nonexistent workspace error, nonexistent pane error

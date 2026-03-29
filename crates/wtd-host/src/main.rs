@@ -10,25 +10,8 @@ mod run {
     use wtd_core::logging::init_host_logging;
     use wtd_core::GlobalSettings;
     use wtd_host::host_lifecycle::*;
-    use wtd_host::ipc_server::{ClientId, RequestHandler};
     use wtd_host::pipe_security::pipe_name_for_current_user;
-    use wtd_ipc::message::TypedMessage;
-    use wtd_ipc::Envelope;
-
-    /// Stub request handler — returns no response for all requests.
-    /// Real request dispatching will be wired up in a future bead.
-    struct StubHandler;
-
-    impl RequestHandler for StubHandler {
-        fn handle_request(
-            &self,
-            _client_id: ClientId,
-            _envelope: &Envelope,
-            _msg: &TypedMessage,
-        ) -> Option<Envelope> {
-            None
-        }
-    }
+    use wtd_host::request_handler::HostRequestHandler;
 
     pub async fn run() -> anyhow::Result<()> {
         // 1. Determine pipe name from current user SID (§16.5).
@@ -61,8 +44,9 @@ mod run {
 
         tracing::info!(pid = std::process::id(), "wtd-host started");
 
-        // 5. Run the IPC server until shutdown.
-        run_host(&pipe_name, StubHandler, shutdown_rx, &dir).await?;
+        // 5. Run the IPC server with real request handler (§8.1).
+        let handler = HostRequestHandler::new(settings);
+        run_host(&pipe_name, handler, shutdown_rx, &dir).await?;
 
         tracing::info!("wtd-host shut down");
         Ok(())
