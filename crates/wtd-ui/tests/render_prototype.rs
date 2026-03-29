@@ -1,0 +1,359 @@
+//! Integration tests for the rendering prototype.
+//!
+//! These tests verify that the full rendering pipeline (VT bytes -> ScreenBuffer
+//! -> DirectWrite -> window) works end-to-end without crashing, and that color
+//! mapping and attribute resolution are correct.
+
+use wtd_pty::{Cell, CellAttrs, Color, ScreenBuffer};
+use wtd_ui::renderer::{
+    color_to_rgb, resolve_cell_colors, RendererConfig, TerminalRenderer,
+};
+
+use windows::core::*;
+use windows::Win32::Foundation::*;
+use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::*;
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+// Unique class name counter to avoid RegisterClass collisions across tests.
+static CLASS_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+unsafe extern "system" fn test_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Create a hidden test window with a unique class name.
+fn create_test_window(label: &str) -> HWND {
+    let n = CLASS_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let class_name_str = format!("WtdTest_{label}_{n}\0");
+    let class_name_wide: Vec<u16> = class_name_str.encode_utf16().collect();
+
+    unsafe {
+        let instance = GetModuleHandleW(None).unwrap();
+        let hinstance: HINSTANCE = instance.into();
+
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(test_wndproc),
+            hInstance: hinstance,
+            lpszClassName: PCWSTR(class_name_wide.as_ptr()),
+            hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
+            ..Default::default()
+        };
+        RegisterClassW(&wc);
+
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            PCWSTR(class_name_wide.as_ptr()),
+            w!("Test Window"),
+            WS_OVERLAPPEDWINDOW,
+            0,
+            0,
+            800,
+            600,
+            None,
+            None,
+            Some(&hinstance),
+            None,
+        )
+        .unwrap()
+    }
+}
+
+fn destroy_test_window(hwnd: HWND) {
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+}
+
+// ── Color mapping tests ──────────────────────────────────────────────────────
+
+#[test]
+fn all_16_ansi_colors_produce_distinct_rgb() {
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..8u8 {
+        let rgb = color_to_rgb(&Color::Ansi(i), true);
+        seen.insert(rgb);
+    }
+    for i in 0..8u8 {
+        let rgb = color_to_rgb(&Color::AnsiBright(i), true);
+        seen.insert(rgb);
+    }
+    assert_eq!(seen.len(), 16, "Expected 16 distinct ANSI colors");
+}
+
+#[test]
+fn indexed_256_color_covers_full_range() {
+    for i in 0..=255u8 {
+        let (r, g, b) = color_to_rgb(&Color::Indexed(i), true);
+        assert!(r <= 255 && g <= 255 && b <= 255, "Index {i} out of range");
+    }
+}
+
+#[test]
+fn indexed_colors_0_to_15_match_ansi() {
+    for i in 0..8u8 {
+        assert_eq!(
+            color_to_rgb(&Color::Indexed(i), true),
+            color_to_rgb(&Color::Ansi(i), true),
+            "Indexed({i}) should match Ansi({i})"
+        );
+    }
+    for i in 0..8u8 {
+        assert_eq!(
+            color_to_rgb(&Color::Indexed(i + 8), true),
+            color_to_rgb(&Color::AnsiBright(i), true),
+            "Indexed({}) should match AnsiBright({i})",
+            i + 8
+        );
+    }
+}
+
+#[test]
+fn truecolor_passthrough() {
+    assert_eq!(color_to_rgb(&Color::Rgb(0, 0, 0), true), (0, 0, 0));
+    assert_eq!(
+        color_to_rgb(&Color::Rgb(255, 255, 255), true),
+        (255, 255, 255)
+    );
+    assert_eq!(
+        color_to_rgb(&Color::Rgb(42, 100, 200), true),
+        (42, 100, 200)
+    );
+}
+
+// ── Attribute resolution tests ───────────────────────────────────────────────
+
+#[test]
+fn inverse_swaps_fg_and_bg() {
+    let mut attrs = CellAttrs::default();
+    attrs.set(CellAttrs::INVERSE);
+    let cell = Cell {
+        character: 'X',
+        fg: Color::Rgb(100, 200, 50),
+        bg: Color::Rgb(10, 20, 30),
+        attrs,
+        wide: false,
+        wide_continuation: false,
+    };
+    let (fg, bg) = resolve_cell_colors(&cell);
+    assert_eq!(fg, (10, 20, 30), "Inverse should swap: fg becomes old bg");
+    assert_eq!(bg, (100, 200, 50), "Inverse should swap: bg becomes old fg");
+}
+
+#[test]
+fn dim_halves_foreground() {
+    let mut attrs = CellAttrs::default();
+    attrs.set(CellAttrs::DIM);
+    let cell = Cell {
+        character: 'D',
+        fg: Color::Rgb(200, 100, 50),
+        bg: Color::Default,
+        attrs,
+        wide: false,
+        wide_continuation: false,
+    };
+    let (fg, _) = resolve_cell_colors(&cell);
+    assert_eq!(fg, (100, 50, 25), "Dim should halve each fg component");
+}
+
+#[test]
+fn dim_plus_inverse() {
+    let mut attrs = CellAttrs::default();
+    attrs.set(CellAttrs::DIM);
+    attrs.set(CellAttrs::INVERSE);
+    let cell = Cell {
+        character: 'X',
+        fg: Color::Rgb(200, 100, 50),
+        bg: Color::Rgb(80, 40, 20),
+        attrs,
+        wide: false,
+        wide_continuation: false,
+    };
+    let (fg, bg) = resolve_cell_colors(&cell);
+    // Inverse first: fg=(80,40,20), bg=(200,100,50)
+    // Dim applied to fg: (40,20,10)
+    assert_eq!(fg, (40, 20, 10));
+    assert_eq!(bg, (200, 100, 50));
+}
+
+// ── ScreenBuffer + VT parsing integration ────────────────────────────────────
+
+#[test]
+fn screen_buffer_parses_colored_text() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[31mHello\x1b[0m World");
+
+    let cell_h = screen.cell(0, 0).unwrap();
+    assert_eq!(cell_h.character, 'H');
+    assert_eq!(cell_h.fg, Color::Ansi(1));
+
+    let cell_w = screen.cell(0, 6).unwrap();
+    assert_eq!(cell_w.character, 'W');
+    assert_eq!(cell_w.fg, Color::Default);
+}
+
+#[test]
+fn screen_buffer_parses_bold_attribute() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[1mBOLD\x1b[0m plain");
+
+    let bold_cell = screen.cell(0, 0).unwrap();
+    assert!(
+        bold_cell.attrs.is_set(CellAttrs::BOLD),
+        "First char should be bold"
+    );
+
+    let plain_cell = screen.cell(0, 5).unwrap();
+    assert!(
+        !plain_cell.attrs.is_set(CellAttrs::BOLD),
+        "After reset, text should not be bold"
+    );
+}
+
+#[test]
+fn screen_buffer_parses_multiple_attributes() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[1;3;4mABC\x1b[0m");
+
+    let cell = screen.cell(0, 0).unwrap();
+    assert!(cell.attrs.is_set(CellAttrs::BOLD));
+    assert!(cell.attrs.is_set(CellAttrs::ITALIC));
+    assert!(cell.attrs.is_set(CellAttrs::UNDERLINE));
+}
+
+#[test]
+fn screen_buffer_parses_256_color() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[38;5;196mX\x1b[0m");
+
+    let cell = screen.cell(0, 0).unwrap();
+    assert_eq!(cell.fg, Color::Indexed(196));
+}
+
+#[test]
+fn screen_buffer_parses_truecolor() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[38;2;42;128;255mY\x1b[0m");
+
+    let cell = screen.cell(0, 0).unwrap();
+    assert_eq!(cell.fg, Color::Rgb(42, 128, 255));
+}
+
+#[test]
+fn screen_buffer_parses_background_color() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[44mZ\x1b[0m");
+
+    let cell = screen.cell(0, 0).unwrap();
+    assert_eq!(cell.bg, Color::Ansi(4));
+}
+
+// ── End-to-end rendering tests ───────────────────────────────────────────────
+
+#[test]
+fn end_to_end_render_does_not_crash() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    screen.advance(b"\x1b[1;31mBold Red\x1b[0m ");
+    screen.advance(b"\x1b[3;32mItalic Green\x1b[0m ");
+    screen.advance(b"\x1b[4;34mUnderline Blue\x1b[0m ");
+    screen.advance(b"\x1b[7mInverse\x1b[0m ");
+    screen.advance(b"\x1b[9mStrikethrough\x1b[0m\r\n");
+    screen.advance(b"\x1b[38;2;255;128;0mTruecolor\x1b[0m ");
+    screen.advance(b"\x1b[38;5;196mIndexed\x1b[0m\r\n");
+    screen.advance(b"Plain text on line 3");
+
+    let hwnd = create_test_window("e2e");
+    let config = RendererConfig::default();
+    let renderer =
+        TerminalRenderer::new(hwnd, &config).expect("renderer creation should succeed");
+
+    let (cell_w, cell_h) = renderer.cell_size();
+    assert!(cell_w > 0.0, "Cell width should be positive");
+    assert!(cell_h > 0.0, "Cell height should be positive");
+
+    renderer.paint(&screen).expect("paint should succeed");
+    renderer.paint(&screen).expect("second paint should succeed");
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn render_empty_screen_buffer() {
+    let screen = ScreenBuffer::new(80, 24, 0);
+
+    let hwnd = create_test_window("empty");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    renderer
+        .paint(&screen)
+        .expect("painting empty buffer should succeed");
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn render_full_screen_of_colored_text() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    // Fill every row with colored text.
+    for i in 0..24u8 {
+        let color = 31 + (i % 7);
+        let line = format!("\x1b[{color}mRow {i:02} filled with colored text padding xxxx\x1b[0m\r\n");
+        screen.advance(line.as_bytes());
+    }
+
+    let hwnd = create_test_window("fullscreen");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    renderer
+        .paint(&screen)
+        .expect("painting full colored screen should succeed");
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn render_mixed_attributes() {
+    let mut screen = ScreenBuffer::new(80, 24, 0);
+    // Line with every attribute combination.
+    screen.advance(b"\x1b[1mBold\x1b[0m ");
+    screen.advance(b"\x1b[2mDim\x1b[0m ");
+    screen.advance(b"\x1b[3mItalic\x1b[0m ");
+    screen.advance(b"\x1b[4mUnderline\x1b[0m ");
+    screen.advance(b"\x1b[7mInverse\x1b[0m ");
+    screen.advance(b"\x1b[9mStrike\x1b[0m ");
+    screen.advance(b"\x1b[1;3mBold+Italic\x1b[0m ");
+    screen.advance(b"\x1b[1;4mBold+UL\x1b[0m ");
+    screen.advance(b"\x1b[1;3;4;9mAll\x1b[0m");
+
+    let hwnd = create_test_window("mixed_attrs");
+    let config = RendererConfig::default();
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    renderer
+        .paint(&screen)
+        .expect("painting mixed attributes should succeed");
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn renderer_resize_succeeds() {
+    let screen = ScreenBuffer::new(80, 24, 0);
+
+    let hwnd = create_test_window("resize");
+    let config = RendererConfig::default();
+    let mut renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+
+    renderer.resize(1024, 768).expect("resize should succeed");
+    renderer
+        .paint(&screen)
+        .expect("paint after resize should succeed");
+
+    destroy_test_window(hwnd);
+}

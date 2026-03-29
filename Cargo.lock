@@ -710,6 +710,7 @@ dependencies = [
  "windows",
  "wtd-core",
  "wtd-ipc",
+ "wtd-pty",
 ]
 
 [[package]]

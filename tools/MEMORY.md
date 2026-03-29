@@ -572,3 +572,44 @@ Comprehensive E2E test suite in `crates/wtd-cli/tests/e2e_commands.rs` (27 tests
 - Use `poll_capture_until()` with predicate for async ConPTY output
 
 **Dev-dependencies added to `wtd-cli`:** `wtd-host`, `wtd-pty`
+
+---
+
+## wintermdriver-6en.2: Minimal rendering prototype
+
+`wtd-ui` is now a lib+bin crate with Direct2D + DirectWrite rendering of `ScreenBuffer` content.
+
+**New modules:**
+- `wtd_ui::renderer` — `TerminalRenderer` struct that paints a `ScreenBuffer` to an HWND render target
+- `wtd_ui::window` — Win32 window creation (`create_terminal_window`), message pump, repaint/resize signaling
+
+**Key types:**
+- `TerminalRenderer` — owns D2D factory, DW factory, HWND render target, 4 text formats (regular/bold/italic/bold+italic)
+- `RendererConfig` — `font_family` (default "Cascadia Mono"), `font_size` (default 14.0)
+
+**Public API:**
+- `TerminalRenderer::new(hwnd, config) -> Result<Self>` — create D2D/DW resources
+- `TerminalRenderer::paint(&self, screen: &ScreenBuffer) -> Result<()>` — render full screen buffer
+- `TerminalRenderer::resize(&mut self, width, height) -> Result<()>` — handle window resize
+- `TerminalRenderer::cell_size() -> (f32, f32)` — cell dimensions in pixels
+- `color_to_rgb(color: &Color, is_foreground: bool) -> (u8, u8, u8)` — public color conversion
+- `resolve_cell_colors(cell: &Cell) -> ((u8,u8,u8), (u8,u8,u8))` — handles INVERSE and DIM attributes
+
+**Rendering approach:**
+- Run-based batching: adjacent cells with same fg color and font style are drawn in a single `DrawText` call
+- Background colors: non-default backgrounds drawn as filled rectangles, also run-batched
+- Attributes: bold/italic select different `IDWriteTextFormat`; underline/strikethrough drawn as `DrawLine`; inverse swaps fg/bg; dim halves fg
+- Cursor: semi-transparent filled rectangle (50% opacity block cursor)
+- 256-color support: full 6×6×6 cube + 24 grayscale ramp + 16 ANSI palette
+
+**Windows features added to wtd-ui:** `Foundation_Numerics`, `Win32_Graphics_Direct2D`, `Win32_Graphics_Direct2D_Common`, `Win32_Graphics_DirectWrite`, `Win32_Graphics_Dxgi_Common`, `Win32_Graphics_Gdi`, `Win32_System_LibraryLoader`, `Win32_UI_WindowsAndMessaging`
+
+**windows-rs 0.58 API notes for rendering:**
+- `ID2D1HwndRenderTarget` must be `.cast::<ID2D1RenderTarget>()` to access `DrawText`, `CreateSolidColorBrush`, etc.
+- HWND parameters don't use `Option<HWND>` — pass `hwnd` directly (not `Some(hwnd)`)
+- `DefWindowProcW` is a generic function — can't be used as `lpfnWndProc` directly; wrap in an `extern "system"` function
+- Font family name must be null-terminated wide string via `PCWSTR`
+
+**Test coverage:** 30 tests (12 unit in renderer, 18 integration in `tests/render_prototype.rs`) covering color mapping, attribute resolution, VT parsing, and end-to-end rendering pipeline
+
+**wtd-ui dependencies added:** `wtd-pty` (for ScreenBuffer access)
