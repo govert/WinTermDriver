@@ -1387,3 +1387,18 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 **Match arm exhaustiveness:** All existing `match action { Simple => ..., WithArgs => ... }` patterns had to add a `Removed => ...` arm. If future beads add new variants, the same update is needed across: `command_palette.rs:action_name_from_ref`, `main.rs` (2 sites), `gate_command_palette_clipboard.rs`, `gate_typing_and_bindings.rs`, `gate_prefix_chords_and_mouse.rs`.
 
 **Pre-existing test failure:** `clipboard::tests::clipboard_round_trip` in `wtd-ui` fails intermittently (Win32 clipboard is a global resource, `OpenClipboard` fails when another app holds it). Not related to h35.4 changes.
+
+---
+
+## wintermdriver-njb: Initial pane seeding on UI attach
+
+`AttachSnapshot` now includes `session_screens: HashMap<SessionId, String>` (base64-encoded VT snapshots).
+
+**Key additions:**
+- `ScreenBuffer::to_vt_snapshot() -> Vec<u8>` in `wtd-pty::screen` — generates a self-contained VT stream encoding the current visible screen (colors, attributes, cursor position). Suitable for feeding into `ScreenBuffer::advance()` to seed a remote UI.
+- `session_screens` field in `AttachSnapshot` — populated by `attach_snapshot()` using `output_broadcaster::encode_base64`.
+- `handle_attach_workspace` calls `process_pending_output()` on all sessions before snapshotting (mutably borrows via `sessions_mut()` before calling `attach_snapshot()` on `&self`).
+- Bridge (`host_bridge.rs`): sends `Connected` first, then emits `SessionOutput` events from `sessionScreens` so pane→session mapping is in place before screen data arrives.
+- `main.rs`: `rebuild_from_snapshot()` helper parses attach state JSON, calls `LayoutTree::from_pane_node` on the first tab layout, maps host pane IDs to UI pane IDs, and populates `pane_sessions`.
+
+**JSON shape of `sessionScreens`:** `{"1": "<base64>", "2": "<base64>"}` (keyed by SessionId integer as string).
