@@ -1357,3 +1357,21 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 **Screenshots in `docs/images/`:** workspace-overview.png, command-palette.png, prefix-chord.png, failed-pane.png
 
 **Workspace dep added:** `image = "0.25"` (PNG encoding, in screenshot-gen only)
+
+---
+
+## wintermdriver-h35.3: Windows Terminal keybinding preset (28 bindings)
+
+`windows_terminal_bindings()` in `wtd-core::global_settings` is now fully populated (was a placeholder).
+
+**28 single-stroke bindings (no prefix, no chords):**
+- Tab: `Ctrl+Shift+T` (new-tab), `Ctrl+Shift+W` (close-pane), `Ctrl+Tab` (next-tab), `Ctrl+Shift+Tab` (prev-tab), `Ctrl+Alt+1`–`Ctrl+Alt+8` (goto-tab index 0–7)
+- Pane: `Alt+Shift+Plus` (split-right), `Alt+Shift+Minus` (split-down), `Alt+Up/Down/Left/Right` (focus), `Alt+Shift+Up/Down/Left/Right` (resize)
+- Clipboard: `Ctrl+Shift+C`/`Ctrl+Insert` (copy), `Ctrl+Shift+V`/`Shift+Insert` (paste)
+- UI: `F11` (toggle-fullscreen), `Ctrl+Shift+P` (toggle-command-palette — WT uses P, WTD default uses Space)
+
+**goto-tab args caveat:** `Ctrl+Alt+N` uses `ActionReference::WithArgs { action: "goto-tab", args: Some({"index": "N-1"}) }` — args are stored as `HashMap<String, String>`, so index is a string. The action dispatcher's `ArgType::Int` validator expects a JSON number; a future bead may need to add string-to-int coercion.
+
+**Omitted WT bindings (no WTD v1 equivalent):** scroll-line/page (Ctrl+Shift+Up/Down/PgUp/PgDn), find (Ctrl+Shift+F), goto-last-tab (Ctrl+Alt+9), settings, duplicate-tab, font-size, clearBuffer, etc. See `docs/WT_KEYBINDING_MAP.md` for full audit.
+
+**Pre-existing uncommitted test failure:** `test_real_handler::real_handler_open_send_capture` fails when `real_handler_uses_request_cwd_for_open_and_list` (an uncommitted test from a prior bead) runs in parallel — `set_current_dir` in that test affects CWD for sibling tests. Not related to h35.3 changes.
