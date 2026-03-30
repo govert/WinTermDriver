@@ -262,6 +262,9 @@ pub struct BindingsDefinition {
 
 // ── ActionReference (§9.1.11) ─────────────────────────────────────────────────
 
+/// A binding action reference: a simple action name, an action with args, or
+/// a removal marker (`null` in YAML) that removes a key from the effective
+/// binding set when overlaid on a preset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ActionReference {
@@ -271,6 +274,9 @@ pub enum ActionReference {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<HashMap<String, String>>,
     },
+    /// Setting a binding key to `null` in YAML removes it from the effective
+    /// binding set when merged with a preset.  Serializes back to `null`.
+    Removed,
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────

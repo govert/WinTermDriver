@@ -307,6 +307,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             wtd_core::workspace::ActionReference::WithArgs { action, .. } => {
                                 action.as_str()
                             }
+                            wtd_core::workspace::ActionReference::Removed => "",
                         };
                         // Handle toggle-command-palette locally (palette already hidden).
                         if action_name == "toggle-command-palette" {
@@ -368,6 +369,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 wtd_core::workspace::ActionReference::WithArgs {
                                     action, ..
                                 } => action.as_str(),
+                                wtd_core::workspace::ActionReference::Removed => "",
                             };
                             if action_name != "toggle-command-palette" {
                                 if let Some(ref bridge) = bridge {

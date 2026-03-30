@@ -32,6 +32,7 @@ fn action_name(action: &ActionReference) -> &str {
     match action {
         ActionReference::Simple(s) => s.as_str(),
         ActionReference::WithArgs { action, .. } => action.as_str(),
+        ActionReference::Removed => "",
     }
 }
 

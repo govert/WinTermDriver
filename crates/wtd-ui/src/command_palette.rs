@@ -653,6 +653,7 @@ fn action_name_from_ref(ar: &ActionReference) -> String {
     match ar {
         ActionReference::Simple(name) => name.clone(),
         ActionReference::WithArgs { action, .. } => action.clone(),
+        ActionReference::Removed => String::new(),
     }
 }
 

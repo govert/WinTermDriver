@@ -526,11 +526,24 @@ fn merge_action_maps(
     match (base, overlay) {
         (None, None) => None,
         (Some(b), None) => Some(b.clone()),
-        (None, Some(o)) => Some(o.clone()),
+        (None, Some(o)) => {
+            // Filter out Removed entries (no base to remove from, just skip)
+            let filtered: HashMap<_, _> = o
+                .iter()
+                .filter(|(_, v)| !matches!(v, ActionReference::Removed))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if filtered.is_empty() { None } else { Some(filtered) }
+        }
         (Some(b), Some(o)) => {
             let mut merged = b.clone();
             for (k, v) in o {
-                merged.insert(k.clone(), v.clone());
+                if matches!(v, ActionReference::Removed) {
+                    // Null/Removed in overlay means "delete this key from the preset"
+                    merged.remove(k);
+                } else {
+                    merged.insert(k.clone(), v.clone());
+                }
             }
             Some(merged)
         }
