@@ -274,15 +274,118 @@ pub fn tmux_bindings() -> BindingsDefinition {
     }
 }
 
-/// Returns the Windows Terminal-style preset keybindings (placeholder, to be
-/// populated by bead wintermdriver-h35.3).
+/// Returns the Windows Terminal-style preset keybindings.
+///
+/// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
+/// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
+///
+/// **28 bindings total:**
+/// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
+/// - Pane: split right/down, focus up/down/left/right, resize in all directions
+/// - Clipboard: copy/paste (primary + secondary WT bindings)
+/// - UI: toggle-fullscreen, toggle-command-palette
 pub fn windows_terminal_bindings() -> BindingsDefinition {
+    let mut keys: HashMap<String, ActionReference> = [
+        // ── Tab management ──────────────────────────────────────────────────
+        (
+            "Ctrl+Shift+T",
+            ActionReference::Simple("new-tab".to_string()),
+        ),
+        (
+            "Ctrl+Shift+W",
+            ActionReference::Simple("close-pane".to_string()),
+        ),
+        ("Ctrl+Tab", ActionReference::Simple("next-tab".to_string())),
+        (
+            "Ctrl+Shift+Tab",
+            ActionReference::Simple("prev-tab".to_string()),
+        ),
+        // ── Pane management ─────────────────────────────────────────────────
+        // WT: alt+shift+plus → split right (WTD default uses Alt+Shift+D)
+        (
+            "Alt+Shift+Plus",
+            ActionReference::Simple("split-right".to_string()),
+        ),
+        (
+            "Alt+Shift+Minus",
+            ActionReference::Simple("split-down".to_string()),
+        ),
+        (
+            "Alt+Down",
+            ActionReference::Simple("focus-pane-down".to_string()),
+        ),
+        (
+            "Alt+Up",
+            ActionReference::Simple("focus-pane-up".to_string()),
+        ),
+        (
+            "Alt+Left",
+            ActionReference::Simple("focus-pane-left".to_string()),
+        ),
+        (
+            "Alt+Right",
+            ActionReference::Simple("focus-pane-right".to_string()),
+        ),
+        (
+            "Alt+Shift+Down",
+            ActionReference::Simple("resize-pane-grow-down".to_string()),
+        ),
+        // WT resize-up = shrink from below
+        (
+            "Alt+Shift+Up",
+            ActionReference::Simple("resize-pane-shrink-down".to_string()),
+        ),
+        (
+            "Alt+Shift+Right",
+            ActionReference::Simple("resize-pane-grow-right".to_string()),
+        ),
+        // WT resize-left = shrink from right
+        (
+            "Alt+Shift+Left",
+            ActionReference::Simple("resize-pane-shrink-right".to_string()),
+        ),
+        // ── Clipboard ───────────────────────────────────────────────────────
+        ("Ctrl+Shift+C", ActionReference::Simple("copy".to_string())),
+        ("Ctrl+Shift+V", ActionReference::Simple("paste".to_string())),
+        // Secondary WT bindings
+        ("Ctrl+Insert", ActionReference::Simple("copy".to_string())),
+        ("Shift+Insert", ActionReference::Simple("paste".to_string())),
+        // ── UI ──────────────────────────────────────────────────────────────
+        (
+            "F11",
+            ActionReference::Simple("toggle-fullscreen".to_string()),
+        ),
+        // WT uses Ctrl+Shift+P; WTD default uses Ctrl+Shift+Space
+        (
+            "Ctrl+Shift+P",
+            ActionReference::Simple("toggle-command-palette".to_string()),
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+
+    // Ctrl+Alt+1..8 → goto-tab index 0..7 (WT uses 0-based index internally).
+    for n in 1u8..=8 {
+        keys.insert(
+            format!("Ctrl+Alt+{n}"),
+            ActionReference::WithArgs {
+                action: "goto-tab".to_string(),
+                args: Some(
+                    [("index".to_string(), (n - 1).to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+            },
+        );
+    }
+
     BindingsDefinition {
         preset: Some(BindingPreset::WindowsTerminal),
         prefix: None,
         prefix_timeout: None,
         chords: None,
-        keys: None,
+        keys: Some(keys),
     }
 }
 
@@ -298,13 +401,10 @@ fn expand_preset(preset: &BindingPreset) -> BindingsDefinition {
             }
         }
         BindingPreset::WindowsTerminal => {
-            // Placeholder: populated by bead wintermdriver-h35.3.
+            let base = windows_terminal_bindings();
             BindingsDefinition {
                 preset: None,
-                prefix: None,
-                prefix_timeout: None,
-                chords: None,
-                keys: None,
+                ..base
             }
         }
         BindingPreset::None => BindingsDefinition {
@@ -455,8 +555,7 @@ mod tests {
 
     #[test]
     fn missing_file_returns_defaults() {
-        let settings =
-            load_global_settings(Path::new("/nonexistent/path/settings.yaml")).unwrap();
+        let settings = load_global_settings(Path::new("/nonexistent/path/settings.yaml")).unwrap();
         assert_eq!(settings, GlobalSettings::default());
     }
 
@@ -499,6 +598,152 @@ mod tests {
     // ── Default keybindings ─────────────────────────────────────────────
 
     #[test]
+    fn windows_terminal_bindings_populated() {
+        let b = windows_terminal_bindings();
+        assert_eq!(b.preset, Some(BindingPreset::WindowsTerminal));
+        // No prefix — WT uses single-stroke bindings only.
+        assert!(b.prefix.is_none());
+        assert!(b.prefix_timeout.is_none());
+        assert!(b.chords.is_none());
+
+        let keys = b.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 28, "28 WT-mapped single-stroke bindings");
+
+        // Tab management
+        assert_eq!(
+            keys.get("Ctrl+Shift+T"),
+            Some(&ActionReference::Simple("new-tab".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+W"),
+            Some(&ActionReference::Simple("close-pane".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Tab"),
+            Some(&ActionReference::Simple("next-tab".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+Tab"),
+            Some(&ActionReference::Simple("prev-tab".to_string()))
+        );
+
+        // goto-tab bindings: Ctrl+Alt+1 → index 0, Ctrl+Alt+8 → index 7
+        assert_eq!(
+            keys.get("Ctrl+Alt+1"),
+            Some(&ActionReference::WithArgs {
+                action: "goto-tab".to_string(),
+                args: Some(
+                    [("index".to_string(), "0".to_string())]
+                        .into_iter()
+                        .collect()
+                ),
+            })
+        );
+        assert_eq!(
+            keys.get("Ctrl+Alt+8"),
+            Some(&ActionReference::WithArgs {
+                action: "goto-tab".to_string(),
+                args: Some(
+                    [("index".to_string(), "7".to_string())]
+                        .into_iter()
+                        .collect()
+                ),
+            })
+        );
+        // Ctrl+Alt+9 is NOT present (WT's "last tab" has no WTD equivalent)
+        assert!(!keys.contains_key("Ctrl+Alt+9"));
+
+        // Pane management
+        assert_eq!(
+            keys.get("Alt+Shift+Plus"),
+            Some(&ActionReference::Simple("split-right".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+Minus"),
+            Some(&ActionReference::Simple("split-down".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Down"),
+            Some(&ActionReference::Simple("focus-pane-down".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Up"),
+            Some(&ActionReference::Simple("focus-pane-up".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Left"),
+            Some(&ActionReference::Simple("focus-pane-left".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Right"),
+            Some(&ActionReference::Simple("focus-pane-right".to_string()))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+Down"),
+            Some(&ActionReference::Simple(
+                "resize-pane-grow-down".to_string()
+            ))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+Up"),
+            Some(&ActionReference::Simple(
+                "resize-pane-shrink-down".to_string()
+            ))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+Right"),
+            Some(&ActionReference::Simple(
+                "resize-pane-grow-right".to_string()
+            ))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+Left"),
+            Some(&ActionReference::Simple(
+                "resize-pane-shrink-right".to_string()
+            ))
+        );
+
+        // Clipboard — primary and secondary WT bindings
+        assert_eq!(
+            keys.get("Ctrl+Shift+C"),
+            Some(&ActionReference::Simple("copy".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+V"),
+            Some(&ActionReference::Simple("paste".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Insert"),
+            Some(&ActionReference::Simple("copy".to_string()))
+        );
+        assert_eq!(
+            keys.get("Shift+Insert"),
+            Some(&ActionReference::Simple("paste".to_string()))
+        );
+
+        // UI
+        assert_eq!(
+            keys.get("F11"),
+            Some(&ActionReference::Simple("toggle-fullscreen".to_string()))
+        );
+        // WT uses Ctrl+Shift+P for command palette (WTD default is Ctrl+Shift+Space)
+        assert_eq!(
+            keys.get("Ctrl+Shift+P"),
+            Some(&ActionReference::Simple(
+                "toggle-command-palette".to_string()
+            ))
+        );
+
+        // Omitted: no scroll-line/page actions in WTD v1
+        assert!(!keys.contains_key("Ctrl+Shift+Up"));
+        assert!(!keys.contains_key("Ctrl+Shift+Down"));
+        assert!(!keys.contains_key("Ctrl+Shift+PageUp"));
+        assert!(!keys.contains_key("Ctrl+Shift+PageDown"));
+        // Omitted: no find action in WTD v1
+        assert!(!keys.contains_key("Ctrl+Shift+F"));
+    }
+
+    #[test]
     fn default_bindings_is_windows_terminal_preset() {
         let b = default_bindings();
         assert_eq!(
@@ -506,7 +751,7 @@ mod tests {
             Some(BindingPreset::WindowsTerminal),
             "default preset must be windows-terminal"
         );
-        // Windows-terminal preset is a placeholder; no explicit overrides.
+        // Default bindings delegate entirely to the preset; no explicit overrides.
         assert!(b.prefix.is_none());
         assert!(b.keys.is_none());
         assert!(b.chords.is_none());
@@ -551,7 +796,10 @@ mod tests {
             ..BindingsDefinition::default()
         };
         let eff = effective_bindings(&def);
-        assert!(eff.preset.is_none(), "effective bindings must have no preset");
+        assert!(
+            eff.preset.is_none(),
+            "effective bindings must have no preset"
+        );
         assert_eq!(eff.prefix, Some("Ctrl+B".to_string()));
         assert_eq!(eff.prefix_timeout, Some(2000));
         let keys = eff.keys.as_ref().unwrap();
@@ -568,10 +816,22 @@ mod tests {
         };
         let eff = effective_bindings(&def);
         assert!(eff.preset.is_none());
-        // Placeholder — no keys yet.
+        // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
-        assert!(eff.keys.is_none());
         assert!(eff.chords.is_none());
+        // But it has 28 single-stroke keys.
+        let keys = eff.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 28);
+        assert_eq!(
+            keys.get("Ctrl+Shift+T"),
+            Some(&ActionReference::Simple("new-tab".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+P"),
+            Some(&ActionReference::Simple(
+                "toggle-command-palette".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -895,7 +1155,10 @@ bindings:
 
     #[test]
     fn merge_both_empty_returns_empty() {
-        let merged = merge_bindings(&BindingsDefinition::default(), &BindingsDefinition::default());
+        let merged = merge_bindings(
+            &BindingsDefinition::default(),
+            &BindingsDefinition::default(),
+        );
         assert_eq!(merged.prefix, None);
         assert_eq!(merged.prefix_timeout, None);
         assert_eq!(merged.chords, None);
@@ -904,7 +1167,7 @@ bindings:
 
     #[test]
     fn merge_tmux_global_with_windows_terminal_workspace_preset() {
-        // Workspace with windows-terminal preset (empty placeholder) overlaid on tmux global.
+        // Workspace with windows-terminal preset overlaid on tmux global.
         let global = tmux_bindings();
         let workspace = BindingsDefinition {
             preset: Some(BindingPreset::WindowsTerminal),
@@ -913,12 +1176,31 @@ bindings:
             chords: None,
             keys: None,
         };
-        // WT preset is empty placeholder, so workspace contributes nothing.
-        // Result should equal the effective tmux global.
         let merged = merge_bindings(&global, &workspace);
+
+        // WT has no prefix — tmux prefix is preserved from global.
         assert_eq!(merged.prefix, Some("Ctrl+B".to_string()));
+        // WT has no chords — tmux chords (15) are preserved from global.
         assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
-        assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
+
+        // Keys: WT contributes 28 keys; tmux has 10.
+        // 8 overlap (Ctrl+Shift+T/W/C/V, Ctrl+Tab, Ctrl+Shift+Tab, Alt+Shift+Minus, F11).
+        // Tmux-unique: Ctrl+Shift+Space, Alt+Shift+D — 2 keys.
+        // Merged = 28 WT + 2 tmux-unique = 30.
+        let keys = merged.keys.as_ref().unwrap();
+        assert_eq!(keys.len(), 30);
+        // WT-unique keys are present.
+        assert!(keys.contains_key("Alt+Down"), "WT focus key present");
+        assert!(keys.contains_key("Ctrl+Shift+P"), "WT palette key present");
+        // Tmux-unique keys are preserved.
+        assert!(
+            keys.contains_key("Ctrl+Shift+Space"),
+            "tmux palette key preserved"
+        );
+        assert!(
+            keys.contains_key("Alt+Shift+D"),
+            "tmux split-right key preserved"
+        );
     }
 
     #[test]
