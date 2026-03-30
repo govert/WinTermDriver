@@ -250,28 +250,7 @@ async fn run_attached(
     // Extract workspace state from attach result.
     if attach_result.msg_type == AttachWorkspaceResult::TYPE_NAME {
         if let Ok(result) = attach_result.extract_payload::<AttachWorkspaceResult>() {
-            // Send Connected *first* so the UI rebuilds its pane→session mapping,
-            // then emit the initial screen content as SessionOutput events so they
-            // are routed correctly to the already-mapped pane screen buffers.
-            let state_clone = result.state.clone();
-            let _ = event_tx.send(HostEvent::Connected {
-                state: result.state,
-            });
-            // Emit initial VT snapshots after Connected so pane→session mapping
-            // is in place when SessionOutput events arrive.
-            if let Some(screens) = state_clone.get("sessionScreens").and_then(|v| v.as_object()) {
-                for (session_id, b64_val) in screens {
-                    if let Some(b64) = b64_val.as_str() {
-                        let data = base64_decode(b64);
-                        if !data.is_empty() {
-                            let _ = event_tx.send(HostEvent::SessionOutput {
-                                session_id: session_id.clone(),
-                                data,
-                            });
-                        }
-                    }
-                }
-            }
+            emit_connected_and_initial_screens(&event_tx, result.state);
         } else {
             let _ = event_tx.send(HostEvent::Connected {
                 state: Value::Null,
@@ -344,6 +323,28 @@ async fn run_attached(
                 }
             }
             else => break,
+        }
+    }
+}
+
+/// Emit attach bootstrap events in deterministic order:
+/// 1) `Connected { state }` for layout/session mapping.
+/// 2) zero or more `SessionOutput` events seeded from `state.sessionScreens`.
+fn emit_connected_and_initial_screens(event_tx: &mpsc::Sender<HostEvent>, state: Value) {
+    let state_clone = state.clone();
+    let _ = event_tx.send(HostEvent::Connected { state });
+
+    if let Some(screens) = state_clone.get("sessionScreens").and_then(|v| v.as_object()) {
+        for (session_id, b64_val) in screens {
+            if let Some(b64) = b64_val.as_str() {
+                let data = base64_decode(b64);
+                if !data.is_empty() {
+                    let _ = event_tx.send(HostEvent::SessionOutput {
+                        session_id: session_id.clone(),
+                        data,
+                    });
+                }
+            }
         }
     }
 }
@@ -494,6 +495,7 @@ fn base64_decode(input: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::TryRecvError;
     use wtd_ipc::message::{InvokeAction, PaneResize, SessionInput};
 
     #[test]
@@ -668,5 +670,39 @@ mod tests {
         let payload: InvokeAction = env.extract_payload().unwrap();
         assert_eq!(payload.action, "split-right");
         assert_eq!(payload.target_pane_id, Some("p1".into()));
+    }
+
+    #[test]
+    fn emit_connected_and_initial_screens_orders_events() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state = serde_json::json!({
+            "name": "dev",
+            "sessionScreens": {
+                "1": base64_encode(b"\x1b[32mREADY\x1b[0m"),
+                "2": ""
+            }
+        });
+
+        emit_connected_and_initial_screens(&tx, state.clone());
+
+        let first = rx.recv().expect("must emit Connected first");
+        match first {
+            HostEvent::Connected { state: got } => assert_eq!(got, state),
+            other => panic!("expected Connected first, got: {other:?}"),
+        }
+
+        let second = rx.recv().expect("must emit non-empty seeded output");
+        match second {
+            HostEvent::SessionOutput { session_id, data } => {
+                assert_eq!(session_id, "1");
+                assert_eq!(data, b"\x1b[32mREADY\x1b[0m");
+            }
+            other => panic!("expected SessionOutput second, got: {other:?}"),
+        }
+
+        match rx.try_recv() {
+            Err(TryRecvError::Empty) => {}
+            other => panic!("expected no more events, got: {other:?}"),
+        }
     }
 }

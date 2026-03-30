@@ -14,7 +14,7 @@ use wtd_core::LogLevel;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
-use wtd_ui::input::KeyName;
+use wtd_ui::input::{InputAction, InputClassifier, KeyEvent};
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
@@ -53,6 +53,22 @@ fn parse_workspace_arg() -> Option<String> {
 /// Session mapping: pane ID → session ID (from host).
 struct PaneSession {
     session_id: String,
+    pane_path: String,
+}
+
+fn action_name(action: &wtd_core::workspace::ActionReference) -> &str {
+    match action {
+        wtd_core::workspace::ActionReference::Simple(name) => name.as_str(),
+        wtd_core::workspace::ActionReference::WithArgs { action, .. } => action.as_str(),
+        wtd_core::workspace::ActionReference::Removed => "",
+    }
+}
+
+fn matches_palette_toggle(classifier: &InputClassifier, event: &KeyEvent) -> bool {
+    matches!(
+        classifier.classify(event, false),
+        InputAction::SingleStrokeBinding(ref action) if action_name(action) == "toggle-command-palette"
+    )
 }
 
 fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
@@ -110,6 +126,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
     // Create the command palette with default keybindings.
     let bindings = wtd_core::global_settings::default_bindings();
+    let input_classifier = InputClassifier::from_bindings(&bindings)?;
     let mut command_palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
 
     let mut window_width: f32 = 1000.0;
@@ -197,7 +214,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         // Update status bar with focused pane info.
                         let focused = layout_tree.focus();
                         if let Some(ps) = pane_sessions.get(&focused) {
-                            status_bar.set_pane_path(ps.session_id.clone());
+                            status_bar.set_pane_path(ps.pane_path.clone());
                         }
                         status_bar.set_session_status(SessionStatus::Running);
                         needs_paint = true;
@@ -368,11 +385,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 continue;
             }
 
-            // Check for Ctrl+Shift+Space to toggle the command palette.
-            if event.key == KeyName::Space
-                && event.modifiers.ctrl()
-                && event.modifiers.shift()
-            {
+            if matches_palette_toggle(&input_classifier, &event) {
                 command_palette.toggle();
                 needs_paint = true;
                 continue;
@@ -482,7 +495,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         PaneLayoutAction::FocusPane(pane_id) => {
                             let _ = layout_tree.set_focus(pane_id.clone());
                             // Update status bar pane path.
-                            status_bar.set_pane_path(format!("{}", pane_id.0));
+                            if let Some(ps) = pane_sessions.get(&pane_id) {
+                                status_bar.set_pane_path(ps.pane_path.clone());
+                            } else {
+                                status_bar.set_pane_path(format!("{}", pane_id.0));
+                            }
                         }
                         PaneLayoutAction::Resize {
                             pane_id,
@@ -625,8 +642,10 @@ fn rebuild_from_snapshot(
     cols: u16,
     rows: u16,
 ) -> Option<SnapshotRebuild> {
+    let workspace_name = state["name"].as_str().unwrap_or("workspace");
     // We only handle the first tab for now.
     let tab = state["tabs"].as_array()?.first()?;
+    let tab_name = tab["name"].as_str().unwrap_or("tab");
 
     // Deserialize the layout tree from the snapshot.
     let layout_node: PaneNode = serde_json::from_value(tab["layout"].clone()).ok()?;
@@ -646,7 +665,7 @@ fn rebuild_from_snapshot(
     let mut pane_sessions = HashMap::new();
     let mut screens = HashMap::new();
 
-    for (i, (_pane_name, ui_pane_id)) in pane_mappings.iter().enumerate() {
+    for (i, (pane_name, ui_pane_id)) in pane_mappings.iter().enumerate() {
         // Create a blank screen buffer for this pane.
         screens.insert(ui_pane_id.clone(), ScreenBuffer::new(cols, rows, 1000));
 
@@ -655,10 +674,13 @@ fn rebuild_from_snapshot(
             let host_pane_key = host_pane_id.to_string();
             if let Some(ps) = pane_states.get(&host_pane_key) {
                 if ps["type"] == "attached" {
-                    if let Some(sid) = ps["sessionId"].as_u64() {
+                    if let Some(sid) = session_id_string(&ps["sessionId"]) {
                         pane_sessions.insert(
                             ui_pane_id.clone(),
-                            PaneSession { session_id: sid.to_string() },
+                            PaneSession {
+                                session_id: sid,
+                                pane_path: format!("{workspace_name}/{tab_name}/{pane_name}"),
+                            },
                         );
                     }
                 }
@@ -667,6 +689,16 @@ fn rebuild_from_snapshot(
     }
 
     Some(SnapshotRebuild { layout_tree, pane_sessions, screens })
+}
+
+fn session_id_string(v: &serde_json::Value) -> Option<String> {
+    if let Some(sid) = v.as_u64() {
+        return Some(sid.to_string());
+    }
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    None
 }
 
 /// Feed VT content that identifies the pane (demo mode only).
@@ -704,4 +736,131 @@ fn feed_demo_content(screen: &mut ScreenBuffer, pane_id: &PaneId) {
     }
 
     screen.advance(&vt);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wtd_ui::input::{KeyName, Modifiers};
+
+    #[test]
+    fn rebuild_snapshot_maps_focused_pane_to_session_and_path() {
+        let state = json!({
+            "name": "dev",
+            "tabs": [{
+                "name": "main",
+                "layout": {
+                    "type": "pane",
+                    "name": "shell"
+                },
+                "panes": [11]
+            }],
+            "paneStates": {
+                "11": {
+                    "type": "attached",
+                    "sessionId": 21
+                }
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let focused = rebuilt.layout_tree.focus();
+        let ps = rebuilt
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane must map to a session");
+
+        assert_eq!(ps.session_id, "21");
+        assert_eq!(ps.pane_path, "dev/main/shell");
+        assert!(rebuilt.screens.contains_key(&focused));
+    }
+
+    #[test]
+    fn rebuild_snapshot_accepts_string_session_id() {
+        let state = json!({
+            "name": "dev",
+            "tabs": [{
+                "name": "main",
+                "layout": {
+                    "type": "pane",
+                    "name": "shell"
+                },
+                "panes": [42]
+            }],
+            "paneStates": {
+                "42": {
+                    "type": "attached",
+                    "sessionId": "session-42"
+                }
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let focused = rebuilt.layout_tree.focus();
+        let ps = rebuilt
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane must map to a session");
+        assert_eq!(ps.session_id, "session-42");
+    }
+
+    #[test]
+    fn rebuild_snapshot_enables_focused_input_routing() {
+        let state = json!({
+            "name": "dev",
+            "tabs": [{
+                "name": "main",
+                "layout": {
+                    "type": "pane",
+                    "name": "shell"
+                },
+                "panes": [7]
+            }],
+            "paneStates": {
+                "7": {
+                    "type": "attached",
+                    "sessionId": 99
+                }
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let focused = rebuilt.layout_tree.focus();
+        let focused_session = rebuilt
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane must map to a session")
+            .session_id
+            .clone();
+
+        let routed = find_pane_for_session(&rebuilt.pane_sessions, &focused_session);
+        assert_eq!(routed, Some(focused));
+    }
+
+    #[test]
+    fn default_bindings_toggle_palette_with_ctrl_shift_p() {
+        let bindings = wtd_core::global_settings::default_bindings();
+        let classifier = InputClassifier::from_bindings(&bindings).unwrap();
+        let event = KeyEvent {
+            key: KeyName::Char('P'),
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            character: None,
+        };
+
+        assert!(matches_palette_toggle(&classifier, &event));
+    }
+
+    #[test]
+    fn default_bindings_do_not_toggle_palette_with_ctrl_shift_space() {
+        let bindings = wtd_core::global_settings::default_bindings();
+        let classifier = InputClassifier::from_bindings(&bindings).unwrap();
+        let event = KeyEvent {
+            key: KeyName::Space,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            character: None,
+        };
+
+        assert!(!matches_palette_toggle(&classifier, &event));
+    }
 }
