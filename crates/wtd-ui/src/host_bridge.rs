@@ -250,9 +250,28 @@ async fn run_attached(
     // Extract workspace state from attach result.
     if attach_result.msg_type == AttachWorkspaceResult::TYPE_NAME {
         if let Ok(result) = attach_result.extract_payload::<AttachWorkspaceResult>() {
+            // Send Connected *first* so the UI rebuilds its pane→session mapping,
+            // then emit the initial screen content as SessionOutput events so they
+            // are routed correctly to the already-mapped pane screen buffers.
+            let state_clone = result.state.clone();
             let _ = event_tx.send(HostEvent::Connected {
                 state: result.state,
             });
+            // Emit initial VT snapshots after Connected so pane→session mapping
+            // is in place when SessionOutput events arrive.
+            if let Some(screens) = state_clone.get("sessionScreens").and_then(|v| v.as_object()) {
+                for (session_id, b64_val) in screens {
+                    if let Some(b64) = b64_val.as_str() {
+                        let data = base64_decode(b64);
+                        if !data.is_empty() {
+                            let _ = event_tx.send(HostEvent::SessionOutput {
+                                session_id: session_id.clone(),
+                                data,
+                            });
+                        }
+                    }
+                }
+            }
         } else {
             let _ = event_tx.send(HostEvent::Connected {
                 state: Value::Null,

@@ -486,3 +486,163 @@ tabs:
     let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+// ── Session-screen seeding test ────────────────────────────────────────────────
+
+/// Decode a base64 string the same way the UI does (no external dep).
+fn b64_decode(input: &str) -> Vec<u8> {
+    fn val(c: u8) -> u8 {
+        match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => 0,
+        }
+    }
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'=' && b != b'\n' && b != b'\r')
+        .collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        if chunk.len() < 2 { break; }
+        let b0 = val(chunk[0]) as u32;
+        let b1 = val(chunk[1]) as u32;
+        let b2 = if chunk.len() > 2 { val(chunk[2]) as u32 } else { 0 };
+        let b3 = if chunk.len() > 3 { val(chunk[3]) as u32 } else { 0 };
+        let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+        out.push(((triple >> 16) & 0xff) as u8);
+        if chunk.len() > 2 { out.push(((triple >> 8) & 0xff) as u8); }
+        if chunk.len() > 3 { out.push((triple & 0xff) as u8); }
+    }
+    out
+}
+
+/// Verify that `AttachWorkspaceResult.state.sessionScreens` is populated with
+/// non-empty base64-encoded VT snapshots containing the expected terminal output.
+///
+/// This is the regression test for the "blank pane on attach" bug: the UI must
+/// receive screen content immediately on attach, without waiting for new output.
+#[tokio::test]
+async fn attach_includes_session_screen_snapshots() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "wtd-test-attach-screens-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let yaml = r#"
+version: 1
+name: screen-seed-test
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: shell
+      session:
+        profile: cmd
+        startupCommand: "echo SCREEN_SEED_MARKER"
+"#;
+    let yaml_path = tmp_dir.join("screen-seed-test.yaml");
+    std::fs::write(&yaml_path, yaml).unwrap();
+
+    let pipe_name = unique_pipe_name();
+    let handler = HostRequestHandler::new(GlobalSettings::default());
+    let server = Arc::new(IpcServer::new(pipe_name.clone(), handler).unwrap());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let s = server.clone();
+    let server_task = tokio::spawn(async move { s.run(shutdown_rx).await });
+
+    let mut client = connect_client(&pipe_name).await;
+    do_handshake(&mut client).await;
+
+    // Open workspace via file: path.
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "open-1",
+            &OpenWorkspace {
+                name: "screen-seed-test".to_string(),
+                file: Some(yaml_path.to_string_lossy().into_owned()),
+                recreate: false,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let open_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(open_resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
+
+    // Wait until the session has produced the expected output.
+    poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.contains("SCREEN_SEED_MARKER"),
+        Duration::from_secs(10),
+    )
+    .await;
+
+    // Attach and get the snapshot.
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "attach-1",
+            &AttachWorkspace {
+                workspace: "screen-seed-test".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let attach_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(attach_resp.msg_type, AttachWorkspaceResult::TYPE_NAME);
+
+    let result: AttachWorkspaceResult = attach_resp.extract_payload().unwrap();
+    let state = &result.state;
+
+    // Verify sessionScreens is present and non-empty.
+    let session_screens = state["sessionScreens"]
+        .as_object()
+        .expect("sessionScreens should be an object");
+    assert_eq!(session_screens.len(), 1, "should have 1 session screen entry");
+
+    // Decode the VT snapshot and verify it contains the expected text.
+    let (_, b64_val) = session_screens.iter().next().unwrap();
+    let b64 = b64_val.as_str().expect("screen snapshot should be a string");
+    assert!(!b64.is_empty(), "screen snapshot should be non-empty");
+
+    let vt_bytes = b64_decode(b64);
+    assert!(!vt_bytes.is_empty(), "decoded VT bytes should be non-empty");
+
+    // Feed the VT snapshot into a fresh ScreenBuffer and verify the marker appears.
+    let mut screen = wtd_pty::ScreenBuffer::new(80, 24, 1000);
+    screen.advance(&vt_bytes);
+    let visible = screen.visible_text();
+    assert!(
+        visible.contains("SCREEN_SEED_MARKER"),
+        "ScreenBuffer after replaying VT snapshot should show SCREEN_SEED_MARKER; got:\n{visible}"
+    );
+
+    // Tear down.
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "close-1",
+            &CloseWorkspace {
+                workspace: "screen-seed-test".to_string(),
+                kill: false,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let _ = read_frame(&mut client).await;
+
+    let _ = shutdown_tx.send(true);
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

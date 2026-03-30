@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
+use wtd_core::workspace::PaneNode;
 use wtd_core::logging::init_stderr_logging;
 use wtd_core::LogLevel;
 use wtd_pty::ScreenBuffer;
@@ -61,7 +62,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     // Create a layout tree with a multi-pane split (demo mode) or single pane.
     let mut layout_tree = LayoutTree::new();
     let mut screens: HashMap<PaneId, ScreenBuffer> = HashMap::new();
-    let pane_sessions: HashMap<PaneId, PaneSession> = HashMap::new();
+    let mut pane_sessions: HashMap<PaneId, PaneSession> = HashMap::new();
 
     // Host bridge (None in demo mode).
     let bridge: Option<HostBridge> = workspace_name.as_ref().map(|name| {
@@ -159,10 +160,46 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         if let Some(ref bridge) = bridge {
             while let Some(event) = bridge.try_recv() {
                 match event {
-                    HostEvent::Connected { .. } => {
+                    HostEvent::Connected { state } => {
                         connected = true;
-                        status_bar.set_session_status(SessionStatus::Running);
                         tracing::info!("attached to workspace");
+
+                        // Rebuild layout tree and pane-session mapping from the
+                        // attach snapshot so the correct sessions are routed to
+                        // the correct pane viewports.
+                        if let Some(rebuilt) = rebuild_from_snapshot(
+                            &state,
+                            cols,
+                            rows,
+                        ) {
+                            layout_tree = rebuilt.layout_tree;
+                            pane_sessions = rebuilt.pane_sessions;
+                            // Merge new screen buffers; keep any existing ones that
+                            // were already seeded by the pre-Connected SessionOutput
+                            // events emitted by the bridge.
+                            for (pane_id, screen) in rebuilt.screens {
+                                screens.entry(pane_id).or_insert(screen);
+                            }
+                            // Recompute layout rects.
+                            let content_height =
+                                window_height - tab_strip.height() - status_bar.height();
+                            let content_rows = (content_height / cell_h) as u16;
+                            let content_cols = (window_width / cell_w) as u16;
+                            pane_layout.update(
+                                &layout_tree,
+                                0.0,
+                                tab_strip.height(),
+                                content_cols,
+                                content_rows,
+                            );
+                        }
+
+                        // Update status bar with focused pane info.
+                        let focused = layout_tree.focus();
+                        if let Some(ps) = pane_sessions.get(&focused) {
+                            status_bar.set_pane_path(ps.session_id.clone());
+                        }
+                        status_bar.set_session_status(SessionStatus::Running);
                         needs_paint = true;
                     }
                     HostEvent::SessionOutput { session_id, data } => {
@@ -569,6 +606,67 @@ fn find_pane_for_session(
         .iter()
         .find(|(_, ps)| ps.session_id == session_id)
         .map(|(id, _)| id.clone())
+}
+
+/// Output of [`rebuild_from_snapshot`].
+struct SnapshotRebuild {
+    layout_tree: LayoutTree,
+    pane_sessions: HashMap<PaneId, PaneSession>,
+    /// Freshly-allocated (empty) screen buffers keyed by UI-side pane ID.
+    screens: HashMap<PaneId, ScreenBuffer>,
+}
+
+/// Rebuild the UI-side layout tree and pane→session mapping from an
+/// [`AttachSnapshot`] JSON value.
+///
+/// Returns `None` if the snapshot is missing or malformed (e.g. no tabs).
+fn rebuild_from_snapshot(
+    state: &serde_json::Value,
+    cols: u16,
+    rows: u16,
+) -> Option<SnapshotRebuild> {
+    // We only handle the first tab for now.
+    let tab = state["tabs"].as_array()?.first()?;
+
+    // Deserialize the layout tree from the snapshot.
+    let layout_node: PaneNode = serde_json::from_value(tab["layout"].clone()).ok()?;
+
+    // Build a UI-side LayoutTree and get (pane_name, ui_pane_id) in DFS order.
+    let (layout_tree, pane_mappings) = LayoutTree::from_pane_node(&layout_node);
+
+    // `tab["panes"]` is the host-side pane IDs in the same DFS order.
+    let host_panes: Vec<u64> = tab["panes"]
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_u64())
+        .collect();
+
+    let pane_states = state["paneStates"].as_object()?;
+
+    let mut pane_sessions = HashMap::new();
+    let mut screens = HashMap::new();
+
+    for (i, (_pane_name, ui_pane_id)) in pane_mappings.iter().enumerate() {
+        // Create a blank screen buffer for this pane.
+        screens.insert(ui_pane_id.clone(), ScreenBuffer::new(cols, rows, 1000));
+
+        // Map host pane ID → session ID via paneStates.
+        if let Some(&host_pane_id) = host_panes.get(i) {
+            let host_pane_key = host_pane_id.to_string();
+            if let Some(ps) = pane_states.get(&host_pane_key) {
+                if ps["type"] == "attached" {
+                    if let Some(sid) = ps["sessionId"].as_u64() {
+                        pane_sessions.insert(
+                            ui_pane_id.clone(),
+                            PaneSession { session_id: sid.to_string() },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Some(SnapshotRebuild { layout_tree, pane_sessions, screens })
 }
 
 /// Feed VT content that identifies the pane (demo mode only).

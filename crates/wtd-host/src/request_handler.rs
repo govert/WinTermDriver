@@ -11,7 +11,7 @@ use serde_json::Value;
 use wtd_core::global_settings::GlobalSettings;
 use wtd_core::ids::{PaneId, SessionId, WorkspaceInstanceId};
 use wtd_core::layout::Rect;
-use wtd_core::{load_workspace_definition, find_workspace, list_workspaces};
+use wtd_core::{find_workspace, list_workspaces, load_workspace_definition};
 
 use wtd_ipc::message;
 use wtd_ipc::message::*;
@@ -139,6 +139,17 @@ fn error_envelope(id: &str, code: ErrorCode, message: &str) -> Envelope {
     )
 }
 
+fn request_cwd(envelope: &Envelope) -> std::path::PathBuf {
+    envelope
+        .payload
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        })
+}
+
 /// Find a pane by name across all open workspaces.
 fn find_pane<'a>(
     workspaces: &'a HashMap<String, WorkspaceInstance>,
@@ -184,16 +195,11 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
 fn load_workspace_from_disk(
     name: &str,
     file: Option<&str>,
+    cwd: &std::path::Path,
 ) -> Result<wtd_core::workspace::WorkspaceDefinition, Envelope> {
     let explicit = file.map(|f| std::path::PathBuf::from(f));
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    let discovered = find_workspace(
-        name,
-        explicit.as_deref(),
-        &cwd,
-    )
-    .map_err(|e| {
+    let discovered = find_workspace(name, explicit.as_deref(), cwd).map_err(|e| {
         error_envelope(
             "",
             ErrorCode::WorkspaceNotFound,
@@ -234,82 +240,52 @@ impl RequestHandler for HostRequestHandler {
         msg: &TypedMessage,
     ) -> Option<Envelope> {
         match msg {
-            TypedMessage::OpenWorkspace(open) => {
-                self.handle_open_workspace(&envelope.id, open)
-            }
+            TypedMessage::OpenWorkspace(open) => self.handle_open_workspace(envelope, open),
 
-            TypedMessage::CloseWorkspace(close) => {
-                self.handle_close_workspace(&envelope.id, close)
-            }
+            TypedMessage::CloseWorkspace(close) => self.handle_close_workspace(&envelope.id, close),
 
             TypedMessage::AttachWorkspace(attach) => {
                 self.handle_attach_workspace(&envelope.id, attach)
             }
 
             TypedMessage::RecreateWorkspace(recreate) => {
-                self.handle_recreate_workspace(&envelope.id, recreate)
+                self.handle_recreate_workspace(envelope, recreate)
             }
 
-            TypedMessage::SaveWorkspace(save) => {
-                self.handle_save_workspace(&envelope.id, save)
-            }
+            TypedMessage::SaveWorkspace(save) => self.handle_save_workspace(&envelope.id, save),
 
-            TypedMessage::ListWorkspaces(_) => {
-                self.handle_list_workspaces(&envelope.id)
-            }
+            TypedMessage::ListWorkspaces(_) => self.handle_list_workspaces(envelope),
 
-            TypedMessage::ListInstances(_) => {
-                self.handle_list_instances(&envelope.id)
-            }
+            TypedMessage::ListInstances(_) => self.handle_list_instances(&envelope.id),
 
-            TypedMessage::ListPanes(lp) => {
-                self.handle_list_panes(&envelope.id, lp)
-            }
+            TypedMessage::ListPanes(lp) => self.handle_list_panes(&envelope.id, lp),
 
-            TypedMessage::ListSessions(ls) => {
-                self.handle_list_sessions(&envelope.id, ls)
-            }
+            TypedMessage::ListSessions(ls) => self.handle_list_sessions(&envelope.id, ls),
 
-            TypedMessage::Send(send) => {
-                self.handle_send(&envelope.id, send)
-            }
+            TypedMessage::Send(send) => self.handle_send(&envelope.id, send),
 
-            TypedMessage::Keys(keys) => {
-                self.handle_keys(&envelope.id, keys)
-            }
+            TypedMessage::Keys(keys) => self.handle_keys(&envelope.id, keys),
 
-            TypedMessage::Capture(capture) => {
-                self.handle_capture(&envelope.id, capture)
-            }
+            TypedMessage::Capture(capture) => self.handle_capture(&envelope.id, capture),
 
             TypedMessage::Scrollback(scrollback) => {
                 self.handle_scrollback(&envelope.id, scrollback)
             }
 
-            TypedMessage::Follow(follow) => {
-                self.handle_follow(&envelope.id, follow)
-            }
+            TypedMessage::Follow(follow) => self.handle_follow(&envelope.id, follow),
 
-            TypedMessage::Inspect(inspect) => {
-                self.handle_inspect(&envelope.id, inspect)
-            }
+            TypedMessage::Inspect(inspect) => self.handle_inspect(&envelope.id, inspect),
 
-            TypedMessage::InvokeAction(action) => {
-                self.handle_invoke_action(&envelope.id, action)
-            }
+            TypedMessage::InvokeAction(action) => self.handle_invoke_action(&envelope.id, action),
 
             TypedMessage::SessionInput(input) => {
                 self.handle_session_input(input);
                 None // fire-and-forget
             }
 
-            TypedMessage::FocusPane(focus) => {
-                self.handle_focus_pane(&envelope.id, focus)
-            }
+            TypedMessage::FocusPane(focus) => self.handle_focus_pane(&envelope.id, focus),
 
-            TypedMessage::RenamePane(rename) => {
-                self.handle_rename_pane(&envelope.id, rename)
-            }
+            TypedMessage::RenamePane(rename) => self.handle_rename_pane(&envelope.id, rename),
 
             _ => None,
         }
@@ -319,7 +295,8 @@ impl RequestHandler for HostRequestHandler {
 // ── Individual handlers ──────────────────────────────────────────────────
 
 impl HostRequestHandler {
-    fn handle_open_workspace(&self, id: &str, open: &OpenWorkspace) -> Option<Envelope> {
+    fn handle_open_workspace(&self, envelope: &Envelope, open: &OpenWorkspace) -> Option<Envelope> {
+        let id = &envelope.id;
         let mut state = self.state.lock().unwrap();
 
         // Check if already open (and not requesting recreate)
@@ -336,7 +313,11 @@ impl HostRequestHandler {
         }
 
         // Load workspace definition
-        let def = match load_workspace_from_disk(&open.name, open.file.as_deref()) {
+        let def = match load_workspace_from_disk(
+            &open.name,
+            open.file.as_deref(),
+            &request_cwd(envelope),
+        ) {
             Ok(d) => d,
             Err(mut e) => {
                 e.id = id.to_string();
@@ -400,32 +381,36 @@ impl HostRequestHandler {
     }
 
     fn handle_attach_workspace(&self, id: &str, attach: &AttachWorkspace) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
-        match state.workspaces.get(&attach.workspace) {
-            Some(inst) => {
-                let snapshot = inst.attach_snapshot();
-                let state_value = serde_json::to_value(&snapshot)
-                    .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
-                Some(Envelope::new(
-                    id,
-                    &AttachWorkspaceResult {
-                        state: state_value,
-                    },
-                ))
-            }
-            None => Some(error_envelope(
+        let mut state = self.state.lock().unwrap();
+        if !state.workspaces.contains_key(&attach.workspace) {
+            return Some(error_envelope(
                 id,
                 ErrorCode::WorkspaceNotFound,
                 &format!("workspace '{}' not found", attach.workspace),
-            )),
+            ));
         }
+        // Drain any buffered output so the snapshot captures the latest screen state.
+        if let Some(inst) = state.workspaces.get_mut(&attach.workspace) {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+        }
+        let inst = state.workspaces.get(&attach.workspace).unwrap();
+        let snapshot = inst.attach_snapshot();
+        let state_value = serde_json::to_value(&snapshot)
+            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+        Some(Envelope::new(
+            id,
+            &AttachWorkspaceResult { state: state_value },
+        ))
     }
 
     fn handle_recreate_workspace(
         &self,
-        id: &str,
+        envelope: &Envelope,
         recreate: &RecreateWorkspace,
     ) -> Option<Envelope> {
+        let id = &envelope.id;
         let mut state = self.state.lock().unwrap();
 
         if !state.workspaces.contains_key(&recreate.workspace) {
@@ -436,7 +421,8 @@ impl HostRequestHandler {
             ));
         }
 
-        let def = match load_workspace_from_disk(&recreate.workspace, None) {
+        let def = match load_workspace_from_disk(&recreate.workspace, None, &request_cwd(envelope))
+        {
             Ok(d) => d,
             Err(mut e) => {
                 e.id = id.to_string();
@@ -515,9 +501,8 @@ impl HostRequestHandler {
         }
     }
 
-    fn handle_list_workspaces(&self, id: &str) -> Option<Envelope> {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let discovered = list_workspaces(&cwd);
+    fn handle_list_workspaces(&self, envelope: &Envelope) -> Option<Envelope> {
+        let discovered = list_workspaces(&request_cwd(envelope));
 
         let state = self.state.lock().unwrap();
 
@@ -540,7 +525,10 @@ impl HostRequestHandler {
             }
         }
 
-        Some(Envelope::new(id, &ListWorkspacesResult { workspaces }))
+        Some(Envelope::new(
+            &envelope.id,
+            &ListWorkspacesResult { workspaces },
+        ))
     }
 
     fn handle_list_instances(&self, id: &str) -> Option<Envelope> {
@@ -747,18 +735,16 @@ impl HostRequestHandler {
                     Some(session) => {
                         // Compile anchor regex if provided.
                         let compiled_regex = match &capture.after_regex {
-                            Some(pattern) => {
-                                match regex::Regex::new(pattern) {
-                                    Ok(re) => Some(re),
-                                    Err(e) => {
-                                        return Some(error_envelope(
-                                            id,
-                                            ErrorCode::InvalidArgument,
-                                            &format!("invalid after_regex '{}': {}", pattern, e),
-                                        ));
-                                    }
+                            Some(pattern) => match regex::Regex::new(pattern) {
+                                Ok(re) => Some(re),
+                                Err(e) => {
+                                    return Some(error_envelope(
+                                        id,
+                                        ErrorCode::InvalidArgument,
+                                        &format!("invalid after_regex '{}': {}", pattern, e),
+                                    ));
                                 }
-                            }
+                            },
                             None => None,
                         };
 
@@ -924,11 +910,7 @@ impl HostRequestHandler {
                         let pane_name = format!("pane-{}", pane_id.0);
                         let env = host_env();
                         inst.spawn_session_for_pane(
-                            &pane_id,
-                            pane_name,
-                            &settings,
-                            &env,
-                            &find_exe,
+                            &pane_id, pane_name, &settings, &env, &find_exe,
                         );
                         Some(Envelope::new(
                             id,
@@ -938,24 +920,20 @@ impl HostRequestHandler {
                             },
                         ))
                     }
-                    ActionResult::PaneClosed { pane_id, .. } => {
-                        Some(Envelope::new(
-                            id,
-                            &InvokeActionResult {
-                                result: "pane-closed".to_string(),
-                                pane_id: Some(format!("{}", pane_id.0)),
-                            },
-                        ))
-                    }
-                    ActionResult::Ok => {
-                        Some(Envelope::new(
-                            id,
-                            &InvokeActionResult {
-                                result: "ok".to_string(),
-                                pane_id: None,
-                            },
-                        ))
-                    }
+                    ActionResult::PaneClosed { pane_id, .. } => Some(Envelope::new(
+                        id,
+                        &InvokeActionResult {
+                            result: "pane-closed".to_string(),
+                            pane_id: Some(format!("{}", pane_id.0)),
+                        },
+                    )),
+                    ActionResult::Ok => Some(Envelope::new(
+                        id,
+                        &InvokeActionResult {
+                            result: "ok".to_string(),
+                            pane_id: None,
+                        },
+                    )),
                 }
             }
             Err(e) => {
@@ -1045,7 +1023,10 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
         table
     };
 
-    let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'=' && b != b'\n' && b != b'\r').collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'=' && b != b'\n' && b != b'\r')
+        .collect();
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
 
     for chunk in bytes.chunks(4) {

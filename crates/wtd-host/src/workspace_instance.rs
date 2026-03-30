@@ -198,6 +198,14 @@ impl WorkspaceInstance {
                 .iter()
                 .map(|(id, s)| (id.clone(), s.screen().title.clone()))
                 .collect(),
+            session_screens: self
+                .sessions
+                .iter()
+                .map(|(id, s)| {
+                    let vt = s.screen().to_vt_snapshot();
+                    (id.clone(), crate::output_broadcaster::encode_base64(&vt))
+                })
+                .collect(),
         }
     }
 
@@ -820,6 +828,11 @@ pub struct AttachSnapshot {
     pub session_states: HashMap<SessionId, SessionState>,
     /// Current terminal title per session (OSC 2).
     pub session_titles: HashMap<SessionId, String>,
+    /// Base64-encoded VT snapshot of the current visible screen per session.
+    ///
+    /// The UI can feed these bytes directly into `ScreenBuffer::advance()` to
+    /// seed pane content immediately on attach, before any new output arrives.
+    pub session_screens: HashMap<SessionId, String>,
 }
 
 /// Snapshot of a single tab's metadata and layout.

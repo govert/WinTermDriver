@@ -261,6 +261,49 @@ impl Grid {
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
+/// Build an SGR escape sequence for the given foreground, background, and attrs.
+///
+/// Always starts with `\x1b[0m` (reset) to avoid leaking attributes across runs.
+fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
+    let mut params: Vec<&'static str> = vec!["0"]; // reset
+
+    if attrs.is_set(CellAttrs::BOLD) { params.push("1"); }
+    if attrs.is_set(CellAttrs::DIM) { params.push("2"); }
+    if attrs.is_set(CellAttrs::ITALIC) { params.push("3"); }
+    if attrs.is_set(CellAttrs::UNDERLINE) { params.push("4"); }
+    if attrs.is_set(CellAttrs::BLINK) { params.push("5"); }
+    if attrs.is_set(CellAttrs::INVERSE) { params.push("7"); }
+    if attrs.is_set(CellAttrs::HIDDEN) { params.push("8"); }
+    if attrs.is_set(CellAttrs::STRIKETHROUGH) { params.push("9"); }
+
+    // Build dynamic param strings for colors (cannot be &'static str).
+    let mut dynamic: Vec<String> = Vec::new();
+
+    match fg {
+        Color::Default => {}
+        Color::Ansi(n) => dynamic.push(format!("3{}", n)),
+        Color::AnsiBright(n) => dynamic.push(format!("9{}", n)),
+        Color::Indexed(n) => dynamic.push(format!("38;5;{}", n)),
+        Color::Rgb(r, g, b) => dynamic.push(format!("38;2;{};{};{}", r, g, b)),
+    }
+
+    match bg {
+        Color::Default => {}
+        Color::Ansi(n) => dynamic.push(format!("4{}", n)),
+        Color::AnsiBright(n) => dynamic.push(format!("10{}", n)),
+        Color::Indexed(n) => dynamic.push(format!("48;5;{}", n)),
+        Color::Rgb(r, g, b) => dynamic.push(format!("48;2;{};{};{}", r, g, b)),
+    }
+
+    let all_params: Vec<&str> = params
+        .iter()
+        .copied()
+        .chain(dynamic.iter().map(|s| s.as_str()))
+        .collect();
+
+    format!("\x1b[{}m", all_params.join(";")).into_bytes()
+}
+
 /// Extract plain text from a cell slice, skipping wide-char continuation cells.
 pub fn cells_to_string(cells: &[Cell]) -> String {
     let mut s = String::with_capacity(cells.len());
@@ -577,6 +620,95 @@ impl ScreenBuffer {
             anchor_found,
             cursor,
         }
+    }
+
+    // ── VT snapshot ─────────────────────────────────────────────────────────
+
+    /// Serialize the current visible screen as a self-contained VT byte stream.
+    ///
+    /// The returned bytes can be fed directly into a fresh `ScreenBuffer::advance()`
+    /// to reconstruct the visible state (text, colors, attributes) on another end —
+    /// for example, seeding a UI-side screen buffer when a UI attaches to a running
+    /// workspace.
+    ///
+    /// The stream uses `CSI 2 J` to clear, then emits SGR + character sequences
+    /// row by row, finishing with a cursor-position command at the current cursor.
+    pub fn to_vt_snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        // Clear screen and move to top-left.
+        out.extend_from_slice(b"\x1b[2J\x1b[H");
+
+        let g = self.active_grid();
+
+        for row in 0..self.rows {
+            if row > 0 {
+                // Position cursor at start of this row (rows are 1-based in VT).
+                out.extend_from_slice(
+                    format!("\x1b[{};1H", row + 1).as_bytes(),
+                );
+            }
+
+            let mut col = 0usize;
+            while col < self.cols {
+                let cell = g.cell(row, col);
+
+                // Skip wide-char continuation cells (the character was already
+                // emitted with the left-half cell).
+                if cell.wide_continuation {
+                    col += 1;
+                    continue;
+                }
+
+                // Find the extent of a run with identical visual attributes.
+                let run_fg = cell.fg;
+                let run_bg = cell.bg;
+                let run_attrs = cell.attrs;
+                let run_start = col;
+                let mut run_end = col + 1;
+
+                while run_end < self.cols {
+                    let nc = g.cell(row, run_end);
+                    if nc.fg == run_fg
+                        && nc.bg == run_bg
+                        && nc.attrs == run_attrs
+                        && !nc.wide_continuation
+                    {
+                        run_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Emit SGR for this run.
+                let sgr = build_sgr_params(run_fg, run_bg, run_attrs);
+                out.extend_from_slice(&sgr);
+
+                // Emit each character in the run.
+                for c in run_start..run_end {
+                    let rc = g.cell(row, c);
+                    if rc.wide_continuation {
+                        continue;
+                    }
+                    let ch = if rc.character == '\0' { ' ' } else { rc.character };
+                    let mut buf = [0u8; 4];
+                    let s = ch.encode_utf8(&mut buf);
+                    out.extend_from_slice(s.as_bytes());
+                }
+
+                col = run_end;
+            }
+        }
+
+        // Reset SGR so subsequent output starts clean.
+        out.extend_from_slice(b"\x1b[0m");
+
+        // Restore cursor position.
+        out.extend_from_slice(
+            format!("\x1b[{};{}H", self.cursor.row + 1, self.cursor.col + 1).as_bytes(),
+        );
+
+        out
     }
 
     // ── Resize ───────────────────────────────────────────────────────────────
@@ -1716,5 +1848,86 @@ mod tests {
         let b = make_capture_buf();
         let r = b.capture_extended(Some(3), false, None, None, None, false);
         assert_eq!(r.cursor, 4); // total(7) - 3 = 4
+    }
+
+    // ── to_vt_snapshot ───────────────────────────────────────────────────────
+
+    #[test]
+    fn vt_snapshot_round_trips_plain_text() {
+        let mut orig = buf(80, 24);
+        feed(&mut orig, "Hello, World!");
+
+        let snapshot = orig.to_vt_snapshot();
+        assert!(!snapshot.is_empty());
+
+        // Feed the snapshot into a fresh buffer and verify the text appears.
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+        assert!(
+            copy.visible_text().contains("Hello, World!"),
+            "expected 'Hello, World!' in:\n{}",
+            copy.visible_text()
+        );
+    }
+
+    #[test]
+    fn vt_snapshot_round_trips_sgr_colors() {
+        let mut orig = buf(80, 24);
+        // Bold red text.
+        feed(&mut orig, "\x1b[1;31mRED\x1b[0m normal");
+
+        let snapshot = orig.to_vt_snapshot();
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+
+        let text = copy.visible_text();
+        assert!(text.contains("RED"), "expected 'RED' in:\n{text}");
+        assert!(text.contains("normal"), "expected 'normal' in:\n{text}");
+
+        // Check color attribute was preserved on the 'R' cell.
+        let cell = copy.cell(0, 0).unwrap();
+        assert!(cell.attrs.is_set(CellAttrs::BOLD));
+        assert_eq!(cell.fg, Color::Ansi(1)); // red
+    }
+
+    #[test]
+    fn vt_snapshot_cursor_position_preserved() {
+        let mut orig = buf(80, 24);
+        // Move cursor to row 3, col 5 (1-based in VT → 0-based in state).
+        feed(&mut orig, "\x1b[4;6Htest");
+
+        let snapshot = orig.to_vt_snapshot();
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+
+        // Cursor should be at end of "test" on row 3, starting at col 5.
+        assert_eq!(copy.cursor().row, 3);
+        assert_eq!(copy.cell(3, 5).unwrap().character, 't');
+    }
+
+    #[test]
+    fn vt_snapshot_empty_screen_is_valid() {
+        let orig = buf(40, 10);
+        let snapshot = orig.to_vt_snapshot();
+        // An empty screen snapshot should still be parseable.
+        let mut copy = buf(40, 10);
+        copy.advance(&snapshot);
+        // All cells should remain blank.
+        assert_eq!(copy.cell(0, 0).unwrap().character, ' ');
+    }
+
+    #[test]
+    fn vt_snapshot_multiline_text() {
+        let mut orig = buf(80, 24);
+        feed(&mut orig, "line one\r\nline two\r\nline three");
+
+        let snapshot = orig.to_vt_snapshot();
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+
+        let text = copy.visible_text();
+        assert!(text.contains("line one"));
+        assert!(text.contains("line two"));
+        assert!(text.contains("line three"));
     }
 }
