@@ -1375,3 +1375,15 @@ OpenWorkspace with explicit `file` path is fully wired end-to-end. SaveWorkspace
 **Omitted WT bindings (no WTD v1 equivalent):** scroll-line/page (Ctrl+Shift+Up/Down/PgUp/PgDn), find (Ctrl+Shift+F), goto-last-tab (Ctrl+Alt+9), settings, duplicate-tab, font-size, clearBuffer, etc. See `docs/WT_KEYBINDING_MAP.md` for full audit.
 
 **Pre-existing uncommitted test failure:** `test_real_handler::real_handler_open_send_capture` fails when `real_handler_uses_request_cwd_for_open_and_list` (an uncommitted test from a prior bead) runs in parallel — `set_current_dir` in that test affects CWD for sibling tests. Not related to h35.3 changes.
+
+---
+
+## wintermdriver-h35.4: Keybinding preset integration tests + ActionReference::Removed
+
+**Integration tests:** `crates/wtd-core/tests/preset_integration_tests.rs` — 9 tests covering all 7 bead criteria (WT preset, tmux preset, none preset, user overrides, workspace override, null removal, default preset).
+
+**ActionReference::Removed:** New unit variant added to `ActionReference` enum in `wtd-core::workspace`. Serializes to YAML `null` (`~`); deserializes from YAML `null`. When present in an overlay's keys/chords map during `merge_action_maps`, the corresponding key is removed from the merged result — allows users to remove individual bindings from a preset.
+
+**Match arm exhaustiveness:** All existing `match action { Simple => ..., WithArgs => ... }` patterns had to add a `Removed => ...` arm. If future beads add new variants, the same update is needed across: `command_palette.rs:action_name_from_ref`, `main.rs` (2 sites), `gate_command_palette_clipboard.rs`, `gate_typing_and_bindings.rs`, `gate_prefix_chords_and_mouse.rs`.
+
+**Pre-existing test failure:** `clipboard::tests::clipboard_round_trip` in `wtd-ui` fails intermittently (Win32 clipboard is a global resource, `OpenClipboard` fails when another app holds it). Not related to h35.4 changes.
