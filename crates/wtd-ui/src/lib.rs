@@ -12,6 +12,7 @@ pub mod host_bridge;
 pub mod host_client;
 pub mod input;
 pub mod mouse_handler;
+pub mod paint_scheduler;
 pub mod pane_layout;
 pub mod prefix_state;
 pub mod renderer;

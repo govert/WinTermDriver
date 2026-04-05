@@ -18,6 +18,7 @@ use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
 use wtd_ui::input::{InputAction, InputClassifier, KeyEvent};
 use wtd_ui::mouse_handler::{MouseHandler, MouseOutput};
+use wtd_ui::paint_scheduler::PaintScheduler;
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction, PixelRect};
 use wtd_ui::prefix_state::{PrefixOutput, PrefixStateMachine};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
@@ -582,6 +583,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut window_shown = bridge.is_none();
     let mut awaiting_startup_frame = bridge.is_some();
     let mut startup_refresh_pending = bridge.is_some();
+    let mut paint_scheduler = PaintScheduler::new();
     let mut delayed_show_deadline = bridge
         .as_ref()
         .map(|_| Instant::now() + Duration::from_millis(400));
@@ -602,6 +604,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             cell_h,
             pane_viewport_insets,
         )?;
+        paint_scheduler.complete_paint();
     }
 
     // Message loop.
@@ -609,6 +612,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         window::pump_pending_messages();
 
         let mut needs_paint = false;
+        let mut force_immediate_paint = false;
+        let mut saw_visible_alt_screen_output = false;
 
         // ── Drain host events ────────────────────────────────────
         if let Some(ref bridge) = bridge {
@@ -682,6 +687,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 }
                             }
                         }
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     HostEvent::SessionOutput { session_id, data } => {
@@ -690,10 +696,21 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             find_pane_for_session(&tabs, &session_id)
                         {
                             if let Some(tab) = tabs.get_mut(tab_index) {
-                                if let Some(screen) = tab.screens.get_mut(&pane_id) {
+                                let visible_screen_on_alternate = if let Some(screen) =
+                                    tab.screens.get_mut(&pane_id)
+                                {
                                     screen.advance(&data);
-                                    if tab_index == active_tab_index {
-                                        refresh_mouse_modes(&mut mouse_modes, &tab.screens);
+                                    (tab_index == active_tab_index).then(|| screen.on_alternate())
+                                } else {
+                                    None
+                                };
+
+                                if let Some(on_alternate) = visible_screen_on_alternate {
+                                    refresh_mouse_modes(&mut mouse_modes, &tab.screens);
+                                    if on_alternate {
+                                        saw_visible_alt_screen_output = true;
+                                    } else {
+                                        force_immediate_paint = true;
                                     }
                                     needs_paint = true;
                                 }
@@ -726,6 +743,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 status_bar.set_session_status(status);
                             }
                         }
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     HostEvent::TitleChanged { session_id, title } => {
@@ -740,6 +758,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 window::set_window_title(hwnd, &format!("{title} — {title}"));
                             }
                         }
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     HostEvent::LayoutChanged { tab, layout, .. } => {
@@ -813,6 +832,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             bridge.refresh_workspace();
                         }
 
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     HostEvent::WorkspaceStateChanged {
@@ -828,6 +848,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         tracing::warn!(reason = %reason, "disconnected from host");
                         connected = false;
                         status_bar.set_session_status(SessionStatus::Failed { error: reason });
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                 }
@@ -886,6 +907,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 }
 
                 // Notify host of pane resize (send for each pane).
+                force_immediate_paint = true;
                 needs_paint = true;
             }
         }
@@ -908,12 +930,14 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mouse_handler,
                             );
                         }
+                        force_immediate_paint = true;
                         needs_paint = true;
                         continue;
                     }
                 }
                 match command_palette.on_key_event(&event) {
                     PaletteResult::Dismissed => {
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     PaletteResult::Action(action_ref) => {
@@ -928,9 +952,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mouse_handler,
                             );
                         }
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                     PaletteResult::Consumed => {
+                        force_immediate_paint = true;
                         needs_paint = true;
                     }
                 }
@@ -952,6 +978,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             &mouse_handler,
                         );
                     }
+                    force_immediate_paint = true;
                     needs_paint = true;
                 }
                 PrefixOutput::SendToSession(bytes) => {
@@ -967,6 +994,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     }
                 }
                 PrefixOutput::Consumed => {
+                    force_immediate_paint = true;
                     needs_paint = true;
                 }
             }
@@ -975,6 +1003,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         // Check prefix timeout (§21.3).
         if prefix_sm.check_timeout() {
             status_bar.set_prefix_active(false);
+            force_immediate_paint = true;
             needs_paint = true;
         }
         // Update status bar prefix indicator.
@@ -1012,6 +1041,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             );
                         }
                     }
+                    force_immediate_paint = true;
                     needs_paint = true;
                 }
                 continue;
@@ -1269,12 +1299,22 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         // Cursor shape changes — could map to Win32 SetCursor.
                     }
                 }
+                force_immediate_paint = true;
                 needs_paint = true;
             }
         }
 
         if window::take_needs_paint() {
+            force_immediate_paint = true;
             needs_paint = true;
+        }
+
+        if needs_paint {
+            if saw_visible_alt_screen_output && !force_immediate_paint {
+                paint_scheduler.request_alt_screen_burst(Instant::now());
+            } else {
+                paint_scheduler.request_immediate();
+            }
         }
 
         if !window_shown {
@@ -1284,11 +1324,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 window::show_terminal_window(hwnd);
                 window::request_repaint(hwnd);
                 window_shown = true;
-                needs_paint = true;
+                paint_scheduler.request_immediate();
             }
         }
 
-        if needs_paint && window_shown {
+        if window_shown && paint_scheduler.should_paint_now(Instant::now()) {
             let active_tab = if tabs.is_empty() {
                 continue;
             } else {
@@ -1308,10 +1348,13 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 cell_h,
                 pane_viewport_insets,
             )?;
+            paint_scheduler.complete_paint();
         }
 
-        // Sleep briefly to avoid busy-looping.
-        std::thread::sleep(std::time::Duration::from_millis(16));
+        // Sleep briefly to avoid busy-looping, but wake promptly when a deferred
+        // alternate-screen repaint becomes due.
+        let sleep_for = paint_scheduler.sleep_interval(Duration::from_millis(16), Instant::now());
+        std::thread::sleep(sleep_for);
 
         if !is_window_valid(hwnd) {
             if let Some(ref bridge) = bridge {
