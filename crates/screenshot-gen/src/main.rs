@@ -1,21 +1,25 @@
-//! Generate documentation screenshots for the WinTermDriver README.
-//!
-//! Creates a window, renders UI scenes with mock data, captures the
-//! render target via D2D GDI interop, and saves as PNG.
+//! Generate documentation screenshots for the WinTermDriver README, or render
+//! a live workspace snapshot to PNG by attaching to `wtd-host`.
 
 use std::collections::HashMap;
+use std::mem::size_of;
+use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{anyhow, bail, Context};
 use image::{ImageBuffer, RgbImage};
 
 use wtd_core::global_settings::default_bindings;
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
+use wtd_ipc::message::{AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload};
+use wtd_ipc::Envelope;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::CommandPalette;
+use wtd_ui::host_client::UiIpcClient;
 use wtd_ui::input::{KeyEvent, KeyName, Modifiers};
 use wtd_ui::pane_layout::PaneLayout;
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
+use wtd_ui::snapshot::rebuild_from_snapshot;
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
 use wtd_ui::tab_strip::TabStrip;
 use wtd_ui::window;
@@ -26,24 +30,108 @@ use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const WINDOW_WIDTH: i32 = 1200;
-const WINDOW_HEIGHT: i32 = 700;
+const DOC_WINDOW_WIDTH: i32 = 1200;
+const DOC_WINDOW_HEIGHT: i32 = 700;
+const LIVE_WINDOW_WIDTH: i32 = 1600;
+const LIVE_WINDOW_HEIGHT: i32 = 1000;
 
 fn main() -> anyhow::Result<()> {
-    let output_dir = "docs/images";
+    match parse_args()? {
+        CaptureMode::Docs { output_dir } => run_docs_capture(&output_dir),
+        CaptureMode::Workspace {
+            workspace,
+            output,
+            width,
+            height,
+        } => run_workspace_capture(&workspace, &output, width, height),
+    }
+}
+
+enum CaptureMode {
+    Docs {
+        output_dir: PathBuf,
+    },
+    Workspace {
+        workspace: String,
+        output: PathBuf,
+        width: i32,
+        height: i32,
+    },
+}
+
+fn parse_args() -> anyhow::Result<CaptureMode> {
+    let mut workspace = None;
+    let mut output = None;
+    let mut output_dir = None;
+    let mut width = LIVE_WINDOW_WIDTH;
+    let mut height = LIVE_WINDOW_HEIGHT;
+
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" => workspace = Some(next_arg(&mut args, "--workspace")?),
+            "--output" => output = Some(PathBuf::from(next_arg(&mut args, "--output")?)),
+            "--output-dir" => {
+                output_dir = Some(PathBuf::from(next_arg(&mut args, "--output-dir")?))
+            }
+            "--width" => {
+                width = next_arg(&mut args, "--width")?
+                    .parse()
+                    .context("invalid --width")?
+            }
+            "--height" => {
+                height = next_arg(&mut args, "--height")?
+                    .parse()
+                    .context("invalid --height")?
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => bail!("unrecognized argument: {other}"),
+        }
+    }
+
+    if let Some(workspace) = workspace {
+        let output =
+            output.unwrap_or_else(|| PathBuf::from(format!("docs/images/{workspace}-live.png")));
+        return Ok(CaptureMode::Workspace {
+            workspace,
+            output,
+            width,
+            height,
+        });
+    }
+
+    Ok(CaptureMode::Docs {
+        output_dir: output_dir.unwrap_or_else(|| PathBuf::from("docs/images")),
+    })
+}
+
+fn next_arg(args: &mut impl Iterator<Item = String>, flag: &str) -> anyhow::Result<String> {
+    args.next()
+        .ok_or_else(|| anyhow!("missing value for {flag}"))
+}
+
+fn print_help() {
+    println!(
+        "screenshot-gen [--output-dir <dir>]\n\
+         screenshot-gen --workspace <name> [--output <png>] [--width <px>] [--height <px>]"
+    );
+}
+
+fn run_docs_capture(output_dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(output_dir)?;
 
-    // Create a visible window for D2D rendering.
-    let hwnd = window::create_terminal_window("dev — WinTermDriver", WINDOW_WIDTH, WINDOW_HEIGHT)?;
+    let hwnd =
+        window::create_terminal_window("dev — WinTermDriver", DOC_WINDOW_WIDTH, DOC_WINDOW_HEIGHT)?;
     std::thread::sleep(std::time::Duration::from_millis(300));
     window::pump_pending_messages();
 
-    // Get actual client area dimensions.
     let (client_w, client_h) = client_size(hwnd)?;
     let w = client_w as f32;
     let h = client_h as f32;
 
-    // Create renderer with software mode for GDI-compatible pixel capture.
     let config = RendererConfig {
         software_rendering: true,
         ..RendererConfig::default()
@@ -51,7 +139,6 @@ fn main() -> anyhow::Result<()> {
     let renderer = TerminalRenderer::new(hwnd, &config)?;
     let (cell_w, cell_h) = renderer.cell_size();
 
-    // Tab strip with realistic tab names.
     let mut tab_strip = TabStrip::new(renderer.dw_factory())?;
     tab_strip.add_tab("backend".into());
     tab_strip.add_tab("ops".into());
@@ -59,31 +146,27 @@ fn main() -> anyhow::Result<()> {
     tab_strip.set_active(0);
     tab_strip.layout(w);
 
-    // Status bar.
     let mut status_bar = StatusBar::new(renderer.dw_factory())?;
     status_bar.set_workspace_name("dev".into());
     status_bar.set_pane_path("backend/editor".into());
     status_bar.set_session_status(SessionStatus::Running);
     status_bar.layout(w);
 
-    // Command palette (initially hidden).
     let bindings = default_bindings();
     let mut palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
 
-    // Layout tree: left pane + right column split top/bottom.
     let mut tree = LayoutTree::new();
     let p1 = tree.focus();
     let p2 = tree.split_right(p1.clone()).context("split_right")?;
     let p3 = tree.split_down(p2.clone()).context("split_down")?;
 
     let content_height = h - tab_strip.height() - status_bar.height();
-    let content_rows = (content_height / cell_h) as u16;
-    let content_cols = (w / cell_w) as u16;
+    let content_rows = (content_height / cell_h).max(1.0) as u16;
+    let content_cols = (w / cell_w).max(1.0) as u16;
 
     let mut pane_layout = PaneLayout::new(cell_w, cell_h);
     pane_layout.update(&tree, 0.0, tab_strip.height(), content_cols, content_rows);
 
-    // Screen buffers with realistic terminal content.
     let mut screens: HashMap<PaneId, ScreenBuffer> = HashMap::new();
     for pane_id in tree.panes() {
         let mut screen = ScreenBuffer::new(content_cols, content_rows, 1000);
@@ -91,22 +174,29 @@ fn main() -> anyhow::Result<()> {
         screens.insert(pane_id, screen);
     }
 
-    // ── Screenshot 1: Main workspace overview ─────────────────────────────
     println!("Generating workspace-overview.png ...");
     render_and_capture(
         &renderer,
         client_w,
         client_h,
-        &format!("{output_dir}/workspace-overview.png"),
+        &output_dir.join("workspace-overview.png"),
         |rt| {
             paint_scene(
-                &renderer, rt, &tab_strip, &pane_layout, &tree, &screens,
-                &status_bar, &palette, w, h, None,
+                &renderer,
+                rt,
+                &tab_strip,
+                &pane_layout,
+                &tree,
+                &screens,
+                &status_bar,
+                &palette,
+                w,
+                h,
+                None,
             )
         },
     )?;
 
-    // ── Screenshot 2: Command palette with fuzzy search ───────────────────
     println!("Generating command-palette.png ...");
     palette.show();
     inject_text(&mut palette, "split");
@@ -114,17 +204,25 @@ fn main() -> anyhow::Result<()> {
         &renderer,
         client_w,
         client_h,
-        &format!("{output_dir}/command-palette.png"),
+        &output_dir.join("command-palette.png"),
         |rt| {
             paint_scene(
-                &renderer, rt, &tab_strip, &pane_layout, &tree, &screens,
-                &status_bar, &palette, w, h, None,
+                &renderer,
+                rt,
+                &tab_strip,
+                &pane_layout,
+                &tree,
+                &screens,
+                &status_bar,
+                &palette,
+                w,
+                h,
+                None,
             )
         },
     )?;
     palette.hide();
 
-    // ── Screenshot 3: Prefix chord indicator ──────────────────────────────
     println!("Generating prefix-chord.png ...");
     status_bar.set_prefix_active(true);
     status_bar.set_prefix_label("Ctrl+B".into());
@@ -132,17 +230,25 @@ fn main() -> anyhow::Result<()> {
         &renderer,
         client_w,
         client_h,
-        &format!("{output_dir}/prefix-chord.png"),
+        &output_dir.join("prefix-chord.png"),
         |rt| {
             paint_scene(
-                &renderer, rt, &tab_strip, &pane_layout, &tree, &screens,
-                &status_bar, &palette, w, h, None,
+                &renderer,
+                rt,
+                &tab_strip,
+                &pane_layout,
+                &tree,
+                &screens,
+                &status_bar,
+                &palette,
+                w,
+                h,
+                None,
             )
         },
     )?;
     status_bar.set_prefix_active(false);
 
-    // ── Screenshot 4: Failed / exited pane ────────────────────────────────
     println!("Generating failed-pane.png ...");
     status_bar.set_session_status(SessionStatus::Failed {
         error: "executable not found".into(),
@@ -152,76 +258,228 @@ fn main() -> anyhow::Result<()> {
         &renderer,
         client_w,
         client_h,
-        &format!("{output_dir}/failed-pane.png"),
+        &output_dir.join("failed-pane.png"),
         |rt| {
             paint_scene(
-                &renderer, rt, &tab_strip, &pane_layout, &tree, &screens,
-                &status_bar, &palette, w, h, Some(&p3),
+                &renderer,
+                rt,
+                &tab_strip,
+                &pane_layout,
+                &tree,
+                &screens,
+                &status_bar,
+                &palette,
+                w,
+                h,
+                Some(&p3),
             )
         },
     )?;
 
-    // Clean up.
     unsafe {
         let _ = DestroyWindow(hwnd);
     }
     window::pump_pending_messages();
 
-    println!("All screenshots saved to {output_dir}/");
+    println!("All screenshots saved to {}", output_dir.display());
     Ok(())
 }
 
-// ── Rendering + capture ─────────────────────────────────────────────────────
+fn run_workspace_capture(
+    workspace: &str,
+    output: &Path,
+    width: i32,
+    height: i32,
+) -> anyhow::Result<()> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
-/// Render a scene and capture it via D2D GDI interop.
-///
-/// The `paint_fn` is called between `BeginDraw` and pixel capture. It receives
-/// the render target for any additional drawing (though components use the
-/// renderer's own RT).
+    let attached = attach_workspace_state(workspace)?;
+
+    let hwnd =
+        window::create_terminal_window(&format!("{workspace} — WinTermDriver"), width, height)?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    window::pump_pending_messages();
+
+    let (client_w, client_h) = client_size(hwnd)?;
+    let w = client_w as f32;
+    let h = client_h as f32;
+
+    let config = RendererConfig {
+        software_rendering: true,
+        ..RendererConfig::default()
+    };
+    let renderer = TerminalRenderer::new(hwnd, &config)?;
+    let (cell_w, cell_h) = renderer.cell_size();
+
+    let tab_names = attached.state["tabs"]
+        .as_array()
+        .map(|tabs| {
+            tabs.iter()
+                .map(|tab| tab["name"].as_str().unwrap_or("tab").to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|tabs| !tabs.is_empty())
+        .unwrap_or_else(|| vec!["main".to_string()]);
+
+    let mut tab_strip = TabStrip::new(renderer.dw_factory())?;
+    for tab_name in &tab_names {
+        tab_strip.add_tab(tab_name.clone());
+    }
+    tab_strip.set_active(0);
+    tab_strip.layout(w);
+
+    let mut status_bar = StatusBar::new(renderer.dw_factory())?;
+
+    let bindings = default_bindings();
+    let palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
+
+    let content_height = h - tab_strip.height() - status_bar.height();
+    let content_rows = (content_height / cell_h).max(1.0) as u16;
+    let content_cols = (w / cell_w).max(1.0) as u16;
+
+    let rebuilt = rebuild_from_snapshot(&attached.state, content_cols, content_rows)
+        .ok_or_else(|| anyhow!("failed to rebuild layout from attach snapshot"))?;
+
+    let mut pane_layout = PaneLayout::new(cell_w, cell_h);
+    pane_layout.update(
+        &rebuilt.layout_tree,
+        0.0,
+        tab_strip.height(),
+        content_cols,
+        content_rows,
+    );
+
+    status_bar.set_workspace_name(rebuilt.workspace_name.clone());
+    if let Some(focused) = rebuilt.pane_sessions.get(&rebuilt.layout_tree.focus()) {
+        status_bar.set_pane_path(focused.pane_path.clone());
+    } else {
+        status_bar.set_pane_path(format!(
+            "{}/{}",
+            rebuilt.workspace_name, rebuilt.tab_names[0]
+        ));
+    }
+    status_bar.set_session_status(SessionStatus::Running);
+    status_bar.layout(w);
+    tab_strip.set_active(rebuilt.active_tab_index);
+    tab_strip.layout(w);
+
+    render_and_capture(&renderer, client_w, client_h, output, |rt| {
+        paint_scene(
+            &renderer,
+            rt,
+            &tab_strip,
+            &pane_layout,
+            &rebuilt.layout_tree,
+            &rebuilt.screens,
+            &status_bar,
+            &palette,
+            w,
+            h,
+            None,
+        )
+    })?;
+
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+    window::pump_pending_messages();
+
+    println!("Saved live workspace screenshot to {}", output.display());
+    Ok(())
+}
+
+fn attach_workspace_state(workspace: &str) -> anyhow::Result<AttachWorkspaceResult> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?;
+
+    runtime.block_on(async move {
+        let mut client = UiIpcClient::connect_and_handshake()
+            .await
+            .context("failed to connect to wtd-host")?;
+        let request = Envelope::new(
+            "screenshot-attach-1",
+            &AttachWorkspace {
+                workspace: workspace.to_string(),
+            },
+        );
+        let response = client
+            .request(&request)
+            .await
+            .context("attach request failed")?;
+
+        if response.msg_type == AttachWorkspaceResult::TYPE_NAME {
+            return response
+                .extract_payload()
+                .context("failed to decode AttachWorkspaceResult");
+        }
+
+        if response.msg_type == ErrorResponse::TYPE_NAME {
+            let err: ErrorResponse = response
+                .extract_payload()
+                .context("failed to decode ErrorResponse")?;
+            bail!(
+                "host rejected attach for workspace `{workspace}`: {}",
+                err.message
+            );
+        }
+
+        bail!(
+            "expected {} or {} while attaching workspace `{}`, but got {}",
+            AttachWorkspaceResult::TYPE_NAME,
+            ErrorResponse::TYPE_NAME,
+            workspace,
+            response.msg_type
+        )
+    })
+}
+
 fn render_and_capture(
     renderer: &TerminalRenderer,
     width: i32,
     height: i32,
-    path: &str,
+    path: &Path,
     paint_fn: impl FnOnce(&ID2D1RenderTarget) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     renderer.begin_draw();
     renderer.clear_background();
 
-    // Let the caller paint the scene.
     paint_fn(renderer.render_target())?;
 
-    // Capture pixels via GDI interop before EndDraw.
     let pixels = capture_via_gdi_interop(renderer.render_target(), width, height)?;
 
     renderer.end_draw()?;
 
-    // Save as PNG.
     save_bgr_as_png(&pixels, width as u32, height as u32, path)?;
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    println!("  Saved {} ({} bytes, {}x{})", path, file_size, width, height);
+    println!(
+        "  Saved {} ({} bytes, {}x{})",
+        path.display(),
+        file_size,
+        width,
+        height
+    );
     Ok(())
 }
 
-/// Capture pixel data from a GDI-compatible D2D render target.
 fn capture_via_gdi_interop(
     rt: &ID2D1RenderTarget,
     width: i32,
     height: i32,
 ) -> anyhow::Result<Vec<u8>> {
     unsafe {
-        // Cast to GDI interop render target.
         let gdi_rt: ID2D1GdiInteropRenderTarget = rt.cast().context(
             "Failed to cast to ID2D1GdiInteropRenderTarget. \
              Ensure software_rendering is enabled.",
         )?;
 
-        // Get a GDI DC from the D2D render target (copies current content).
         let hdc_rt = gdi_rt
             .GetDC(D2D1_DC_INITIALIZE_MODE_COPY)
             .context("GetDC from D2D render target")?;
 
-        // Create a memory DC and bitmap for capture.
         let hdc_mem = CreateCompatibleDC(hdc_rt);
         let hbm = CreateCompatibleBitmap(hdc_rt, width, height);
         let old = SelectObject(hdc_mem, hbm);
@@ -231,20 +489,18 @@ fn capture_via_gdi_interop(
 
         SelectObject(hdc_mem, old);
 
-        // Release the D2D DC before reading pixels.
         gdi_rt
             .ReleaseDC(None)
             .context("ReleaseDC on D2D render target")?;
 
-        // Read pixel data (BGRA, top-down).
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: width,
-                biHeight: -height, // negative = top-down
+                biHeight: -height,
                 biPlanes: 1,
                 biBitCount: 32,
-                biCompression: 0, // BI_RGB
+                biCompression: 0,
                 ..Default::default()
             },
             ..Default::default()
@@ -267,12 +523,6 @@ fn capture_via_gdi_interop(
     }
 }
 
-// ── Scene painting ──────────────────────────────────────────────────────────
-
-/// Paint the full composited scene.
-///
-/// If `failed_pane` is Some, that pane renders with the failed overlay instead
-/// of its screen buffer content.
 fn paint_scene(
     renderer: &TerminalRenderer,
     _rt: &ID2D1RenderTarget,
@@ -291,12 +541,16 @@ fn paint_scene(
     for pane_id in tree.panes() {
         if let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) {
             if failed_pane.map_or(false, |fp| &pane_id == fp) {
-                let msg =
-                    wtd_ui::renderer::failed_pane_message("executable not found: deploy.sh");
+                let msg = wtd_ui::renderer::failed_pane_message("executable not found: deploy.sh");
                 renderer.paint_failed_pane(&msg, rect.x, rect.y, rect.width, rect.height)?;
             } else if let Some(screen) = screens.get(&pane_id) {
                 renderer.paint_pane_viewport(
-                    screen, rect.x, rect.y, rect.width, rect.height, None,
+                    screen,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    None,
                 )?;
             }
         }
@@ -310,16 +564,13 @@ fn paint_scene(
     Ok(())
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
 fn client_size(hwnd: HWND) -> anyhow::Result<(i32, i32)> {
     let mut rect = RECT::default();
     unsafe { GetClientRect(hwnd, &mut rect)? };
     Ok((rect.right - rect.left, rect.bottom - rect.top))
 }
 
-/// Save BGRA pixel data as a PNG file (converting BGR → RGB).
-fn save_bgr_as_png(pixels: &[u8], width: u32, height: u32, path: &str) -> anyhow::Result<()> {
+fn save_bgr_as_png(pixels: &[u8], width: u32, height: u32, path: &Path) -> anyhow::Result<()> {
     let img: RgbImage = ImageBuffer::from_fn(width, height, |x, y| {
         let idx = ((y * width + x) * 4) as usize;
         image::Rgb([pixels[idx + 2], pixels[idx + 1], pixels[idx]])
@@ -328,7 +579,6 @@ fn save_bgr_as_png(pixels: &[u8], width: u32, height: u32, path: &str) -> anyhow
     Ok(())
 }
 
-/// Inject text into the command palette by simulating key events.
 fn inject_text(palette: &mut CommandPalette, text: &str) {
     for ch in text.chars() {
         let key = if ch.is_ascii_alphabetic() {
@@ -345,8 +595,6 @@ fn inject_text(palette: &mut CommandPalette, text: &str) {
     }
 }
 
-// ── Mock terminal content ───────────────────────────────────────────────────
-
 fn feed_pane_content(screen: &mut ScreenBuffer, pane_id: &PaneId) {
     let vt: Vec<u8> = match pane_id.0 {
         1 => build_editor_pane_content(),
@@ -356,14 +604,11 @@ fn feed_pane_content(screen: &mut ScreenBuffer, pane_id: &PaneId) {
     screen.advance(&vt);
 }
 
-/// Left pane: PowerShell with git status and directory listing.
 fn build_editor_pane_content() -> Vec<u8> {
     let mut vt = Vec::new();
     vt.extend_from_slice(b"\x1b[36mPS C:\\src\\app>\x1b[0m git status\r\n");
     vt.extend_from_slice(b"On branch \x1b[32mmain\x1b[0m\r\n");
-    vt.extend_from_slice(
-        b"Your branch is up to date with '\x1b[31morigin/main\x1b[0m'.\r\n",
-    );
+    vt.extend_from_slice(b"Your branch is up to date with '\x1b[31morigin/main\x1b[0m'.\r\n");
     vt.extend_from_slice(b"\r\n");
     vt.extend_from_slice(b"Changes not staged for commit:\r\n");
     vt.extend_from_slice(b"  (use \"git add <file>...\" to update)\r\n");
@@ -385,12 +630,8 @@ fn build_editor_pane_content() -> Vec<u8> {
     vt.extend_from_slice(b"\r\n");
     vt.extend_from_slice(b"Mode         LastWriteTime    Length Name\r\n");
     vt.extend_from_slice(b"----         -------------    ------ ----\r\n");
-    vt.extend_from_slice(
-        b"d----   3/29/2026  10:15          \x1b[1;34msrc\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"d----   3/29/2026  10:15          \x1b[1;34m.wtd\x1b[0m\r\n",
-    );
+    vt.extend_from_slice(b"d----   3/29/2026  10:15          \x1b[1;34msrc\x1b[0m\r\n");
+    vt.extend_from_slice(b"d----   3/29/2026  10:15          \x1b[1;34m.wtd\x1b[0m\r\n");
     vt.extend_from_slice(b"-a---   3/29/2026  10:15    1256 Cargo.toml\r\n");
     vt.extend_from_slice(b"-a---   3/29/2026  10:15     384 README.md\r\n");
     vt.extend_from_slice(b"\r\n");
@@ -398,7 +639,6 @@ fn build_editor_pane_content() -> Vec<u8> {
     vt
 }
 
-/// Top-right pane: cargo build output + running server.
 fn build_server_pane_content() -> Vec<u8> {
     let mut vt = Vec::new();
     vt.extend_from_slice(b"\x1b[36mPS C:\\src\\app>\x1b[0m cargo build\r\n");
@@ -428,7 +668,6 @@ fn build_server_pane_content() -> Vec<u8> {
     vt
 }
 
-/// Bottom-right pane: test output.
 fn build_test_pane_content() -> Vec<u8> {
     let mut vt = Vec::new();
     vt.extend_from_slice(b"\x1b[36mPS C:\\src\\app>\x1b[0m cargo test\r\n");
@@ -437,40 +676,18 @@ fn build_test_pane_content() -> Vec<u8> {
     vt.extend_from_slice(b"\x1b[32m     Running\x1b[0m unittests src/lib.rs\r\n");
     vt.extend_from_slice(b"\r\n");
     vt.extend_from_slice(b"running 47 tests\r\n");
-    vt.extend_from_slice(
-        b"test core::workspace::test_parse_minimal ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test core::workspace::test_parse_full ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test core::layout::test_split_right ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test core::layout::test_split_down ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test core::layout::test_close_pane ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test pty::screen::test_advance_basic ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test pty::screen::test_cursor_movement ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test pty::screen::test_ansi_colors ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test ipc::framing::test_encode_decode ... \x1b[32mok\x1b[0m\r\n",
-    );
-    vt.extend_from_slice(
-        b"test host::session::test_start_stop ... \x1b[32mok\x1b[0m\r\n",
-    );
+    vt.extend_from_slice(b"test core::workspace::test_parse_minimal ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test core::workspace::test_parse_full ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test core::layout::test_split_right ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test core::layout::test_split_down ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test core::layout::test_close_pane ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test pty::screen::test_advance_basic ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test pty::screen::test_cursor_movement ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test pty::screen::test_ansi_colors ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test ipc::framing::test_encode_decode ... \x1b[32mok\x1b[0m\r\n");
+    vt.extend_from_slice(b"test host::session::test_start_stop ... \x1b[32mok\x1b[0m\r\n");
     vt.extend_from_slice(b"...\r\n");
     vt.extend_from_slice(b"\r\n");
-    vt.extend_from_slice(
-        b"test result: \x1b[32mok\x1b[0m. 47 passed; 0 failed; 0 ignored\r\n",
-    );
+    vt.extend_from_slice(b"test result: \x1b[32mok\x1b[0m. 47 passed; 0 failed; 0 ignored\r\n");
     vt
 }

@@ -15,6 +15,7 @@ pub mod mouse_handler;
 pub mod pane_layout;
 pub mod prefix_state;
 pub mod renderer;
+pub mod snapshot;
 pub mod status_bar;
 pub mod tab_strip;
 pub mod window;

@@ -335,7 +335,13 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::CloseWorkspace(close) => {
@@ -718,13 +724,8 @@ async fn send_and_capture_targets_correct_pane_in_split() {
     );
 
     // Server pane should NOT contain worker's marker
-    let server_text = poll_capture_until(
-        &mut client,
-        "dev/server",
-        |_| true,
-        Duration::from_secs(1),
-    )
-    .await;
+    let server_text =
+        poll_capture_until(&mut client, "dev/server", |_| true, Duration::from_secs(1)).await;
     assert!(
         !server_text.contains(worker_marker),
         "server pane should NOT contain worker's marker; server text:\n{}",

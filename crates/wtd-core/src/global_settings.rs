@@ -533,7 +533,11 @@ fn merge_action_maps(
                 .filter(|(_, v)| !matches!(v, ActionReference::Removed))
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            if filtered.is_empty() { None } else { Some(filtered) }
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(filtered)
+            }
         }
         (Some(b), Some(o)) => {
             let mut merged = b.clone();

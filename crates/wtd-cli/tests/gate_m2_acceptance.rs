@@ -376,7 +376,13 @@ impl RequestHandler for M2Handler {
                     _ => String::new(),
                 };
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::Inspect(inspect) => {
@@ -523,17 +529,31 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (open): exit code and output formatting
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: open text exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: open text exit code"
+    );
     assert!(
         fmt.stdout.contains(&open_result.instance_id),
         "M2 criterion 7: open text output contains instance id"
     );
 
     let json = assert_valid_json(&resp);
-    assert!(json["instanceId"].is_string(), "M2 criterion 7: open JSON has instanceId");
-    assert!(json["state"].is_object(), "M2 criterion 7: open JSON has state");
+    assert!(
+        json["instanceId"].is_string(),
+        "M2 criterion 7: open JSON has instanceId"
+    );
+    assert!(
+        json["state"].is_object(),
+        "M2 criterion 7: open JSON has state"
+    );
     let json_fmt = output::format_response(&resp, true);
-    assert_eq!(json_fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: open JSON exit code");
+    assert_eq!(
+        json_fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: open JSON exit code"
+    );
 
     // ── Wait for sessions to start ────────────────────────────────
     let startup_text = poll_capture_until(
@@ -582,20 +602,46 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (list panes): exit code and formatting
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: list panes text exit code");
-    assert!(fmt.stdout.contains("server"), "M2 criterion 7: list panes text shows 'server'");
-    assert!(fmt.stdout.contains("logs"), "M2 criterion 7: list panes text shows 'logs'");
-    assert!(fmt.stdout.contains("TAB"), "M2 criterion 7: list panes has TAB header");
-    assert!(fmt.stdout.contains("PANE"), "M2 criterion 7: list panes has PANE header");
-    assert!(fmt.stdout.contains("STATE"), "M2 criterion 7: list panes has STATE header");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: list panes text exit code"
+    );
+    assert!(
+        fmt.stdout.contains("server"),
+        "M2 criterion 7: list panes text shows 'server'"
+    );
+    assert!(
+        fmt.stdout.contains("logs"),
+        "M2 criterion 7: list panes text shows 'logs'"
+    );
+    assert!(
+        fmt.stdout.contains("TAB"),
+        "M2 criterion 7: list panes has TAB header"
+    );
+    assert!(
+        fmt.stdout.contains("PANE"),
+        "M2 criterion 7: list panes has PANE header"
+    );
+    assert!(
+        fmt.stdout.contains("STATE"),
+        "M2 criterion 7: list panes has STATE header"
+    );
 
     let json = assert_valid_json(&resp);
     let panes_arr = json["panes"].as_array().unwrap();
-    assert_eq!(panes_arr.len(), 2, "M2 criterion 7: list panes JSON has 2 entries");
+    assert_eq!(
+        panes_arr.len(),
+        2,
+        "M2 criterion 7: list panes JSON has 2 entries"
+    );
     for p in panes_arr {
         assert!(p["name"].is_string(), "M2 criterion 7: pane JSON has name");
         assert!(p["tab"].is_string(), "M2 criterion 7: pane JSON has tab");
-        assert!(p["sessionState"].is_string(), "M2 criterion 7: pane JSON has sessionState");
+        assert!(
+            p["sessionState"].is_string(),
+            "M2 criterion 7: pane JSON has sessionState"
+        );
     }
 
     // ── Criterion 3: `wtd send dev/server "echo hello"` delivers input ──
@@ -621,7 +667,11 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (send): exit code
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: send text exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: send text exit code"
+    );
 
     // ── Criterion 4: `wtd capture dev/server` returns output ─────
     let final_text = poll_capture_until(
@@ -658,17 +708,31 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (capture): exit code and formatting
     let fmt = output::format_response(&capture_resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: capture text exit code");
-    assert!(!fmt.stdout.is_empty(), "M2 criterion 7: capture text output non-empty");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: capture text exit code"
+    );
+    assert!(
+        !fmt.stdout.is_empty(),
+        "M2 criterion 7: capture text output non-empty"
+    );
     assert!(
         fmt.stdout.contains(marker),
         "M2 criterion 7: capture text contains marker"
     );
 
     let json = assert_valid_json(&capture_resp);
-    assert!(json["text"].is_string(), "M2 criterion 7: capture JSON has text field");
+    assert!(
+        json["text"].is_string(),
+        "M2 criterion 7: capture JSON has text field"
+    );
     let json_fmt = output::format_response(&capture_resp, true);
-    assert_eq!(json_fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: capture JSON exit code");
+    assert_eq!(
+        json_fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: capture JSON exit code"
+    );
 
     // ── Criterion 5: `wtd inspect dev/server` shows metadata ─────
     let resp = client
@@ -705,19 +769,39 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (inspect): exit code and formatting
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: inspect text exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: inspect text exit code"
+    );
     assert!(
         fmt.stdout.contains("server"),
         "M2 criterion 7: inspect text mentions pane name"
     );
 
     let json = assert_valid_json(&resp);
-    assert_eq!(json["paneName"], "server", "M2 criterion 7: inspect JSON paneName");
-    assert_eq!(json["workspace"], "dev", "M2 criterion 7: inspect JSON workspace");
-    assert!(json["paneId"].is_string(), "M2 criterion 7: inspect JSON paneId");
-    assert!(json["sessionState"].is_string(), "M2 criterion 7: inspect JSON sessionState");
+    assert_eq!(
+        json["paneName"], "server",
+        "M2 criterion 7: inspect JSON paneName"
+    );
+    assert_eq!(
+        json["workspace"], "dev",
+        "M2 criterion 7: inspect JSON workspace"
+    );
+    assert!(
+        json["paneId"].is_string(),
+        "M2 criterion 7: inspect JSON paneId"
+    );
+    assert!(
+        json["sessionState"].is_string(),
+        "M2 criterion 7: inspect JSON sessionState"
+    );
     let json_fmt = output::format_response(&resp, true);
-    assert_eq!(json_fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: inspect JSON exit code");
+    assert_eq!(
+        json_fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: inspect JSON exit code"
+    );
 
     // ── Criterion 6: `wtd close dev --kill` tears down cleanly ───
     let resp = client
@@ -740,7 +824,11 @@ async fn m2_cli_driven_workspace_acceptance() {
 
     // Criterion 7 (close): exit code
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "M2 criterion 7: close text exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "M2 criterion 7: close text exit code"
+    );
 
     // Verify teardown: list instances should be empty
     let resp = client
@@ -773,11 +861,20 @@ async fn m2_cli_driven_workspace_acceptance() {
         exit_code::TARGET_NOT_FOUND,
         "M2 criterion 7: target-not-found → exit code 2"
     );
-    assert!(!fmt.stderr.is_empty(), "M2 criterion 7: error produces stderr");
+    assert!(
+        !fmt.stderr.is_empty(),
+        "M2 criterion 7: error produces stderr"
+    );
 
     let json = assert_valid_json(&resp);
-    assert_eq!(json["code"], "target-not-found", "M2 criterion 7: error JSON code");
-    assert!(json["message"].is_string(), "M2 criterion 7: error JSON message");
+    assert_eq!(
+        json["code"], "target-not-found",
+        "M2 criterion 7: error JSON code"
+    );
+    assert!(
+        json["message"].is_string(),
+        "M2 criterion 7: error JSON message"
+    );
 
     // Workspace not found → exit code 2
     let resp = client

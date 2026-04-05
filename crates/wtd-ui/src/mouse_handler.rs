@@ -106,9 +106,7 @@ impl MouseHandler {
 
     /// Current scroll offset for a pane (0 = live).
     pub fn scroll_offset(&self, pane_id: &PaneId) -> i32 {
-        self.pane_states
-            .get(pane_id)
-            .map_or(0, |s| s.scroll_offset)
+        self.pane_states.get(pane_id).map_or(0, |s| s.scroll_offset)
     }
 
     /// Current text selection for a pane, if any.
@@ -161,6 +159,8 @@ impl MouseHandler {
         mouse_modes: &HashMap<PaneId, MouseMode>,
         cell_width: f32,
         cell_height: f32,
+        pane_margin_x_cells: f32,
+        pane_margin_y_cells: f32,
     ) -> Vec<MouseOutput> {
         let mut outputs = Vec::new();
         let content_bottom = window_height - status_bar_height;
@@ -190,31 +190,62 @@ impl MouseHandler {
                             outputs.push(MouseOutput::FocusPane(pane_id.clone()));
 
                             // Check if this pane has mouse reporting enabled
-                            let mode = mouse_modes.get(&pane_id).copied().unwrap_or(MouseMode::None);
+                            let mode = mouse_modes
+                                .get(&pane_id)
+                                .copied()
+                                .unwrap_or(MouseMode::None);
                             if mode != MouseMode::None {
                                 // Forward as VT mouse press
                                 if let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) {
+                                    let content_rect = inset_pane_rect(
+                                        rect,
+                                        cell_width,
+                                        cell_height,
+                                        pane_margin_x_cells,
+                                        pane_margin_y_cells,
+                                    );
                                     let (col, row) = pixel_to_cell(
-                                        event.x, event.y, rect, cell_width, cell_height,
+                                        event.x,
+                                        event.y,
+                                        content_rect,
+                                        cell_width,
+                                        cell_height,
                                     );
                                     let sgr = mouse_modes_use_sgr(mouse_modes, &pane_id);
                                     let seq = encode_mouse_event(
-                                        MouseButton::Left, true, col, row, 0, sgr,
+                                        MouseButton::Left,
+                                        true,
+                                        col,
+                                        row,
+                                        0,
+                                        sgr,
                                     );
                                     outputs.push(MouseOutput::SendToSession(pane_id, seq));
                                 }
                             } else {
                                 // Start text selection
                                 if let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) {
-                                    let (col, row) = pixel_to_cell(
-                                        event.x, event.y, rect, cell_width, cell_height,
+                                    let content_rect = inset_pane_rect(
+                                        rect,
+                                        cell_width,
+                                        cell_height,
+                                        pane_margin_x_cells,
+                                        pane_margin_y_cells,
                                     );
-                                    let state = self.pane_states.entry(pane_id.clone()).or_insert_with(|| {
-                                        PaneMouseState {
+                                    let (col, row) = pixel_to_cell(
+                                        event.x,
+                                        event.y,
+                                        content_rect,
+                                        cell_width,
+                                        cell_height,
+                                    );
+                                    let state = self
+                                        .pane_states
+                                        .entry(pane_id.clone())
+                                        .or_insert_with(|| PaneMouseState {
                                             scroll_offset: 0,
                                             selection: None,
-                                        }
-                                    });
+                                        });
                                     state.selection = Some(SelectionDrag {
                                         start_row: row,
                                         start_col: col,
@@ -256,7 +287,9 @@ impl MouseHandler {
 
                 // End selection drag — finalize
                 if let Some(pane_id) = self.selecting_pane.take() {
-                    let sel_result = self.pane_states.get(&pane_id)
+                    let sel_result = self
+                        .pane_states
+                        .get(&pane_id)
                         .and_then(|s| s.selection.as_ref())
                         .map(|d| d.to_text_selection());
                     if let Some(sel) = sel_result {
@@ -272,17 +305,30 @@ impl MouseHandler {
                 }
 
                 // VT mouse release
-                let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                let mode = mouse_modes
+                    .get(&focused_pane)
+                    .copied()
+                    .unwrap_or(MouseMode::None);
                 if mode != MouseMode::None {
                     if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                         if rect_contains(&rect, event.x, event.y) {
+                            let content_rect = inset_pane_rect(
+                                rect,
+                                cell_width,
+                                cell_height,
+                                pane_margin_x_cells,
+                                pane_margin_y_cells,
+                            );
                             let (col, row) = pixel_to_cell(
-                                event.x, event.y, rect, cell_width, cell_height,
+                                event.x,
+                                event.y,
+                                content_rect,
+                                cell_width,
+                                cell_height,
                             );
                             let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
-                            let seq = encode_mouse_event(
-                                MouseButton::Left, false, col, row, 0, sgr,
-                            );
+                            let seq =
+                                encode_mouse_event(MouseButton::Left, false, col, row, 0, sgr);
                             outputs.push(MouseOutput::SendToSession(focused_pane.clone(), seq));
                         }
                     }
@@ -317,8 +363,19 @@ impl MouseHandler {
                 if self.left_down {
                     if let Some(pane_id) = &self.selecting_pane {
                         if let Some(rect) = pane_layout.pane_pixel_rect(pane_id) {
+                            let content_rect = inset_pane_rect(
+                                rect,
+                                cell_width,
+                                cell_height,
+                                pane_margin_x_cells,
+                                pane_margin_y_cells,
+                            );
                             let (col, row) = pixel_to_cell(
-                                event.x, event.y, rect, cell_width, cell_height,
+                                event.x,
+                                event.y,
+                                content_rect,
+                                cell_width,
+                                cell_height,
                             );
                             let pane_id = pane_id.clone();
                             if let Some(state) = self.pane_states.get_mut(&pane_id) {
@@ -326,9 +383,7 @@ impl MouseHandler {
                                     drag.end_row = row;
                                     drag.end_col = col;
                                     let sel = drag.to_text_selection();
-                                    outputs.push(MouseOutput::SelectionChanged(
-                                        pane_id, Some(sel),
-                                    ));
+                                    outputs.push(MouseOutput::SelectionChanged(pane_id, Some(sel)));
                                 }
                             }
                         }
@@ -336,7 +391,10 @@ impl MouseHandler {
                 }
 
                 // VT mouse motion reporting
-                let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                let mode = mouse_modes
+                    .get(&focused_pane)
+                    .copied()
+                    .unwrap_or(MouseMode::None);
                 let report_motion = match mode {
                     MouseMode::AnyEvent => true,
                     MouseMode::ButtonEvent => self.left_down,
@@ -345,8 +403,19 @@ impl MouseHandler {
                 if report_motion {
                     if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                         if rect_contains(&rect, event.x, event.y) {
+                            let content_rect = inset_pane_rect(
+                                rect,
+                                cell_width,
+                                cell_height,
+                                pane_margin_x_cells,
+                                pane_margin_y_cells,
+                            );
                             let (col, row) = pixel_to_cell(
-                                event.x, event.y, rect, cell_width, cell_height,
+                                event.x,
+                                event.y,
+                                content_rect,
+                                cell_width,
+                                cell_height,
                             );
                             let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
                             // Motion events use button 0 + 32 (motion flag)
@@ -365,18 +434,31 @@ impl MouseHandler {
             // ── Right button ─────────────────────────────────────────────
             MouseEventKind::RightDown => {
                 if event.y >= tab_strip_height && event.y < content_bottom {
-                    let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                    let mode = mouse_modes
+                        .get(&focused_pane)
+                        .copied()
+                        .unwrap_or(MouseMode::None);
                     if mode != MouseMode::None {
                         // Forward as VT mouse event
                         if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                             if rect_contains(&rect, event.x, event.y) {
+                                let content_rect = inset_pane_rect(
+                                    rect,
+                                    cell_width,
+                                    cell_height,
+                                    pane_margin_x_cells,
+                                    pane_margin_y_cells,
+                                );
                                 let (col, row) = pixel_to_cell(
-                                    event.x, event.y, rect, cell_width, cell_height,
+                                    event.x,
+                                    event.y,
+                                    content_rect,
+                                    cell_width,
+                                    cell_height,
                                 );
                                 let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
-                                let seq = encode_mouse_event(
-                                    MouseButton::Right, true, col, row, 0, sgr,
-                                );
+                                let seq =
+                                    encode_mouse_event(MouseButton::Right, true, col, row, 0, sgr);
                                 outputs.push(MouseOutput::SendToSession(focused_pane.clone(), seq));
                             }
                         }
@@ -388,17 +470,30 @@ impl MouseHandler {
             }
             MouseEventKind::RightUp => {
                 if event.y >= tab_strip_height && event.y < content_bottom {
-                    let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                    let mode = mouse_modes
+                        .get(&focused_pane)
+                        .copied()
+                        .unwrap_or(MouseMode::None);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                             if rect_contains(&rect, event.x, event.y) {
+                                let content_rect = inset_pane_rect(
+                                    rect,
+                                    cell_width,
+                                    cell_height,
+                                    pane_margin_x_cells,
+                                    pane_margin_y_cells,
+                                );
                                 let (col, row) = pixel_to_cell(
-                                    event.x, event.y, rect, cell_width, cell_height,
+                                    event.x,
+                                    event.y,
+                                    content_rect,
+                                    cell_width,
+                                    cell_height,
                                 );
                                 let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
-                                let seq = encode_mouse_event(
-                                    MouseButton::Right, false, col, row, 0, sgr,
-                                );
+                                let seq =
+                                    encode_mouse_event(MouseButton::Right, false, col, row, 0, sgr);
                                 outputs.push(MouseOutput::SendToSession(focused_pane.clone(), seq));
                             }
                         }
@@ -409,17 +504,30 @@ impl MouseHandler {
             // ── Middle button ────────────────────────────────────────────
             MouseEventKind::MiddleDown => {
                 if event.y >= tab_strip_height && event.y < content_bottom {
-                    let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                    let mode = mouse_modes
+                        .get(&focused_pane)
+                        .copied()
+                        .unwrap_or(MouseMode::None);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                             if rect_contains(&rect, event.x, event.y) {
+                                let content_rect = inset_pane_rect(
+                                    rect,
+                                    cell_width,
+                                    cell_height,
+                                    pane_margin_x_cells,
+                                    pane_margin_y_cells,
+                                );
                                 let (col, row) = pixel_to_cell(
-                                    event.x, event.y, rect, cell_width, cell_height,
+                                    event.x,
+                                    event.y,
+                                    content_rect,
+                                    cell_width,
+                                    cell_height,
                                 );
                                 let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
-                                let seq = encode_mouse_event(
-                                    MouseButton::Middle, true, col, row, 0, sgr,
-                                );
+                                let seq =
+                                    encode_mouse_event(MouseButton::Middle, true, col, row, 0, sgr);
                                 outputs.push(MouseOutput::SendToSession(focused_pane.clone(), seq));
                             }
                         }
@@ -428,16 +536,35 @@ impl MouseHandler {
             }
             MouseEventKind::MiddleUp => {
                 if event.y >= tab_strip_height && event.y < content_bottom {
-                    let mode = mouse_modes.get(&focused_pane).copied().unwrap_or(MouseMode::None);
+                    let mode = mouse_modes
+                        .get(&focused_pane)
+                        .copied()
+                        .unwrap_or(MouseMode::None);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&focused_pane) {
                             if rect_contains(&rect, event.x, event.y) {
+                                let content_rect = inset_pane_rect(
+                                    rect,
+                                    cell_width,
+                                    cell_height,
+                                    pane_margin_x_cells,
+                                    pane_margin_y_cells,
+                                );
                                 let (col, row) = pixel_to_cell(
-                                    event.x, event.y, rect, cell_width, cell_height,
+                                    event.x,
+                                    event.y,
+                                    content_rect,
+                                    cell_width,
+                                    cell_height,
                                 );
                                 let sgr = mouse_modes_use_sgr(mouse_modes, &focused_pane);
                                 let seq = encode_mouse_event(
-                                    MouseButton::Middle, false, col, row, 0, sgr,
+                                    MouseButton::Middle,
+                                    false,
+                                    col,
+                                    row,
+                                    0,
+                                    sgr,
                                 );
                                 outputs.push(MouseOutput::SendToSession(focused_pane.clone(), seq));
                             }
@@ -453,12 +580,26 @@ impl MouseHandler {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
 
-                    let mode = mouse_modes.get(&target_pane).copied().unwrap_or(MouseMode::None);
+                    let mode = mouse_modes
+                        .get(&target_pane)
+                        .copied()
+                        .unwrap_or(MouseMode::None);
                     if mode != MouseMode::None {
                         // Forward as VT scroll events
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
+                            let content_rect = inset_pane_rect(
+                                rect,
+                                cell_width,
+                                cell_height,
+                                pane_margin_x_cells,
+                                pane_margin_y_cells,
+                            );
                             let (col, row) = pixel_to_cell(
-                                event.x, event.y, rect, cell_width, cell_height,
+                                event.x,
+                                event.y,
+                                content_rect,
+                                cell_width,
+                                cell_height,
                             );
                             let sgr = mouse_modes_use_sgr(mouse_modes, &target_pane);
                             let button = if delta > 0 {
@@ -466,11 +607,10 @@ impl MouseHandler {
                             } else {
                                 MouseButton::WheelDown
                             };
-                            let notches = (delta.unsigned_abs() as i32 + WHEEL_DELTA - 1) / WHEEL_DELTA;
+                            let notches =
+                                (delta.unsigned_abs() as i32 + WHEEL_DELTA - 1) / WHEEL_DELTA;
                             for _ in 0..notches {
-                                let seq = encode_mouse_event(
-                                    button, true, col, row, 0, sgr,
-                                );
+                                let seq = encode_mouse_event(button, true, col, row, 0, sgr);
                                 outputs.push(MouseOutput::SendToSession(target_pane.clone(), seq));
                             }
                         }
@@ -479,12 +619,13 @@ impl MouseHandler {
                         let notches = delta as i32 / WHEEL_DELTA;
                         let lines = notches * SCROLL_LINES_PER_NOTCH;
                         // Positive delta = wheel up = scroll back (increase offset)
-                        let state = self.pane_states.entry(target_pane.clone()).or_insert_with(|| {
-                            PaneMouseState {
-                                scroll_offset: 0,
-                                selection: None,
-                            }
-                        });
+                        let state =
+                            self.pane_states
+                                .entry(target_pane.clone())
+                                .or_insert_with(|| PaneMouseState {
+                                    scroll_offset: 0,
+                                    selection: None,
+                                });
                         state.scroll_offset = (state.scroll_offset + lines).max(0);
                         outputs.push(MouseOutput::ScrollPane(target_pane, state.scroll_offset));
                     }
@@ -597,6 +738,28 @@ pub fn encode_mouse_motion(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+fn inset_pane_rect(
+    rect: PixelRect,
+    cell_width: f32,
+    cell_height: f32,
+    pane_margin_x_cells: f32,
+    pane_margin_y_cells: f32,
+) -> PixelRect {
+    let desired_inset_x = (cell_width * pane_margin_x_cells).max(0.0);
+    let desired_inset_y = (cell_height * pane_margin_y_cells).max(0.0);
+    let max_inset_x = ((rect.width - cell_width).max(0.0)) * 0.5;
+    let max_inset_y = ((rect.height - cell_height).max(0.0)) * 0.5;
+    let inset_x = desired_inset_x.min(max_inset_x);
+    let inset_y = desired_inset_y.min(max_inset_y);
+
+    PixelRect::new(
+        rect.x + inset_x,
+        rect.y + inset_y,
+        (rect.width - inset_x * 2.0).max(cell_width.min(rect.width)),
+        (rect.height - inset_y * 2.0).max(cell_height.min(rect.height)),
+    )
+}
+
 /// Convert pixel coordinates to cell (col, row) within a pane's rectangle.
 fn pixel_to_cell(
     px: f32,
@@ -607,8 +770,10 @@ fn pixel_to_cell(
 ) -> (usize, usize) {
     let local_x = (px - rect.x).max(0.0);
     let local_y = (py - rect.y).max(0.0);
-    let col = (local_x / cell_width) as usize;
-    let row = (local_y / cell_height) as usize;
+    let max_col = ((rect.width / cell_width).ceil() as usize).saturating_sub(1);
+    let max_row = ((rect.height / cell_height).ceil() as usize).saturating_sub(1);
+    let col = ((local_x / cell_width) as usize).min(max_col);
+    let row = ((local_y / cell_height) as usize).min(max_row);
     (col, row)
 }
 
@@ -752,6 +917,14 @@ mod tests {
     }
 
     #[test]
+    fn inset_pane_rect_keeps_one_cell_visible_for_small_panes() {
+        let rect = PixelRect::new(0.0, 0.0, 8.0, 16.0);
+        let inset = inset_pane_rect(rect, 8.0, 16.0, 0.5, 0.5);
+        assert_eq!(inset.width, 8.0);
+        assert_eq!(inset.height, 16.0);
+    }
+
+    #[test]
     fn pixel_to_cell_origin() {
         let rect = PixelRect::new(100.0, 50.0, 400.0, 300.0);
         let (col, row) = pixel_to_cell(100.0, 50.0, rect, 8.0, 16.0);
@@ -765,6 +938,13 @@ mod tests {
         let (col, row) = pixel_to_cell(50.0, 20.0, rect, 8.0, 16.0);
         assert_eq!(col, 0);
         assert_eq!(row, 0);
+    }
+
+    #[test]
+    fn pixel_to_cell_clamps_to_last_visible_cell() {
+        let rect = PixelRect::new(100.0, 50.0, 80.0, 48.0);
+        let (col, row) = pixel_to_cell(500.0, 500.0, rect, 8.0, 16.0);
+        assert_eq!((col, row), (9, 2));
     }
 
     // ── MouseHandler unit tests ─────────────────────────────────────────
@@ -793,10 +973,13 @@ mod tests {
     fn remove_pane_cleans_up() {
         let mut handler = MouseHandler::new();
         let pane = PaneId(1);
-        handler.pane_states.insert(pane.clone(), PaneMouseState {
-            scroll_offset: 5,
-            selection: None,
-        });
+        handler.pane_states.insert(
+            pane.clone(),
+            PaneMouseState {
+                scroll_offset: 5,
+                selection: None,
+            },
+        );
         assert_eq!(handler.scroll_offset(&pane), 5);
         handler.remove_pane(&pane);
         assert_eq!(handler.scroll_offset(&pane), 0);
@@ -806,10 +989,13 @@ mod tests {
     fn reset_scroll_sets_zero() {
         let mut handler = MouseHandler::new();
         let pane = PaneId(1);
-        handler.pane_states.insert(pane.clone(), PaneMouseState {
-            scroll_offset: 10,
-            selection: None,
-        });
+        handler.pane_states.insert(
+            pane.clone(),
+            PaneMouseState {
+                scroll_offset: 10,
+                selection: None,
+            },
+        );
         handler.reset_scroll(&pane);
         assert_eq!(handler.scroll_offset(&pane), 0);
     }
@@ -818,10 +1004,13 @@ mod tests {
     fn clamp_scroll_bounds() {
         let mut handler = MouseHandler::new();
         let pane = PaneId(1);
-        handler.pane_states.insert(pane.clone(), PaneMouseState {
-            scroll_offset: 100,
-            selection: None,
-        });
+        handler.pane_states.insert(
+            pane.clone(),
+            PaneMouseState {
+                scroll_offset: 100,
+                selection: None,
+            },
+        );
         handler.clamp_scroll(&pane, 50);
         assert_eq!(handler.scroll_offset(&pane), 50);
     }
@@ -830,10 +1019,13 @@ mod tests {
     fn clamp_scroll_no_negative() {
         let mut handler = MouseHandler::new();
         let pane = PaneId(1);
-        handler.pane_states.insert(pane.clone(), PaneMouseState {
-            scroll_offset: -5,
-            selection: None,
-        });
+        handler.pane_states.insert(
+            pane.clone(),
+            PaneMouseState {
+                scroll_offset: -5,
+                selection: None,
+            },
+        );
         handler.clamp_scroll(&pane, 50);
         assert_eq!(handler.scroll_offset(&pane), 0);
     }

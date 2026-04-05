@@ -4,4 +4,5 @@ pub mod cli;
 pub mod client;
 pub mod dispatch;
 pub mod exit_code;
+pub mod input_bytes;
 pub mod output;

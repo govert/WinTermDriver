@@ -75,10 +75,7 @@ struct HitRect {
 
 impl HitRect {
     fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -298,12 +295,19 @@ impl TabStrip {
         }
 
         // Measure text widths
-        let text_widths: Vec<f32> = self.tabs.iter().map(|t| self.measure_text(&t.name)).collect();
+        let text_widths: Vec<f32> = self
+            .tabs
+            .iter()
+            .map(|t| self.measure_text(&t.name))
+            .collect();
 
         // Compute tab widths (text + padding + close button)
         let tab_widths: Vec<f32> = text_widths
             .iter()
-            .map(|tw| (tw + 2.0 * TAB_PADDING_H + TAB_CLOSE_SIZE + TAB_CLOSE_MARGIN).clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH))
+            .map(|tw| {
+                (tw + 2.0 * TAB_PADDING_H + TAB_CLOSE_SIZE + TAB_CLOSE_MARGIN)
+                    .clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH)
+            })
             .collect();
 
         let total: f32 = tab_widths.iter().sum::<f32>()
@@ -549,12 +553,10 @@ impl TabStrip {
     fn measure_text(&self, text: &str) -> f32 {
         let utf16: Vec<u16> = text.encode_utf16().collect();
         unsafe {
-            if let Ok(layout) = self.dw_factory.CreateTextLayout(
-                &utf16,
-                &self.tf_tab,
-                1000.0,
-                TAB_STRIP_HEIGHT,
-            ) {
+            if let Ok(layout) =
+                self.dw_factory
+                    .CreateTextLayout(&utf16, &self.tf_tab, 1000.0, TAB_STRIP_HEIGHT)
+            {
                 let mut metrics = DWRITE_TEXT_METRICS::default();
                 if layout.GetMetrics(&mut metrics).is_ok() {
                     return metrics.width;
@@ -574,12 +576,7 @@ impl TabStrip {
         self.zones.len().saturating_sub(1)
     }
 
-    unsafe fn paint_tab(
-        &self,
-        rt: &ID2D1RenderTarget,
-        index: usize,
-        zone: &TabZone,
-    ) -> Result<()> {
+    unsafe fn paint_tab(&self, rt: &ID2D1RenderTarget, index: usize, zone: &TabZone) -> Result<()> {
         let is_active = index == self.active_index;
         let is_hover = self.hover_tab == Some(index) && !is_active;
         let is_dragging = self
@@ -712,28 +709,16 @@ impl TabStrip {
 
         // Horizontal line
         rt.DrawLine(
-            D2D_POINT_2F {
-                x: cx - arm,
-                y: cy,
-            },
-            D2D_POINT_2F {
-                x: cx + arm,
-                y: cy,
-            },
+            D2D_POINT_2F { x: cx - arm, y: cy },
+            D2D_POINT_2F { x: cx + arm, y: cy },
             &brush,
             1.5,
             None,
         );
         // Vertical line
         rt.DrawLine(
-            D2D_POINT_2F {
-                x: cx,
-                y: cy - arm,
-            },
-            D2D_POINT_2F {
-                x: cx,
-                y: cy + arm,
-            },
+            D2D_POINT_2F { x: cx, y: cy - arm },
+            D2D_POINT_2F { x: cx, y: cy + arm },
             &brush,
             1.5,
             None,
@@ -770,19 +755,13 @@ impl TabStrip {
                     x: cx + arm,
                     y: cy - arm,
                 },
-                D2D_POINT_2F {
-                    x: cx - arm,
-                    y: cy,
-                },
+                D2D_POINT_2F { x: cx - arm, y: cy },
                 &arrow_brush,
                 1.5,
                 None,
             );
             rt.DrawLine(
-                D2D_POINT_2F {
-                    x: cx - arm,
-                    y: cy,
-                },
+                D2D_POINT_2F { x: cx - arm, y: cy },
                 D2D_POINT_2F {
                     x: cx + arm,
                     y: cy + arm,
@@ -797,19 +776,13 @@ impl TabStrip {
                     x: cx - arm,
                     y: cy - arm,
                 },
-                D2D_POINT_2F {
-                    x: cx + arm,
-                    y: cy,
-                },
+                D2D_POINT_2F { x: cx + arm, y: cy },
                 &arrow_brush,
                 1.5,
                 None,
             );
             rt.DrawLine(
-                D2D_POINT_2F {
-                    x: cx + arm,
-                    y: cy,
-                },
+                D2D_POINT_2F { x: cx + arm, y: cy },
                 D2D_POINT_2F {
                     x: cx - arm,
                     y: cy + arm,
@@ -823,11 +796,7 @@ impl TabStrip {
         Ok(())
     }
 
-    unsafe fn paint_drag_indicator(
-        &self,
-        rt: &ID2D1RenderTarget,
-        drag: &DragState,
-    ) -> Result<()> {
+    unsafe fn paint_drag_indicator(&self, rt: &ID2D1RenderTarget, drag: &DragState) -> Result<()> {
         let drop_idx = self.drop_index_at(drag.current_x);
         let indicator_x = if drop_idx < self.zones.len() {
             self.zones[drop_idx].rect.x
@@ -852,10 +821,7 @@ impl TabStrip {
 
 // ── Utility ──────────────────────────────────────────────────────────────────
 
-fn make_brush(
-    rt: &ID2D1RenderTarget,
-    color: (u8, u8, u8),
-) -> Result<ID2D1SolidColorBrush> {
+fn make_brush(rt: &ID2D1RenderTarget, color: (u8, u8, u8)) -> Result<ID2D1SolidColorBrush> {
     let c = D2D1_COLOR_F {
         r: color.0 as f32 / 255.0,
         g: color.1 as f32 / 255.0,
@@ -986,7 +952,10 @@ mod tests {
         strip.add_tab("main".into());
         strip.add_tab("logs".into());
         strip.set_active(1);
-        assert_eq!(strip.window_title("MyWorkspace"), "MyWorkspace \u{2014} logs");
+        assert_eq!(
+            strip.window_title("MyWorkspace"),
+            "MyWorkspace \u{2014} logs"
+        );
     }
 
     #[test]

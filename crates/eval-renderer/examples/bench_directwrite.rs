@@ -81,8 +81,7 @@ fn main() -> Result<()> {
     let window_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t1 = Instant::now();
-    let d2d: ID2D1Factory =
-        unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
+    let d2d: ID2D1Factory = unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
     let dw: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
     let factory_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
@@ -418,12 +417,7 @@ fn print_memory() {
     }
 }
 
-unsafe extern "system" fn wndproc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_DESTROY => {
             PostQuitMessage(0);

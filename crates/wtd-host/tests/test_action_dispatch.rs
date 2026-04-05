@@ -29,9 +29,7 @@ fn unique_pipe_name() -> String {
     format!(r"\\.\pipe\wtd-action-test-{}-{}", std::process::id(), n)
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -47,9 +45,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -240,7 +236,11 @@ tabs:
     let panes_resp2 = read_frame(&mut client).await.unwrap();
     assert_eq!(panes_resp2.msg_type, ListPanesResult::TYPE_NAME);
     let panes2: ListPanesResult = panes_resp2.extract_payload().unwrap();
-    assert_eq!(panes2.panes.len(), 2, "split-right should create a second pane");
+    assert_eq!(
+        panes2.panes.len(),
+        2,
+        "split-right should create a second pane"
+    );
 
     // Verify the new pane has a session (listed in ListSessions).
     write_frame(
@@ -403,7 +403,11 @@ tabs:
 
     let sessions_resp = read_frame(&mut client).await.unwrap();
     let sessions: ListSessionsResult = sessions_resp.extract_payload().unwrap();
-    assert_eq!(sessions.sessions.len(), 1, "should have 1 session after close");
+    assert_eq!(
+        sessions.sessions.len(),
+        1,
+        "should have 1 session after close"
+    );
 
     // Tear down
     let _ = shutdown_tx.send(true);

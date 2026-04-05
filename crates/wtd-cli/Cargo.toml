@@ -24,6 +24,9 @@ tracing = { workspace = true }
 wtd-core = { workspace = true }
 wtd-ipc = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
 [dev-dependencies]
 wtd-host = { path = "../wtd-host" }
 wtd-pty = { path = "../wtd-pty" }

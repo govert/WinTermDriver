@@ -47,7 +47,10 @@ bindings:
     let _ = std::fs::remove_dir_all(&dir);
 
     // Preset expanded — no preset marker remains.
-    assert!(eff.preset.is_none(), "effective bindings must have no preset");
+    assert!(
+        eff.preset.is_none(),
+        "effective bindings must have no preset"
+    );
 
     // WT preset is single-stroke only.
     assert!(eff.prefix.is_none(), "WT has no prefix key");
@@ -95,9 +98,7 @@ bindings:
     expect_simple("Shift+Insert", "paste");
 
     // goto-tab: Ctrl+Alt+1 → index "0", Ctrl+Alt+8 → index "7"
-    let goto1 = keys
-        .get("Ctrl+Alt+1")
-        .expect("Ctrl+Alt+1 must be present");
+    let goto1 = keys.get("Ctrl+Alt+1").expect("Ctrl+Alt+1 must be present");
     match goto1 {
         ActionReference::WithArgs { action, args } => {
             assert_eq!(action, "goto-tab");
@@ -107,9 +108,7 @@ bindings:
         other => panic!("expected WithArgs for goto-tab, got {other:?}"),
     }
 
-    let goto8 = keys
-        .get("Ctrl+Alt+8")
-        .expect("Ctrl+Alt+8 must be present");
+    let goto8 = keys.get("Ctrl+Alt+8").expect("Ctrl+Alt+8 must be present");
     match goto8 {
         ActionReference::WithArgs { action, args } => {
             assert_eq!(action, "goto-tab");
@@ -123,7 +122,10 @@ bindings:
     assert!(!keys.contains_key("Ctrl+Alt+9"), "no Ctrl+Alt+9 binding");
 
     // Bindings omitted from the fixture must not appear.
-    assert!(!keys.contains_key("Ctrl+Shift+Up"), "no scroll-line binding");
+    assert!(
+        !keys.contains_key("Ctrl+Shift+Up"),
+        "no scroll-line binding"
+    );
     assert!(!keys.contains_key("Ctrl+Shift+F"), "no find binding");
 }
 
@@ -153,7 +155,11 @@ bindings:
 
     // 10 single-stroke keys
     let keys = eff.keys.as_ref().expect("tmux must have keys");
-    assert_eq!(keys.len(), 10, "tmux preset must have 10 single-stroke keys");
+    assert_eq!(
+        keys.len(),
+        10,
+        "tmux preset must have 10 single-stroke keys"
+    );
     assert_eq!(
         keys.get("Ctrl+Shift+T"),
         Some(&ActionReference::Simple("new-tab".to_string()))
@@ -180,7 +186,9 @@ bindings:
     );
     assert_eq!(
         chords.get("["),
-        Some(&ActionReference::Simple("enter-scrollback-mode".to_string()))
+        Some(&ActionReference::Simple(
+            "enter-scrollback-mode".to_string()
+        ))
     );
 }
 
@@ -334,17 +342,10 @@ bindings:
 
     // WT has 28 keys; two are removed → 26 remain.
     let keys = eff.keys.as_ref().unwrap();
-    assert_eq!(
-        keys.len(),
-        26,
-        "28 WT keys minus 2 removed = 26"
-    );
+    assert_eq!(keys.len(), 26, "28 WT keys minus 2 removed = 26");
 
     // Removed keys must be absent.
-    assert!(
-        !keys.contains_key("F11"),
-        "F11 must be removed"
-    );
+    assert!(!keys.contains_key("F11"), "F11 must be removed");
     assert!(
         !keys.contains_key("Ctrl+Shift+P"),
         "Ctrl+Shift+P must be removed"
@@ -402,7 +403,11 @@ fn default_global_settings_uses_windows_terminal_preset() {
 
     let loaded_eff = effective_bindings(&loaded.bindings);
     let loaded_keys = loaded_eff.keys.as_ref().unwrap();
-    assert_eq!(loaded_keys.len(), 28, "loaded default bindings must expand to 28 keys");
+    assert_eq!(
+        loaded_keys.len(),
+        28,
+        "loaded default bindings must expand to 28 keys"
+    );
 }
 
 // ── Bonus: verify Removed variant round-trips through serde_yaml ──────────────

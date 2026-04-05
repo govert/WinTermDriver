@@ -272,15 +272,16 @@ fn end_to_end_render_does_not_crash() {
 
     let hwnd = create_test_window("e2e");
     let config = RendererConfig::default();
-    let renderer =
-        TerminalRenderer::new(hwnd, &config).expect("renderer creation should succeed");
+    let renderer = TerminalRenderer::new(hwnd, &config).expect("renderer creation should succeed");
 
     let (cell_w, cell_h) = renderer.cell_size();
     assert!(cell_w > 0.0, "Cell width should be positive");
     assert!(cell_h > 0.0, "Cell height should be positive");
 
     renderer.paint(&screen).expect("paint should succeed");
-    renderer.paint(&screen).expect("second paint should succeed");
+    renderer
+        .paint(&screen)
+        .expect("second paint should succeed");
 
     destroy_test_window(hwnd);
 }
@@ -305,7 +306,8 @@ fn render_full_screen_of_colored_text() {
     // Fill every row with colored text.
     for i in 0..24u8 {
         let color = 31 + (i % 7);
-        let line = format!("\x1b[{color}mRow {i:02} filled with colored text padding xxxx\x1b[0m\r\n");
+        let line =
+            format!("\x1b[{color}mRow {i:02} filled with colored text padding xxxx\x1b[0m\r\n");
         screen.advance(line.as_bytes());
     }
 

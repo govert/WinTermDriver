@@ -40,9 +40,7 @@ fn next_id() -> String {
 
 // ── Connection helpers ──────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -58,9 +56,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -235,7 +231,10 @@ struct TestHost {
 }
 
 impl TestHost {
-    async fn start(workspace_name: &str, yaml: &str) -> (Self, tokio::net::windows::named_pipe::NamedPipeClient) {
+    async fn start(
+        workspace_name: &str,
+        yaml: &str,
+    ) -> (Self, tokio::net::windows::named_pipe::NamedPipeClient) {
         let (tmp_dir, yaml_path) = create_workspace_file(workspace_name, yaml);
         let pipe_name = unique_pipe_name();
         let handler = HostRequestHandler::new(GlobalSettings::default());
@@ -243,7 +242,9 @@ impl TestHost {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let s = server.clone();
-        let server_task = tokio::spawn(async move { let _ = s.run(shutdown_rx).await; });
+        let server_task = tokio::spawn(async move {
+            let _ = s.run(shutdown_rx).await;
+        });
 
         let mut client = connect_client(&pipe_name).await;
         do_handshake(&mut client).await;
@@ -320,15 +321,26 @@ tabs:
     );
     let result: InvokeActionResult = resp.extract_payload().unwrap();
     assert_eq!(result.result, "pane-created");
-    let new_pane_num = result.pane_id.clone().expect("split-right should return new pane ID");
+    let new_pane_num = result
+        .pane_id
+        .clone()
+        .expect("split-right should return new pane ID");
     // Split-created panes get auto-generated names like "pane-{id}"
     let new_pane_name = format!("pane-{}", new_pane_num);
 
     let panes = list_panes(&mut client, "gate-act1").await;
-    assert_eq!(panes.panes.len(), 2, "split-right should create a second pane");
+    assert_eq!(
+        panes.panes.len(),
+        2,
+        "split-right should create a second pane"
+    );
 
     let sessions = list_sessions(&mut client, "gate-act1").await;
-    assert_eq!(sessions.sessions.len(), 2, "split-right should spawn a session for the new pane");
+    assert_eq!(
+        sessions.sessions.len(),
+        2,
+        "split-right should spawn a session for the new pane"
+    );
 
     // ── close-pane: layout shrinks back to 1 pane ──
 
@@ -342,7 +354,11 @@ tabs:
     assert_eq!(panes.panes[0].name, "editor", "original pane should remain");
 
     let sessions = list_sessions(&mut client, "gate-act1").await;
-    assert_eq!(sessions.sessions.len(), 1, "close-pane should remove the session");
+    assert_eq!(
+        sessions.sessions.len(),
+        1,
+        "close-pane should remove the session"
+    );
 
     host.shutdown(client).await;
 }
@@ -378,13 +394,65 @@ tabs:
     assert_eq!(resp.msg_type, InvokeActionResult::TYPE_NAME);
     let result: InvokeActionResult = resp.extract_payload().unwrap();
     assert_eq!(result.result, "pane-created");
-    assert!(result.pane_id.is_some(), "split-down should return new pane ID");
+    assert!(
+        result.pane_id.is_some(),
+        "split-down should return new pane ID"
+    );
 
     let panes = list_panes(&mut client, "gate-act2").await;
-    assert_eq!(panes.panes.len(), 2, "split-down should create a second pane");
+    assert_eq!(
+        panes.panes.len(),
+        2,
+        "split-down should create a second pane"
+    );
 
     let sessions = list_sessions(&mut client, "gate-act2").await;
-    assert_eq!(sessions.sessions.len(), 2, "split-down should spawn a session for the new pane");
+    assert_eq!(
+        sessions.sessions.len(),
+        2,
+        "split-down should spawn a session for the new pane"
+    );
+
+    host.shutdown(client).await;
+}
+
+/// InvokeAction accepts canonical workspace/tab/pane targets, which the
+/// command palette can display and round-trip.
+#[tokio::test]
+async fn gate_split_right_accepts_canonical_path_target() {
+    let yaml = r#"
+version: 1
+name: gate-act6
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: shell
+      session:
+        profile: cmd
+        startupCommand: "echo GATE_PATH_READY"
+"#;
+    let (host, mut client) = TestHost::start("gate-act6", yaml).await;
+
+    poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.contains("GATE_PATH_READY"),
+        Duration::from_secs(10),
+    )
+    .await;
+
+    let resp = invoke_action(&mut client, "split-right", Some("gate-act6/main/shell")).await;
+    assert_eq!(resp.msg_type, InvokeActionResult::TYPE_NAME);
+    let result: InvokeActionResult = resp.extract_payload().unwrap();
+    assert_eq!(result.result, "pane-created");
+    assert!(
+        result.pane_id.is_some(),
+        "split-right should return new pane ID"
+    );
+
+    let panes = list_panes(&mut client, "gate-act6").await;
+    assert_eq!(panes.panes.len(), 2, "canonical path target should resolve");
 
     host.shutdown(client).await;
 }
@@ -493,7 +561,11 @@ tabs:
     assert_eq!(panes.panes.len(), 3, "two splits should yield 3 panes");
 
     let sessions = list_sessions(&mut client, "gate-act4").await;
-    assert_eq!(sessions.sessions.len(), 3, "each pane should have a session");
+    assert_eq!(
+        sessions.sessions.len(),
+        3,
+        "each pane should have a session"
+    );
 
     // ── Close pane_b ──
 
@@ -511,11 +583,68 @@ tabs:
     assert_eq!(resp.msg_type, InvokeActionResult::TYPE_NAME);
 
     let panes = list_panes(&mut client, "gate-act4").await;
-    assert_eq!(panes.panes.len(), 1, "closing both splits should leave original pane");
+    assert_eq!(
+        panes.panes.len(),
+        1,
+        "closing both splits should leave original pane"
+    );
     assert_eq!(panes.panes[0].name, "root");
 
     let sessions = list_sessions(&mut client, "gate-act4").await;
-    assert_eq!(sessions.sessions.len(), 1, "only original session should remain");
+    assert_eq!(
+        sessions.sessions.len(),
+        1,
+        "only original session should remain"
+    );
+
+    host.shutdown(client).await;
+}
+
+/// InvokeAction also accepts numeric pane ids, which is what the UI sends
+/// when dispatching palette actions against the focused pane.
+#[tokio::test]
+async fn gate_split_right_accepts_numeric_pane_id_target() {
+    let yaml = r#"
+version: 1
+name: gate-act7
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: root
+      session:
+        profile: cmd
+        startupCommand: "echo GATE_ID_READY"
+"#;
+    let (host, mut client) = TestHost::start("gate-act7", yaml).await;
+
+    poll_capture_until(
+        &mut client,
+        "root",
+        |text| text.contains("GATE_ID_READY"),
+        Duration::from_secs(10),
+    )
+    .await;
+
+    let first = invoke_action(&mut client, "split-right", Some("root")).await;
+    assert_eq!(first.msg_type, InvokeActionResult::TYPE_NAME);
+    let first_result: InvokeActionResult = first.extract_payload().unwrap();
+    let first_new_pane_id = first_result
+        .pane_id
+        .clone()
+        .expect("first split-right should return new pane ID");
+
+    let second = invoke_action(&mut client, "split-right", Some(&first_new_pane_id)).await;
+    assert_eq!(second.msg_type, InvokeActionResult::TYPE_NAME);
+    let second_result: InvokeActionResult = second.extract_payload().unwrap();
+    assert_eq!(second_result.result, "pane-created");
+
+    let panes = list_panes(&mut client, "gate-act7").await;
+    assert_eq!(
+        panes.panes.len(),
+        3,
+        "numeric pane id target should resolve"
+    );
 
     host.shutdown(client).await;
 }

@@ -30,9 +30,7 @@ fn unique_pipe_name() -> String {
     format!(r"\\.\pipe\wtd-file-open-{}-{}", std::process::id(), n)
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -48,9 +46,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -106,7 +102,11 @@ async fn poll_capture_until(
 /// Helper: start a server and return (server, shutdown_tx).
 async fn start_server(
     pipe_name: &str,
-) -> (Arc<IpcServer>, watch::Sender<bool>, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<IpcServer>,
+    watch::Sender<bool>,
+    tokio::task::JoinHandle<()>,
+) {
     let handler = HostRequestHandler::new(GlobalSettings::default());
     let server = Arc::new(IpcServer::new(pipe_name.to_string(), handler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -206,12 +206,9 @@ tabs:
     );
 
     // Verify workspace is listed.
-    write_frame(
-        &mut client,
-        &Envelope::new("list-1", &ListInstances {}),
-    )
-    .await
-    .unwrap();
+    write_frame(&mut client, &Envelope::new("list-1", &ListInstances {}))
+        .await
+        .unwrap();
 
     let list_resp = read_frame(&mut client).await.unwrap();
     let list: ListInstancesResult = list_resp.extract_payload().unwrap();

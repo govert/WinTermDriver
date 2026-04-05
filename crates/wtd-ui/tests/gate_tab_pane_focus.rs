@@ -130,7 +130,10 @@ fn tab_strip_renders_with_multiple_tabs_and_switching() {
 
     // Window title reflects workspace + tab
     let title = tab_strip.window_title("my-workspace");
-    assert!(title.contains("my-workspace"), "title must contain workspace name");
+    assert!(
+        title.contains("my-workspace"),
+        "title must contain workspace name"
+    );
     assert!(title.contains("dev"), "title must contain active tab name");
 
     destroy_test_window(hwnd);
@@ -150,7 +153,11 @@ fn split_panes_render_with_focus_indicator() {
     let pane2 = tree.split_right(pane1.clone()).unwrap();
 
     assert_eq!(tree.pane_count(), 2);
-    assert_eq!(tree.focus(), pane1, "pane1 should remain focused after split");
+    assert_eq!(
+        tree.focus(),
+        pane1,
+        "pane1 should remain focused after split"
+    );
 
     // Compute character-cell rects
     let total = Rect::new(0, 0, 80, 24);
@@ -163,10 +170,17 @@ fn split_panes_render_with_focus_indicator() {
     let mut pane_layout = PaneLayout::new(cell_w, cell_h);
     pane_layout.update(&tree, 0.0, 32.0, 80, 24);
 
-    let pr1 = pane_layout.pane_pixel_rect(&pane1).expect("pane1 must have pixel rect");
-    let pr2 = pane_layout.pane_pixel_rect(&pane2).expect("pane2 must have pixel rect");
+    let pr1 = pane_layout
+        .pane_pixel_rect(&pane1)
+        .expect("pane1 must have pixel rect");
+    let pr2 = pane_layout
+        .pane_pixel_rect(&pane2)
+        .expect("pane2 must have pixel rect");
     assert!(pr1.x < pr2.x, "pane1 should be left of pane2 (split_right)");
-    assert!(pane_layout.splitter_count() > 0, "vertical split must produce a splitter");
+    assert!(
+        pane_layout.splitter_count() > 0,
+        "vertical split must produce a splitter"
+    );
 
     // Screen buffers with content
     let mut screen1 = ScreenBuffer::new(40, 24, 100);
@@ -271,9 +285,7 @@ fn full_composited_frame_tab_strip_and_split_panes() {
     renderer
         .paint_pane_viewport(&screen2, pr2.x, pr2.y, pr2.width, pr2.height, None)
         .unwrap();
-    pane_layout
-        .paint(renderer.render_target(), &pane1)
-        .unwrap();
+    pane_layout.paint(renderer.render_target(), &pane1).unwrap();
     renderer.end_draw().unwrap();
 
     destroy_test_window(hwnd);
@@ -435,10 +447,24 @@ fn horizontal_split_renders_with_focus() {
     renderer.begin_draw();
     renderer.clear_background();
     renderer
-        .paint_pane_viewport(&screen_top, pr_top.x, pr_top.y, pr_top.width, pr_top.height, None)
+        .paint_pane_viewport(
+            &screen_top,
+            pr_top.x,
+            pr_top.y,
+            pr_top.width,
+            pr_top.height,
+            None,
+        )
         .unwrap();
     renderer
-        .paint_pane_viewport(&screen_bot, pr_bot.x, pr_bot.y, pr_bot.width, pr_bot.height, None)
+        .paint_pane_viewport(
+            &screen_bot,
+            pr_bot.x,
+            pr_bot.y,
+            pr_bot.width,
+            pr_bot.height,
+            None,
+        )
         .unwrap();
     pane_layout
         .paint(renderer.render_target(), &top)
@@ -451,10 +477,24 @@ fn horizontal_split_renders_with_focus() {
     renderer.begin_draw();
     renderer.clear_background();
     renderer
-        .paint_pane_viewport(&screen_top, pr_top.x, pr_top.y, pr_top.width, pr_top.height, None)
+        .paint_pane_viewport(
+            &screen_top,
+            pr_top.x,
+            pr_top.y,
+            pr_top.width,
+            pr_top.height,
+            None,
+        )
         .unwrap();
     renderer
-        .paint_pane_viewport(&screen_bot, pr_bot.x, pr_bot.y, pr_bot.width, pr_bot.height, None)
+        .paint_pane_viewport(
+            &screen_bot,
+            pr_bot.x,
+            pr_bot.y,
+            pr_bot.width,
+            pr_bot.height,
+            None,
+        )
         .unwrap();
     pane_layout
         .paint(renderer.render_target(), &bottom)

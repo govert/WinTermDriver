@@ -26,9 +26,7 @@ fn unique_pipe_name() -> String {
     format!(r"\\.\pipe\wtd-attach-snap-{}-{}", std::process::id(), n)
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -44,9 +42,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -105,10 +101,7 @@ async fn poll_capture_until(
 #[tokio::test]
 async fn attach_returns_full_workspace_state() {
     // 1. Write a multi-pane workspace YAML to a temp file.
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "wtd-test-attach-snap-{}",
-        std::process::id()
-    ));
+    let tmp_dir = std::env::temp_dir().join(format!("wtd-test-attach-snap-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let yaml = r#"
@@ -248,11 +241,7 @@ tabs:
     let pane_states = state["paneStates"]
         .as_object()
         .expect("paneStates should be an object");
-    assert_eq!(
-        pane_states.len(),
-        2,
-        "should have 2 pane state entries"
-    );
+    assert_eq!(pane_states.len(), 2, "should have 2 pane state entries");
     for (_pane_id, ps) in pane_states {
         assert_eq!(
             ps["type"], "attached",
@@ -366,10 +355,8 @@ async fn attach_nonexistent_workspace_returns_error() {
 /// Verify AttachWorkspaceResult with a single-pane workspace (simplest case).
 #[tokio::test]
 async fn attach_single_pane_workspace() {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "wtd-test-attach-single-{}",
-        std::process::id()
-    ));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("wtd-test-attach-single-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let yaml = r#"
@@ -507,15 +494,29 @@ fn b64_decode(input: &str) -> Vec<u8> {
         .collect();
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
     for chunk in bytes.chunks(4) {
-        if chunk.len() < 2 { break; }
+        if chunk.len() < 2 {
+            break;
+        }
         let b0 = val(chunk[0]) as u32;
         let b1 = val(chunk[1]) as u32;
-        let b2 = if chunk.len() > 2 { val(chunk[2]) as u32 } else { 0 };
-        let b3 = if chunk.len() > 3 { val(chunk[3]) as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 {
+            val(chunk[2]) as u32
+        } else {
+            0
+        };
+        let b3 = if chunk.len() > 3 {
+            val(chunk[3]) as u32
+        } else {
+            0
+        };
         let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
         out.push(((triple >> 16) & 0xff) as u8);
-        if chunk.len() > 2 { out.push(((triple >> 8) & 0xff) as u8); }
-        if chunk.len() > 3 { out.push((triple & 0xff) as u8); }
+        if chunk.len() > 2 {
+            out.push(((triple >> 8) & 0xff) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push((triple & 0xff) as u8);
+        }
     }
     out
 }
@@ -527,10 +528,8 @@ fn b64_decode(input: &str) -> Vec<u8> {
 /// receive screen content immediately on attach, without waiting for new output.
 #[tokio::test]
 async fn attach_includes_session_screen_snapshots() {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "wtd-test-attach-screens-{}",
-        std::process::id()
-    ));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("wtd-test-attach-screens-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let yaml = r#"
@@ -607,11 +606,17 @@ tabs:
     let session_screens = state["sessionScreens"]
         .as_object()
         .expect("sessionScreens should be an object");
-    assert_eq!(session_screens.len(), 1, "should have 1 session screen entry");
+    assert_eq!(
+        session_screens.len(),
+        1,
+        "should have 1 session screen entry"
+    );
 
     // Decode the VT snapshot and verify it contains the expected text.
     let (_, b64_val) = session_screens.iter().next().unwrap();
-    let b64 = b64_val.as_str().expect("screen snapshot should be a string");
+    let b64 = b64_val
+        .as_str()
+        .expect("screen snapshot should be a string");
     assert!(!b64.is_empty(), "screen snapshot should be non-empty");
 
     let vt_bytes = b64_decode(b64);

@@ -34,8 +34,7 @@ pub fn sid_to_string(sid_bytes: &[u8]) -> String {
         // Large authority — use hex form.
         format!(
             "0x{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            authority[0], authority[1], authority[2],
-            authority[3], authority[4], authority[5],
+            authority[0], authority[1], authority[2], authority[3], authority[4], authority[5],
         )
     } else {
         let val = ((authority[2] as u64) << 24)
@@ -96,8 +95,7 @@ mod win {
             let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
             let psid = token_user.User.Sid;
             let sid_len = GetLengthSid(psid) as usize;
-            let sid_bytes =
-                std::slice::from_raw_parts(psid.0 as *const u8, sid_len).to_vec();
+            let sid_bytes = std::slice::from_raw_parts(psid.0 as *const u8, sid_len).to_vec();
             let sid_str = sid_to_string(&sid_bytes);
 
             Ok((sid_bytes, sid_str))
@@ -148,8 +146,7 @@ mod win {
                 // Security descriptor referencing the ACL.
                 let sd_size = mem::size_of::<SECURITY_DESCRIPTOR>();
                 let mut sd_buf = vec![0u8; sd_size];
-                let psd =
-                    PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr() as *mut c_void);
+                let psd = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr() as *mut c_void);
                 // SECURITY_DESCRIPTOR_REVISION = 1
                 InitializeSecurityDescriptor(psd, 1)?;
                 SetSecurityDescriptorDacl(psd, true, Some(acl_ptr), false)?;
@@ -182,19 +179,12 @@ mod win {
 
         /// Verify the process at the other end of `pipe_handle` runs under the
         /// same Windows user SID as the pipe owner (spec section 28.3).
-        pub fn verify_client_sid(
-            &self,
-            pipe_handle: HANDLE,
-        ) -> Result<bool, PipeSecurityError> {
+        pub fn verify_client_sid(&self, pipe_handle: HANDLE) -> Result<bool, PipeSecurityError> {
             unsafe {
                 let mut client_pid = 0u32;
                 GetNamedPipeClientProcessId(pipe_handle, &mut client_pid)?;
 
-                let proc = OpenProcess(
-                    PROCESS_QUERY_LIMITED_INFORMATION,
-                    false,
-                    client_pid,
-                )?;
+                let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, client_pid)?;
                 let mut tok = HANDLE::default();
                 let r = OpenProcessToken(proc, TOKEN_QUERY, &mut tok);
                 let _ = CloseHandle(proc);

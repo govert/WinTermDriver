@@ -44,7 +44,12 @@ pub struct PixelRect {
 
 impl PixelRect {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     fn contains(&self, px: f32, py: f32) -> bool {
@@ -342,7 +347,11 @@ impl PaneLayout {
             }
             let brush = unsafe {
                 rt.CreateSolidColorBrush(
-                    &rgb_f(PANE_BORDER_COLOR.0, PANE_BORDER_COLOR.1, PANE_BORDER_COLOR.2),
+                    &rgb_f(
+                        PANE_BORDER_COLOR.0,
+                        PANE_BORDER_COLOR.1,
+                        PANE_BORDER_COLOR.2,
+                    ),
                     None,
                 )?
             };
@@ -366,9 +375,8 @@ impl PaneLayout {
             } else {
                 SPLITTER_COLOR
             };
-            let brush = unsafe {
-                rt.CreateSolidColorBrush(&rgb_f(color.0, color.1, color.2), None)?
-            };
+            let brush =
+                unsafe { rt.CreateSolidColorBrush(&rgb_f(color.0, color.1, color.2), None)? };
 
             let half = SPLITTER_THICKNESS / 2.0;
             let d2d_rect = match splitter.orientation {
@@ -420,10 +428,8 @@ impl PaneLayout {
 
     /// Detect splitter positions from pairs of adjacent pane cell rects.
     fn detect_splitters(&mut self, cell_rects: &HashMap<PaneId, Rect>) {
-        let rects: Vec<(PaneId, Rect)> = cell_rects
-            .iter()
-            .map(|(id, r)| (id.clone(), *r))
-            .collect();
+        let rects: Vec<(PaneId, Rect)> =
+            cell_rects.iter().map(|(id, r)| (id.clone(), *r)).collect();
 
         // For vertical splitters (between horizontally split panes):
         // Pane A's right edge == Pane B's left edge, and they overlap vertically.
@@ -447,13 +453,25 @@ impl PaneLayout {
                     let overlap_start = a.y.max(b.y);
                     let overlap_end = (a.y + a.height).min(b.y + b.height);
                     if overlap_start < overlap_end {
-                        v_segments.push((a_right, overlap_start, overlap_end, id_a.clone(), id_b.clone()));
+                        v_segments.push((
+                            a_right,
+                            overlap_start,
+                            overlap_end,
+                            id_a.clone(),
+                            id_b.clone(),
+                        ));
                     }
                 } else if b_right == a.x {
                     let overlap_start = a.y.max(b.y);
                     let overlap_end = (a.y + a.height).min(b.y + b.height);
                     if overlap_start < overlap_end {
-                        v_segments.push((b_right, overlap_start, overlap_end, id_b.clone(), id_a.clone()));
+                        v_segments.push((
+                            b_right,
+                            overlap_start,
+                            overlap_end,
+                            id_b.clone(),
+                            id_a.clone(),
+                        ));
                     }
                 }
 
@@ -465,13 +483,25 @@ impl PaneLayout {
                     let overlap_start = a.x.max(b.x);
                     let overlap_end = (a.x + a.width).min(b.x + b.width);
                     if overlap_start < overlap_end {
-                        h_segments.push((a_bottom, overlap_start, overlap_end, id_a.clone(), id_b.clone()));
+                        h_segments.push((
+                            a_bottom,
+                            overlap_start,
+                            overlap_end,
+                            id_a.clone(),
+                            id_b.clone(),
+                        ));
                     }
                 } else if b_bottom == a.y {
                     let overlap_start = a.x.max(b.x);
                     let overlap_end = (a.x + a.width).min(b.x + b.width);
                     if overlap_start < overlap_end {
-                        h_segments.push((b_bottom, overlap_start, overlap_end, id_b.clone(), id_a.clone()));
+                        h_segments.push((
+                            b_bottom,
+                            overlap_start,
+                            overlap_end,
+                            id_b.clone(),
+                            id_a.clone(),
+                        ));
                     }
                 }
             }
@@ -537,10 +567,7 @@ impl PaneLayout {
     }
 
     /// Merge horizontal splitter segments (same y) into full splitter bars.
-    fn merge_segments_into_splitters_h(
-        &mut self,
-        segments: &[(u16, u16, u16, PaneId, PaneId)],
-    ) {
+    fn merge_segments_into_splitters_h(&mut self, segments: &[(u16, u16, u16, PaneId, PaneId)]) {
         let mut by_pos: HashMap<u16, Vec<(u16, u16, PaneId, PaneId)>> = HashMap::new();
         for (pos, start, end, before, after) in segments {
             by_pos
@@ -612,11 +639,7 @@ impl PaneLayout {
 
 /// Convert (r, g, b) u8 to D2D1_COLOR_F.
 #[cfg(windows)]
-fn rgb_f(
-    r: u8,
-    g: u8,
-    b: u8,
-) -> windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
+fn rgb_f(r: u8, g: u8, b: u8) -> windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
     windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
         r: r as f32 / 255.0,
         g: g as f32 / 255.0,
@@ -767,7 +790,10 @@ mod tests {
         // Move right by one cell width (8px).
         let action = layout.on_mouse_move(328.0, 100.0);
         assert!(action.is_some());
-        if let Some(PaneLayoutAction::Resize { direction, cells, .. }) = action {
+        if let Some(PaneLayoutAction::Resize {
+            direction, cells, ..
+        }) = action
+        {
             assert_eq!(direction, ResizeDirection::GrowRight);
             assert_eq!(cells, 1);
         } else {
@@ -803,7 +829,10 @@ mod tests {
         layout.update(&tree, 0.0, 0.0, 80, 24);
 
         // On the vertical splitter at x=320.
-        assert_eq!(layout.cursor_hint(320.0, 100.0), CursorHint::ResizeHorizontal);
+        assert_eq!(
+            layout.cursor_hint(320.0, 100.0),
+            CursorHint::ResizeHorizontal
+        );
         // Away from splitter.
         assert_eq!(layout.cursor_hint(200.0, 100.0), CursorHint::Arrow);
     }
@@ -886,7 +915,10 @@ mod tests {
         // Move left by one cell width.
         let action = layout.on_mouse_move(312.0, 100.0);
         assert!(action.is_some());
-        if let Some(PaneLayoutAction::Resize { direction, cells, .. }) = action {
+        if let Some(PaneLayoutAction::Resize {
+            direction, cells, ..
+        }) = action
+        {
             assert_eq!(direction, ResizeDirection::ShrinkRight);
             assert_eq!(cells, 1);
         } else {

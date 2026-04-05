@@ -54,11 +54,10 @@ pub fn load_workspace_definition(
     file_path: &str,
     content: &str,
 ) -> Result<WorkspaceDefinition, LoadError> {
-    let def: WorkspaceDefinition =
-        serde_yaml::from_str(content).map_err(|e| LoadError::Parse {
-            file_path: file_path.to_string(),
-            source: e,
-        })?;
+    let def: WorkspaceDefinition = serde_yaml::from_str(content).map_err(|e| LoadError::Parse {
+        file_path: file_path.to_string(),
+        source: e,
+    })?;
 
     let errors = validate(&def);
     if !errors.is_empty() {
@@ -81,6 +80,26 @@ fn validate(def: &WorkspaceDefinition) -> Vec<ValidationError> {
     let mut v = Validator::new(&mut errors);
     v.root(def);
     errors
+}
+
+fn validate_terminal_size(
+    size: &crate::workspace::TerminalSizeDefinition,
+    path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if size.cols == 0 {
+        errors.push(ValidationError {
+            path: format!("{path}.cols"),
+            message: "must be greater than 0".to_string(),
+        });
+    }
+
+    if size.rows == 0 {
+        errors.push(ValidationError {
+            path: format!("{path}.rows"),
+            message: "must be greater than 0".to_string(),
+        });
+    }
 }
 
 struct Validator<'a> {
@@ -107,10 +126,7 @@ impl<'a> Validator<'a> {
     fn root(&mut self, def: &WorkspaceDefinition) {
         // Rule 1: version == 1
         if def.version != 1 {
-            self.push(
-                "version",
-                format!("expected 1, found {}", def.version),
-            );
+            self.push("version", format!("expected 1, found {}", def.version));
         }
 
         // Rule 2: name matches [a-zA-Z0-9_-]{1,64}
@@ -129,6 +145,12 @@ impl<'a> Validator<'a> {
             .as_ref()
             .map(|p| p.keys().cloned().collect())
             .unwrap_or_default();
+
+        if let Some(defaults) = &def.defaults {
+            if let Some(size) = &defaults.terminal_size {
+                validate_terminal_size(size, "defaults.terminalSize", self.errors);
+            }
+        }
 
         if let Some(windows) = &def.windows {
             for (i, w) in windows.iter().enumerate() {
@@ -153,12 +175,7 @@ impl<'a> Validator<'a> {
         }
     }
 
-    fn window(
-        &mut self,
-        w: &WindowDefinition,
-        path: &str,
-        profiles: &HashSet<String>,
-    ) {
+    fn window(&mut self, w: &WindowDefinition, path: &str, profiles: &HashSet<String>) {
         if let Some(name) = &w.name {
             validate_ident(name, &format!("{path}.name"), self.errors);
         }
@@ -180,7 +197,12 @@ impl<'a> Validator<'a> {
 
     fn tab(&mut self, t: &TabDefinition, path: &str, profiles: &HashSet<String>) {
         let mut tab_panes: HashSet<String> = HashSet::new();
-        self.pane_node(&t.layout, &format!("{path}.layout"), profiles, &mut tab_panes);
+        self.pane_node(
+            &t.layout,
+            &format!("{path}.layout"),
+            profiles,
+            &mut tab_panes,
+        );
 
         // Rule 7: focus references an existing pane in this tab
         if let Some(focus) = &t.focus {
@@ -226,6 +248,13 @@ impl<'a> Validator<'a> {
                             self.errors,
                         );
                     }
+                    if let Some(size) = &session.terminal_size {
+                        validate_terminal_size(
+                            size,
+                            &format!("{path}.session.terminalSize"),
+                            self.errors,
+                        );
+                    }
                 }
             }
 
@@ -252,12 +281,7 @@ impl<'a> Validator<'a> {
                 }
 
                 for (i, child) in split.children.iter().enumerate() {
-                    self.pane_node(
-                        child,
-                        &format!("{path}.children[{i}]"),
-                        profiles,
-                        tab_panes,
-                    );
+                    self.pane_node(child, &format!("{path}.children[{i}]"), profiles, tab_panes);
                 }
             }
         }
@@ -275,9 +299,7 @@ fn validate_ident(name: &str, path: &str, errors: &mut Vec<ValidationError>) {
     if !valid {
         errors.push(ValidationError {
             path: path.to_string(),
-            message: format!(
-                "'{name}' must match [a-zA-Z0-9_-]{{1,64}}"
-            ),
+            message: format!("'{name}' must match [a-zA-Z0-9_-]{{1,64}}"),
         });
     }
 }
@@ -291,9 +313,7 @@ fn validate_profile_ref(
     if !defined.contains(name) && !BUILTIN_PROFILES.contains(&name) {
         errors.push(ValidationError {
             path: path.to_string(),
-            message: format!(
-                "profile '{name}' is not defined in profiles or a built-in type"
-            ),
+            message: format!("profile '{name}' is not defined in profiles or a built-in type"),
         });
     }
 }
@@ -489,7 +509,9 @@ windows:
     fn wrong_version_rejected() {
         let yaml = "version: 2\nname: x\ntabs:\n  - name: t\n    layout:\n      type: pane\n      name: p\n";
         let msgs = err_messages(yaml);
-        assert!(msgs.iter().any(|m| m.contains("version") || m.contains("expected 1")));
+        assert!(msgs
+            .iter()
+            .any(|m| m.contains("version") || m.contains("expected 1")));
     }
 
     // ── Rule 2: name format ───────────────────────────────────────────────────
@@ -767,7 +789,11 @@ tabs:
 "#;
         match load_workspace_definition("test.yaml", yaml) {
             Err(LoadError::Validation { errors, .. }) => {
-                assert!(errors.len() >= 2, "expected at least 2 errors, got {}", errors.len());
+                assert!(
+                    errors.len() >= 2,
+                    "expected at least 2 errors, got {}",
+                    errors.len()
+                );
             }
             other => panic!("unexpected result: {other:?}"),
         }

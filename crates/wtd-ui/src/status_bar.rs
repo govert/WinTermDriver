@@ -225,7 +225,14 @@ impl StatusBar {
 
             // 1. Workspace name (bold, accent color)
             if !self.workspace_name.is_empty() {
-                let w = self.draw_text(rt, &self.workspace_name, x, y, &self.tf_bold, WORKSPACE_COLOR)?;
+                let w = self.draw_text(
+                    rt,
+                    &self.workspace_name,
+                    x,
+                    y,
+                    &self.tf_bold,
+                    WORKSPACE_COLOR,
+                )?;
                 x += w + SEGMENT_GAP;
             }
 
@@ -258,7 +265,14 @@ impl StatusBar {
                 self.draw_separator(rt, state_x - SEPARATOR_MARGIN, y)?;
             }
 
-            self.draw_text(rt, &state_label, state_x, y, &self.tf_regular, self.session_status.color())?;
+            self.draw_text(
+                rt,
+                &state_label,
+                state_x,
+                y,
+                &self.tf_regular,
+                self.session_status.color(),
+            )?;
         }
 
         Ok(())
@@ -284,7 +298,14 @@ impl StatusBar {
             right: x + self.available_width, // large enough
             bottom: y + STATUS_BAR_HEIGHT,
         };
-        rt.DrawText(&utf16, format, &rect, &brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        rt.DrawText(
+            &utf16,
+            format,
+            &rect,
+            &brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
         Ok(self.measure_text_with(text, format))
     }
 
@@ -294,7 +315,10 @@ impl StatusBar {
         let margin = 5.0;
         rt.DrawLine(
             D2D_POINT_2F { x, y: y + margin },
-            D2D_POINT_2F { x, y: y + STATUS_BAR_HEIGHT - margin },
+            D2D_POINT_2F {
+                x,
+                y: y + STATUS_BAR_HEIGHT - margin,
+            },
             &brush,
             1.0,
             None,
@@ -348,12 +372,10 @@ impl StatusBar {
     fn measure_text_with(&self, text: &str, format: &IDWriteTextFormat) -> f32 {
         let utf16: Vec<u16> = text.encode_utf16().collect();
         unsafe {
-            if let Ok(layout) = self.dw_factory.CreateTextLayout(
-                &utf16,
-                format,
-                1000.0,
-                STATUS_BAR_HEIGHT,
-            ) {
+            if let Ok(layout) =
+                self.dw_factory
+                    .CreateTextLayout(&utf16, format, 1000.0, STATUS_BAR_HEIGHT)
+            {
                 let mut metrics = DWRITE_TEXT_METRICS::default();
                 if layout.GetMetrics(&mut metrics).is_ok() {
                     return metrics.width;
@@ -366,10 +388,7 @@ impl StatusBar {
 
 // ── Module-level helpers ─────────────────────────────────────────────────────
 
-fn make_brush(
-    rt: &ID2D1RenderTarget,
-    color: (u8, u8, u8),
-) -> Result<ID2D1SolidColorBrush> {
+fn make_brush(rt: &ID2D1RenderTarget, color: (u8, u8, u8)) -> Result<ID2D1SolidColorBrush> {
     let c = D2D1_COLOR_F {
         r: color.0 as f32 / 255.0,
         g: color.1 as f32 / 255.0,
@@ -422,7 +441,10 @@ mod tests {
     fn set_session_status() {
         let mut bar = make_bar();
         bar.set_session_status(SessionStatus::Exited { exit_code: 1 });
-        assert_eq!(bar.session_status(), &SessionStatus::Exited { exit_code: 1 });
+        assert_eq!(
+            bar.session_status(),
+            &SessionStatus::Exited { exit_code: 1 }
+        );
     }
 
     #[test]
@@ -449,7 +471,10 @@ mod tests {
         assert_eq!(SessionStatus::Exited { exit_code: 0 }.label(), "exited (0)");
         assert_eq!(SessionStatus::Exited { exit_code: 1 }.label(), "exited (1)");
         assert_eq!(
-            SessionStatus::Failed { error: "spawn failed".to_string() }.label(),
+            SessionStatus::Failed {
+                error: "spawn failed".to_string()
+            }
+            .label(),
             "failed: spawn failed"
         );
         assert_eq!(
@@ -461,10 +486,22 @@ mod tests {
     #[test]
     fn session_status_colors() {
         assert_eq!(SessionStatus::Running.color(), STATE_RUNNING_COLOR);
-        assert_eq!(SessionStatus::Exited { exit_code: 0 }.color(), STATE_EXITED_COLOR);
-        assert_eq!(SessionStatus::Failed { error: String::new() }.color(), STATE_FAILED_COLOR);
+        assert_eq!(
+            SessionStatus::Exited { exit_code: 0 }.color(),
+            STATE_EXITED_COLOR
+        );
+        assert_eq!(
+            SessionStatus::Failed {
+                error: String::new()
+            }
+            .color(),
+            STATE_FAILED_COLOR
+        );
         assert_eq!(SessionStatus::Creating.color(), STATE_CREATING_COLOR);
-        assert_eq!(SessionStatus::Restarting { attempt: 1 }.color(), STATE_CREATING_COLOR);
+        assert_eq!(
+            SessionStatus::Restarting { attempt: 1 }.color(),
+            STATE_CREATING_COLOR
+        );
     }
 
     #[test]

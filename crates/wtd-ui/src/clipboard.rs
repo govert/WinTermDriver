@@ -123,7 +123,8 @@ const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
 /// Wrap raw bytes in bracketed-paste markers.
 pub fn wrap_bracketed_paste(data: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(BRACKETED_PASTE_START.len() + data.len() + BRACKETED_PASTE_END.len());
+    let mut result =
+        Vec::with_capacity(BRACKETED_PASTE_START.len() + data.len() + BRACKETED_PASTE_END.len());
     result.extend_from_slice(BRACKETED_PASTE_START);
     result.extend_from_slice(data);
     result.extend_from_slice(BRACKETED_PASTE_END);
@@ -184,8 +185,8 @@ mod win32 {
             let result = (|| -> Result<(), ClipboardError> {
                 let _ = EmptyClipboard();
 
-                let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len)
-                    .map_err(|_| ClipboardError::Alloc)?;
+                let hmem =
+                    GlobalAlloc(GMEM_MOVEABLE, byte_len).map_err(|_| ClipboardError::Alloc)?;
 
                 let ptr = GlobalLock(hmem);
                 if ptr.is_null() {
@@ -193,11 +194,7 @@ mod win32 {
                     return Err(ClipboardError::Lock);
                 }
 
-                std::ptr::copy_nonoverlapping(
-                    wide.as_ptr() as *const u8,
-                    ptr as *mut u8,
-                    byte_len,
-                );
+                std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr as *mut u8, byte_len);
                 let _ = GlobalUnlock(hmem);
 
                 // SetClipboardData takes ownership of the memory handle.
@@ -223,8 +220,8 @@ mod win32 {
             }
 
             let result = (|| -> Result<String, ClipboardError> {
-                let handle = GetClipboardData(CF_UNICODETEXT)
-                    .map_err(|_| ClipboardError::NoText)?;
+                let handle =
+                    GetClipboardData(CF_UNICODETEXT).map_err(|_| ClipboardError::NoText)?;
 
                 // The HANDLE from GetClipboardData is an HGLOBAL.
                 let hmem = HGLOBAL(handle.0);

@@ -312,7 +312,13 @@ impl RequestHandler for PerfHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -322,9 +328,7 @@ impl RequestHandler for PerfHandler {
 
 // ── IPC helpers ──────────────────────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -340,9 +344,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -407,9 +409,8 @@ async fn poll_capture_until(
 #[tokio::test]
 async fn capture_response_under_100ms() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), PerfHandler::new()).unwrap(),
-    );
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), PerfHandler::new()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -557,7 +558,11 @@ fn keystroke_to_echo_under_50ms() {
         "§30.1: keystroke-to-echo {:?} exceeds {:?} target ({})",
         elapsed,
         max_latency,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
     );
 
     session.stop();
@@ -589,9 +594,8 @@ fn wait_for_output(
 #[tokio::test]
 async fn workspace_open_5_sessions_under_2s() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), PerfHandler::new()).unwrap(),
-    );
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), PerfHandler::new()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -707,7 +711,11 @@ fn screen_buffer_throughput_100mbps() {
         throughput_mbps,
         total_bytes,
         elapsed,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
     );
 
     // §30.2: 100 MB/s in release; 5 MB/s floor in debug (no catastrophic regression)
@@ -717,7 +725,11 @@ fn screen_buffer_throughput_100mbps() {
         "§30.2: throughput {:.1} MB/s below {:.0} MB/s target ({})",
         throughput_mbps,
         min_throughput,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
     );
 }
 

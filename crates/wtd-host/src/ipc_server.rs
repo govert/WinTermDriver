@@ -148,10 +148,7 @@ impl IpcServer {
     ///
     /// The pipe is created with a DACL granting access only to the current user.
     #[cfg(windows)]
-    pub fn new(
-        pipe_name: String,
-        handler: impl RequestHandler,
-    ) -> Result<Self, ServerError> {
+    pub fn new(pipe_name: String, handler: impl RequestHandler) -> Result<Self, ServerError> {
         let security = PipeSecurity::new()?;
         Ok(Self {
             pipe_name,
@@ -211,10 +208,7 @@ impl IpcServer {
     /// Spawns a tokio task for each accepted connection. Existing connections
     /// continue until the client disconnects or the runtime shuts down.
     #[cfg(windows)]
-    pub async fn run(
-        &self,
-        mut shutdown_rx: watch::Receiver<bool>,
-    ) -> Result<(), ServerError> {
+    pub async fn run(&self, mut shutdown_rx: watch::Receiver<bool>) -> Result<(), ServerError> {
         let mut first_instance = true;
         loop {
             let server = self.create_pipe_instance(first_instance)?;
@@ -244,10 +238,7 @@ impl IpcServer {
     }
 
     #[cfg(windows)]
-    fn create_pipe_instance(
-        &self,
-        first: bool,
-    ) -> Result<NamedPipeServer, ServerError> {
+    fn create_pipe_instance(&self, first: bool) -> Result<NamedPipeServer, ServerError> {
         let server = unsafe {
             ServerOptions::new()
                 .first_pipe_instance(first)
@@ -274,10 +265,7 @@ impl IpcServer {
                 match security.verify_client_sid(handle) {
                     Ok(true) => {}
                     Ok(false) => {
-                        eprintln!(
-                            "wtd-host: client {} SID mismatch, rejecting",
-                            client_id
-                        );
+                        eprintln!("wtd-host: client {} SID mismatch, rejecting", client_id);
                         return;
                     }
                     Err(e) => {
@@ -296,9 +284,7 @@ impl IpcServer {
                 reg.register(client_id, frame_tx);
             }
 
-            let _ =
-                run_connection(client_id, pipe, frame_rx, clients.clone(), handler)
-                    .await;
+            let _ = run_connection(client_id, pipe, frame_rx, clients.clone(), handler).await;
 
             {
                 let mut reg = clients.lock().await;
@@ -439,9 +425,7 @@ fn make_error_envelope(id: &str, code: ErrorCode, message: &str) -> Envelope {
 // ── Async frame I/O ────────────────────────────────────────────────────
 
 /// Read one length-prefixed frame from an async reader (spec section 13.4).
-pub async fn read_frame(
-    reader: &mut (impl AsyncReadExt + Unpin),
-) -> Result<Envelope, IpcError> {
+pub async fn read_frame(reader: &mut (impl AsyncReadExt + Unpin)) -> Result<Envelope, IpcError> {
     let mut len_buf = [0u8; 4];
     reader.read_exact(&mut len_buf).await?;
     let len = u32::from_le_bytes(len_buf) as usize;

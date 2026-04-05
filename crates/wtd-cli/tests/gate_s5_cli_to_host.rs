@@ -31,7 +31,11 @@ use wtd_ipc::Envelope;
 static PIPE_COUNTER: AtomicU64 = AtomicU64::new(15000);
 
 fn unique_pipe_name(instance_num: u64) -> String {
-    format!(r"\\.\pipe\wtd-gate-s5-{}-{}", std::process::id(), instance_num)
+    format!(
+        r"\\.\pipe\wtd-gate-s5-{}-{}",
+        std::process::id(),
+        instance_num
+    )
 }
 
 static MSG_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -149,7 +153,14 @@ async fn poll_capture_until(
     let start = tokio::time::Instant::now();
     let mut last_text = String::new();
     while start.elapsed() < timeout {
-        let resp = request(client, &Capture { target: target.to_string(), ..Default::default() }).await;
+        let resp = request(
+            client,
+            &Capture {
+                target: target.to_string(),
+                ..Default::default()
+            },
+        )
+        .await;
         if resp.msg_type == CaptureResult::TYPE_NAME {
             let cap: CaptureResult = resp.extract_payload().unwrap();
             last_text = cap.text;
@@ -240,7 +251,10 @@ async fn s5_cli_to_host_full_round_trip() {
     // Verify CLI capture output formatting.
     let cap_resp = request(
         &mut client,
-        &Capture { target: "shell".to_string(), ..Default::default() },
+        &Capture {
+            target: "shell".to_string(),
+            ..Default::default()
+        },
     )
     .await;
     let cap_out = output::format_response(&cap_resp, false);
@@ -273,7 +287,9 @@ async fn s5_cli_to_host_full_round_trip() {
     // ── 6. List panes ───────────────────────────────────────────────
     let panes_resp = request(
         &mut client,
-        &ListPanes { workspace: "s5-test".to_string() },
+        &ListPanes {
+            workspace: "s5-test".to_string(),
+        },
     )
     .await;
     assert_eq!(panes_resp.msg_type, ListPanesResult::TYPE_NAME);
@@ -296,7 +312,9 @@ async fn s5_cli_to_host_full_round_trip() {
     // ── 7. List sessions ────────────────────────────────────────────
     let sessions_resp = request(
         &mut client,
-        &ListSessions { workspace: "s5-test".to_string() },
+        &ListSessions {
+            workspace: "s5-test".to_string(),
+        },
     )
     .await;
     assert_eq!(sessions_resp.msg_type, ListSessionsResult::TYPE_NAME);
@@ -313,7 +331,9 @@ async fn s5_cli_to_host_full_round_trip() {
     // ── 8. Inspect ──────────────────────────────────────────────────
     let inspect_resp = request(
         &mut client,
-        &Inspect { target: "shell".to_string() },
+        &Inspect {
+            target: "shell".to_string(),
+        },
     )
     .await;
     assert_eq!(inspect_resp.msg_type, InspectResult::TYPE_NAME);
@@ -484,7 +504,9 @@ async fn s5_json_output_mode() {
     // List panes in JSON.
     let panes_resp = request(
         &mut client,
-        &ListPanes { workspace: "s5-test".to_string() },
+        &ListPanes {
+            workspace: "s5-test".to_string(),
+        },
     )
     .await;
     let panes_json = output::format_response(&panes_resp, true);
@@ -495,7 +517,9 @@ async fn s5_json_output_mode() {
     // Inspect in JSON.
     let inspect_resp = request(
         &mut client,
-        &Inspect { target: "shell".to_string() },
+        &Inspect {
+            target: "shell".to_string(),
+        },
     )
     .await;
     let inspect_json = output::format_response(&inspect_resp, true);

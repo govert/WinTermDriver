@@ -150,8 +150,7 @@ fn m3_rendering_spike_acceptance() {
         "M3 criterion 3: Decision document must contain a GO/Accepted verdict"
     );
     assert!(
-        doc_content.contains("Win32 + DirectWrite")
-            && doc_content.contains("selected"),
+        doc_content.contains("Win32 + DirectWrite") && doc_content.contains("selected"),
         "M3 criterion 3: Win32 + DirectWrite must be the selected technology"
     );
 

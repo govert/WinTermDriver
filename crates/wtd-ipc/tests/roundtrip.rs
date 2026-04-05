@@ -19,7 +19,10 @@ fn roundtrip<P: MessagePayload + std::fmt::Debug + Clone + PartialEq>(payload: P
     let raw: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(raw["type"].as_str().unwrap(), P::TYPE_NAME);
     assert_eq!(raw["id"].as_str().unwrap(), "test-uuid-001");
-    assert!(raw.get("payload").is_some(), "payload field must be present");
+    assert!(
+        raw.get("payload").is_some(),
+        "payload field must be present"
+    );
 
     // Deserialize back.
     let back: Envelope = serde_json::from_str(&json).unwrap();
@@ -307,6 +310,14 @@ fn session_input_roundtrip() {
 }
 
 #[test]
+fn pane_input_roundtrip() {
+    roundtrip(PaneInput {
+        target: "dev/editor".into(),
+        data: "G1s8MzU7NDA7MTJN".into(),
+    });
+}
+
+#[test]
 fn pane_resize_roundtrip() {
     roundtrip(PaneResize {
         pane_id: "pane-1".into(),
@@ -375,7 +386,10 @@ fn error_codes_roundtrip() {
         (ErrorCode::TargetNotFound, "target-not-found"),
         (ErrorCode::TargetAmbiguous, "target-ambiguous"),
         (ErrorCode::WorkspaceNotFound, "workspace-not-found"),
-        (ErrorCode::WorkspaceAlreadyExists, "workspace-already-exists"),
+        (
+            ErrorCode::WorkspaceAlreadyExists,
+            "workspace-already-exists",
+        ),
         (ErrorCode::InvalidAction, "invalid-action"),
         (ErrorCode::InvalidArgument, "invalid-argument"),
         (ErrorCode::SessionFailed, "session-failed"),
@@ -529,11 +543,7 @@ fn capture_result_legacy_json_deserializes() {
 #[test]
 fn scrollback_result_roundtrip() {
     roundtrip(ScrollbackResult {
-        lines: vec![
-            "line 1".into(),
-            "line 2".into(),
-            "line 3".into(),
-        ],
+        lines: vec!["line 1".into(), "line 2".into(), "line 3".into()],
     });
 }
 
@@ -643,28 +653,37 @@ fn parse_envelope_dispatches_all_types() {
     use wtd_ipc::TypedMessage;
 
     // Handshake
-    let env = Envelope::new("id-1", &Handshake {
-        client_type: ClientType::Cli,
-        client_version: "1.0.0".into(),
-        protocol_version: 1,
-    });
+    let env = Envelope::new(
+        "id-1",
+        &Handshake {
+            client_type: ClientType::Cli,
+            client_version: "1.0.0".into(),
+            protocol_version: 1,
+        },
+    );
     let parsed = parse_envelope(&env).unwrap();
     assert!(matches!(parsed, TypedMessage::Handshake(_)));
 
     // Error
-    let env = Envelope::new("id-2", &ErrorResponse {
-        code: ErrorCode::TargetAmbiguous,
-        message: "ambiguous".into(),
-        candidates: Some(vec!["a".into(), "b".into()]),
-    });
+    let env = Envelope::new(
+        "id-2",
+        &ErrorResponse {
+            code: ErrorCode::TargetAmbiguous,
+            message: "ambiguous".into(),
+            candidates: Some(vec!["a".into(), "b".into()]),
+        },
+    );
     let parsed = parse_envelope(&env).unwrap();
     assert!(matches!(parsed, TypedMessage::ErrorResponse(_)));
 
     // SessionOutput
-    let env = Envelope::new("id-3", &SessionOutput {
-        session_id: "s1".into(),
-        data: "AA==".into(),
-    });
+    let env = Envelope::new(
+        "id-3",
+        &SessionOutput {
+            session_id: "s1".into(),
+            data: "AA==".into(),
+        },
+    );
     let parsed = parse_envelope(&env).unwrap();
     assert!(matches!(parsed, TypedMessage::SessionOutput(_)));
 }
@@ -689,9 +708,12 @@ fn parse_envelope_unknown_type() {
 #[test]
 fn wire_format_matches_spec() {
     // Verify the JSON structure exactly matches §13.5 envelope.
-    let env = Envelope::new("req-1", &ListPanes {
-        workspace: "dev".into(),
-    });
+    let env = Envelope::new(
+        "req-1",
+        &ListPanes {
+            workspace: "dev".into(),
+        },
+    );
     let json: serde_json::Value = serde_json::to_value(&env).unwrap();
 
     assert_eq!(json["id"], "req-1");
@@ -709,14 +731,17 @@ fn wire_format_matches_spec() {
 #[test]
 fn error_response_wire_format() {
     // Verify error response matches §13.8 example.
-    let env = Envelope::new("req-1", &ErrorResponse {
-        code: ErrorCode::TargetNotFound,
-        message: "No pane named 'editor' in workspace 'dev'".into(),
-        candidates: Some(vec![
-            "dev/backend/editor".into(),
-            "dev/ops/prod-shell".into(),
-        ]),
-    });
+    let env = Envelope::new(
+        "req-1",
+        &ErrorResponse {
+            code: ErrorCode::TargetNotFound,
+            message: "No pane named 'editor' in workspace 'dev'".into(),
+            candidates: Some(vec![
+                "dev/backend/editor".into(),
+                "dev/ops/prod-shell".into(),
+            ]),
+        },
+    );
     let json: serde_json::Value = serde_json::to_value(&env).unwrap();
 
     assert_eq!(json["type"], "Error");

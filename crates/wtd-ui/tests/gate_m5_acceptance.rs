@@ -179,6 +179,7 @@ fn action_name(action: &ActionReference) -> &str {
     match action {
         ActionReference::Simple(s) => s.as_str(),
         ActionReference::WithArgs { action, .. } => action.as_str(),
+        ActionReference::Removed => "",
     }
 }
 
@@ -394,7 +395,13 @@ impl RequestHandler for M5Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -467,8 +474,7 @@ async fn m5_interactive_workspace_acceptance() {
     // ── Start IPC server and connect as UI client ────────────────────
     let pipe_name = unique_pipe_name();
     let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), M5Handler::new())
-            .expect("M5: IPC server must start"),
+        IpcServer::new(pipe_name.clone(), M5Handler::new()).expect("M5: IPC server must start"),
     );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -625,11 +631,7 @@ async fn m5_interactive_workspace_acceptance() {
     // ══════════════════════════════════════════════════════════════════
 
     // Ctrl+Shift+T → new-tab (single-stroke binding)
-    let ctrl_shift_t = make_key(
-        KeyName::Char('T'),
-        Modifiers::CTRL | Modifiers::SHIFT,
-        None,
-    );
+    let ctrl_shift_t = make_key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
     let result = psm.process(&ctrl_shift_t);
     match &result {
         PrefixOutput::DispatchAction(action) => {
@@ -866,8 +868,7 @@ async fn m5_interactive_workspace_acceptance() {
     );
     let bracketed = prepare_paste("pasted text", paste_screen.bracketed_paste());
     assert_eq!(
-        bracketed,
-        b"\x1b[200~pasted text\x1b[201~",
+        bracketed, b"\x1b[200~pasted text\x1b[201~",
         "M5 criterion 5: paste must be wrapped in bracketed paste markers"
     );
 
@@ -878,8 +879,7 @@ async fn m5_interactive_workspace_acceptance() {
     );
     let plain = prepare_paste("pasted text", paste_screen.bracketed_paste());
     assert_eq!(
-        plain,
-        b"pasted text",
+        plain, b"pasted text",
         "M5 criterion 5: paste without bracketed mode must be raw bytes"
     );
 
@@ -1034,14 +1034,7 @@ async fn m5_interactive_workspace_acceptance() {
         .expect("M5: tab strip must render");
 
     renderer
-        .paint_pane_viewport(
-            &screen1,
-            pr1.x,
-            pr1.y,
-            pr1.width,
-            pr1.height,
-            Some(&sel),
-        )
+        .paint_pane_viewport(&screen1, pr1.x, pr1.y, pr1.width, pr1.height, Some(&sel))
         .expect("M5: editor pane viewport with selection must render");
 
     renderer

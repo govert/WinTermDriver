@@ -23,10 +23,7 @@ const POLL_INTERVAL_MS: u64 = 50;
 /// An event to broadcast to UI clients.
 pub enum BroadcastEvent {
     /// Raw VT bytes produced by a session.
-    Output {
-        session_id: String,
-        data: Vec<u8>,
-    },
+    Output { session_id: String, data: Vec<u8> },
     /// Session state transition (e.g. running → exited).
     StateChanged {
         session_id: String,
@@ -34,10 +31,7 @@ pub enum BroadcastEvent {
         exit_code: Option<i32>,
     },
     /// Session window title changed via VT escape sequence.
-    TitleChange {
-        session_id: String,
-        title: String,
-    },
+    TitleChange { session_id: String, title: String },
 }
 
 /// Run the output broadcaster loop.
@@ -108,8 +102,7 @@ pub async fn run(
 
 // ── Base64 encode ────────────────────────────────────────────────────────
 
-const BASE64_CHARS: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn encode_base64(data: &[u8]) -> String {
     let mut result = String::with_capacity((data.len() + 2) / 3 * 4);

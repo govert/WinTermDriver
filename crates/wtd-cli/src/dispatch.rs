@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::cli::{Cli, Command, HostCommand, ListCommand};
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
+use crate::input_bytes::{encode_input_payload, InputEncoding};
 use crate::output::{self, OutputResult};
 use wtd_ipc::connect;
 use wtd_ipc::message::{
@@ -29,6 +30,13 @@ fn resolve_timeout(cli_timeout: Option<f64>) -> Duration {
         Some(secs) if secs > 0.0 => Duration::from_secs_f64(secs),
         _ => DEFAULT_TIMEOUT,
     }
+}
+
+fn request_cwd() -> String {
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Run the CLI command: connect to host, send request, format response.
@@ -54,9 +62,13 @@ pub async fn run(cli: Cli) -> i32 {
     client.set_timeout(timeout);
 
     let envelope = match build_request(&cli.command) {
-        Some(env) => env,
-        None => {
+        Ok(Some(env)) => env,
+        Ok(None) => {
             eprintln!("wtd: command not yet implemented");
+            return exit_code::GENERAL_ERROR;
+        }
+        Err(e) => {
+            eprintln!("wtd: {e}");
             return exit_code::GENERAL_ERROR;
         }
     };
@@ -76,33 +88,37 @@ pub async fn run(cli: Cli) -> i32 {
 
 // ── Request building ─────────────────────────────────────────────────
 
-fn build_request(command: &Command) -> Option<Envelope> {
+fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
     let id = next_id();
-    match command {
+    Ok(match command {
         Command::Open {
             name,
             file,
             recreate,
-        } => Some(Envelope::new(
-            &id,
-            &OpenWorkspace {
-                name: name.clone(),
-                file: file.as_ref().map(|p| p.to_string_lossy().to_string()),
-                recreate: *recreate,
-            },
-        )),
+        } => Some(Envelope {
+            id,
+            msg_type: OpenWorkspace::TYPE_NAME.to_string(),
+            payload: serde_json::json!({
+                "name": name,
+                "file": file.as_ref().map(|p| p.to_string_lossy().to_string()),
+                "recreate": recreate,
+                "cwd": request_cwd(),
+            }),
+        }),
         Command::Attach { name } => Some(Envelope::new(
             &id,
             &AttachWorkspace {
                 workspace: name.clone(),
             },
         )),
-        Command::Recreate { name } => Some(Envelope::new(
-            &id,
-            &RecreateWorkspace {
-                workspace: name.clone(),
-            },
-        )),
+        Command::Recreate { name } => Some(Envelope {
+            id,
+            msg_type: RecreateWorkspace::TYPE_NAME.to_string(),
+            payload: serde_json::json!({
+                "workspace": name,
+                "cwd": request_cwd(),
+            }),
+        }),
         Command::Close { name, kill } => Some(Envelope::new(
             &id,
             &CloseWorkspace {
@@ -118,7 +134,13 @@ fn build_request(command: &Command) -> Option<Envelope> {
             },
         )),
         Command::List { what } => match what {
-            ListCommand::Workspaces => Some(Envelope::new(&id, &ListWorkspaces {})),
+            ListCommand::Workspaces => Some(Envelope {
+                id,
+                msg_type: ListWorkspaces::TYPE_NAME.to_string(),
+                payload: serde_json::json!({
+                    "cwd": request_cwd(),
+                }),
+            }),
             ListCommand::Instances => Some(Envelope::new(&id, &ListInstances {})),
             ListCommand::Panes { workspace } => Some(Envelope::new(
                 &id,
@@ -152,20 +174,58 @@ fn build_request(command: &Command) -> Option<Envelope> {
                 keys: key_specs.clone(),
             },
         )),
-        Command::Capture { target, lines, all, after, after_regex, max_lines, count } => {
+        Command::Input {
+            target,
+            data,
+            escape,
+            hex,
+            base64,
+        } => {
+            let encoding = if *escape {
+                InputEncoding::Escaped
+            } else if *hex {
+                InputEncoding::Hex
+            } else if *base64 {
+                InputEncoding::Base64
+            } else {
+                InputEncoding::Utf8
+            };
+            let encoded = encode_input_payload(data, encoding).map_err(|e| e.to_string())?;
             Some(Envelope::new(
                 &id,
-                &Capture {
+                &message::PaneInput {
                     target: target.clone(),
-                    lines: *lines,
-                    all: if *all { Some(true) } else { None },
-                    after: after.clone(),
-                    after_regex: after_regex.clone(),
-                    max_lines: *max_lines,
-                    count: if *count { Some(true) } else { None },
+                    data: encoded,
                 },
             ))
         }
+        Command::Capture {
+            target,
+            lines,
+            all,
+            after,
+            after_regex,
+            max_lines,
+            count,
+        } => Some(Envelope::new(
+            &id,
+            &Capture {
+                target: target.clone(),
+                lines: *lines,
+                all: if *all { Some(true) } else { None },
+                after: after.clone(),
+                after_regex: after_regex.clone(),
+                max_lines: *max_lines,
+                count: if *count { Some(true) } else { None },
+            },
+        )),
+        Command::Snapshot { name, file } => Some(Envelope::new(
+            &id,
+            &SaveWorkspace {
+                workspace: name.clone(),
+                file: file.as_ref().map(|path| path.to_string_lossy().to_string()),
+            },
+        )),
         Command::Scrollback { target, tail } => Some(Envelope::new(
             &id,
             &Scrollback {
@@ -218,7 +278,7 @@ fn build_request(command: &Command) -> Option<Envelope> {
             ))
         }
         Command::Follow { .. } | Command::Host { .. } | Command::Completions { .. } => None,
-    }
+    })
 }
 
 // ── Follow (streaming) ──────────────────────────────────────────────
@@ -328,10 +388,141 @@ fn run_host_command(action: &HostCommand, json_mode: bool) -> i32 {
             }
         }
         HostCommand::Stop => {
-            eprintln!("wtd: host stop not yet implemented");
-            exit_code::GENERAL_ERROR
+            #[cfg(windows)]
+            {
+                match stop_host_process(json_mode) {
+                    Ok(code) => code,
+                    Err(e) => {
+                        eprintln!("wtd: {e}");
+                        exit_code::GENERAL_ERROR
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = json_mode;
+                eprintln!("wtd: not supported on this platform");
+                exit_code::GENERAL_ERROR
+            }
         }
     }
+}
+
+#[cfg(windows)]
+fn stop_host_process(json_mode: bool) -> Result<i32, String> {
+    let pipe_name = connect::pipe_name_for_current_user().map_err(|e| e.to_string())?;
+    let data_dir = host_data_dir();
+    let pid_path = data_dir.join("host.pid");
+    let running = connect::is_host_pipe_available(&pipe_name);
+
+    let Some(pid) = read_host_pid(&pid_path) else {
+        if json_mode {
+            println!(
+                "{}",
+                serde_json::json!({ "running": false, "stopped": false })
+            );
+        } else if running {
+            println!("Host is running, but host.pid is missing");
+        } else {
+            println!("Host is not running");
+        }
+        return Ok(if running {
+            exit_code::GENERAL_ERROR
+        } else {
+            exit_code::SUCCESS
+        });
+    };
+
+    if !is_process_running(pid) {
+        let _ = std::fs::remove_file(&pid_path);
+        if json_mode {
+            println!(
+                "{}",
+                serde_json::json!({ "running": false, "stopped": false, "stalePidRemoved": true })
+            );
+        } else {
+            println!("Removed stale host.pid");
+        }
+        return Ok(exit_code::SUCCESS);
+    }
+
+    terminate_process(pid).map_err(|e| format!("failed to stop host pid {}: {}", pid, e))?;
+
+    for _ in 0..100 {
+        if !is_process_running(pid) && !connect::is_host_pipe_available(&pipe_name) {
+            let _ = std::fs::remove_file(&pid_path);
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::json!({ "running": false, "stopped": true, "pid": pid })
+                );
+            } else {
+                println!("Stopped host (pid {})", pid);
+            }
+            return Ok(exit_code::SUCCESS);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Err(format!("host pid {} did not shut down within timeout", pid))
+}
+
+#[cfg(windows)]
+fn host_data_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("WTD_DATA_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
+        format!(r"{}\AppData\Roaming", home)
+    });
+
+    std::path::PathBuf::from(appdata).join("WinTermDriver")
+}
+
+#[cfg(windows)]
+fn read_host_pid(path: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+#[cfg(windows)]
+fn is_process_running(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => {
+                let mut exit_code = 0u32;
+                let running = if GetExitCodeProcess(handle, &mut exit_code).is_ok() {
+                    exit_code == 259
+                } else {
+                    false
+                };
+                let _ = CloseHandle(handle);
+                running
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> Result<(), windows::core::Error> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, false, pid)?;
+        TerminateProcess(handle, 0)?;
+        let _ = CloseHandle(handle);
+    }
+    Ok(())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -355,5 +546,71 @@ fn client_error_exit_code(e: &ClientError) -> i32 {
         },
         ClientError::Ipc(_) | ClientError::Handshake(_) => exit_code::CONNECTION_ERROR,
         ClientError::RequestTimeout(_) => exit_code::TIMEOUT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Command;
+    use std::path::PathBuf;
+
+    #[test]
+    fn open_request_includes_client_cwd() {
+        let env = build_request(&Command::Open {
+            name: "dev".to_string(),
+            file: Some(PathBuf::from("dev.yaml")),
+            recreate: false,
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, OpenWorkspace::TYPE_NAME);
+        assert_eq!(env.payload["name"], "dev");
+        assert_eq!(env.payload["file"], "dev.yaml");
+        assert_eq!(env.payload["recreate"], false);
+        assert!(env.payload["cwd"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[test]
+    fn recreate_request_includes_client_cwd() {
+        let env = build_request(&Command::Recreate {
+            name: "dev".to_string(),
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, RecreateWorkspace::TYPE_NAME);
+        assert_eq!(env.payload["workspace"], "dev");
+        assert!(env.payload["cwd"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[test]
+    fn list_workspaces_request_includes_client_cwd() {
+        let env = build_request(&Command::List {
+            what: ListCommand::Workspaces,
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, ListWorkspaces::TYPE_NAME);
+        assert!(env.payload["cwd"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[test]
+    fn input_request_encodes_escape_data() {
+        let env = build_request(&Command::Input {
+            target: "dev/server".to_string(),
+            data: r"\e[<35;40;12M".to_string(),
+            escape: true,
+            hex: false,
+            base64: false,
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, message::PaneInput::TYPE_NAME);
+        assert_eq!(env.payload["target"], "dev/server");
+        assert_eq!(env.payload["data"], "G1s8MzU7NDA7MTJN");
     }
 }

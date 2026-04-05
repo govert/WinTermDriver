@@ -37,11 +37,7 @@ fn host_logging_creates_log_file() {
     let entries: Vec<_> = std::fs::read_dir(&tmp)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("test-host.log")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with("test-host.log"))
         .collect();
 
     assert!(
@@ -124,12 +120,18 @@ fn effective_log_filter_respects_env() {
     // Without WTD_LOG set (clear it if present).
     std::env::remove_var("WTD_LOG");
     let filter = wtd_core::logging::effective_log_filter(&LogLevel::Warn);
-    assert_eq!(filter, "warn", "§31.2: should use settings level when WTD_LOG is unset");
+    assert_eq!(
+        filter, "warn",
+        "§31.2: should use settings level when WTD_LOG is unset"
+    );
 
     // With WTD_LOG set.
     std::env::set_var("WTD_LOG", "trace");
     let filter = wtd_core::logging::effective_log_filter(&LogLevel::Warn);
-    assert_eq!(filter, "trace", "§31.2: WTD_LOG should override settings level");
+    assert_eq!(
+        filter, "trace",
+        "§31.2: WTD_LOG should override settings level"
+    );
 
     // Clean up.
     std::env::remove_var("WTD_LOG");

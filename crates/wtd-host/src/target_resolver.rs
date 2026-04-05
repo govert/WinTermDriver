@@ -195,18 +195,18 @@ fn resolve_three_segments(
     instances: &[&WorkspaceInstance],
 ) -> Result<ResolvedTarget, ResolveError> {
     let inst = find_instance_by_name(ws_name, instances)?;
-    let tab = inst.find_tab_by_name(tab_name).ok_or_else(|| {
-        ResolveError::TabNotFound {
+    let tab = inst
+        .find_tab_by_name(tab_name)
+        .ok_or_else(|| ResolveError::TabNotFound {
             workspace: ws_name.to_string(),
             tab: tab_name.to_string(),
-        }
-    })?;
-    let pane_id = inst.find_pane_in_tab(tab, pane_name).ok_or_else(|| {
-        ResolveError::PaneNotFoundInTab {
-            tab: tab_name.to_string(),
-            pane: pane_name.to_string(),
-        }
-    })?;
+        })?;
+    let pane_id =
+        inst.find_pane_in_tab(tab, pane_name)
+            .ok_or_else(|| ResolveError::PaneNotFoundInTab {
+                tab: tab_name.to_string(),
+                pane: pane_name.to_string(),
+            })?;
     let canonical = format!("{}/{}/{}", ws_name, tab_name, pane_name);
     Ok(ResolvedTarget {
         instance_id: inst.id().clone(),

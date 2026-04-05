@@ -108,7 +108,9 @@ fn which_exists(name: &str) -> bool {
 /// Returns true if a process with the given PID is still alive.
 fn is_process_running(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
 
     unsafe {
         match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {

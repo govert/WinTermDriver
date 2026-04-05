@@ -32,8 +32,7 @@ fn unique_pipe_name() -> String {
 // ── Base64 helpers (matching host_bridge internal impl) ──────────────
 
 fn base64_encode(input: &[u8]) -> String {
-    const B64: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -61,8 +60,8 @@ fn base64_encode(input: &[u8]) -> String {
 /// Tracks received messages for assertion.
 struct MockState {
     attach_workspace: Option<String>,
-    session_inputs: Vec<(String, String)>,  // (session_id, data_base64)
-    pane_resizes: Vec<(String, u16, u16)>,  // (pane_id, cols, rows)
+    session_inputs: Vec<(String, String)>, // (session_id, data_base64)
+    pane_resizes: Vec<(String, u16, u16)>, // (pane_id, cols, rows)
     invoke_actions: Vec<String>,
 }
 
@@ -171,7 +170,11 @@ async fn ui_client_connects_with_ui_client_type() {
 
     // Connect with the UI client (handshakes as clientType: "ui").
     let client = UiIpcClient::connect_to(&pipe_name).await;
-    assert!(client.is_ok(), "UI client should connect: {:?}", client.err());
+    assert!(
+        client.is_ok(),
+        "UI client should connect: {:?}",
+        client.err()
+    );
 
     // Verify the server registered the client as UI type.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -566,8 +569,8 @@ async fn host_bridge_connect_and_receive_events() {
 async fn host_bridge_sends_input_and_resize() {
     let pipe_name = unique_pipe_name();
     let mock = std::sync::Arc::new(MockHandler::new());
-    let server = IpcServer::new(pipe_name.clone(), MockHandlerWrapper(mock.clone()))
-        .expect("create server");
+    let server =
+        IpcServer::new(pipe_name.clone(), MockHandlerWrapper(mock.clone())).expect("create server");
     let server = std::sync::Arc::new(server);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 

@@ -36,7 +36,9 @@ impl BackoffState {
         self.maybe_reset();
         self.restart_count += 1;
         let exponent = (self.restart_count - 1).min(31);
-        let delay_ms = BASE_DELAY_MS.saturating_mul(1u64 << exponent).min(MAX_DELAY_MS);
+        let delay_ms = BASE_DELAY_MS
+            .saturating_mul(1u64 << exponent)
+            .min(MAX_DELAY_MS);
         Duration::from_millis(delay_ms)
     }
 

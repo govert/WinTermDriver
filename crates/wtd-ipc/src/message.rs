@@ -89,6 +89,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         ListSessions        => ListSessions,
         Send                => Send,
         Keys                => Keys,
+        PaneInput           => PaneInput,
         Capture             => Capture,
         Scrollback          => Scrollback,
         Follow              => Follow,
@@ -149,6 +150,7 @@ pub enum TypedMessage {
     ListSessions(ListSessions),
     Send(Send),
     Keys(Keys),
+    PaneInput(PaneInput),
     Capture(Capture),
     Scrollback(Scrollback),
     Follow(Follow),
@@ -315,6 +317,16 @@ pub struct Keys {
     pub keys: Vec<String>,
 }
 impl_payload!(Keys, "Keys");
+
+/// §13.14 — Send raw bytes to a target pane's session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaneInput {
+    pub target: String,
+    /// Base64-encoded input bytes.
+    pub data: String,
+}
+impl_payload!(PaneInput, "PaneInput");
 
 /// §13.14 — Capture screen content from a target pane.
 ///

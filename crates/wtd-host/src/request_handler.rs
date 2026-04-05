@@ -11,6 +11,7 @@ use serde_json::Value;
 use wtd_core::global_settings::GlobalSettings;
 use wtd_core::ids::{PaneId, SessionId, WorkspaceInstanceId};
 use wtd_core::layout::Rect;
+use wtd_core::target::TargetPath;
 use wtd_core::{find_workspace, list_workspaces, load_workspace_definition};
 
 use wtd_ipc::message;
@@ -20,6 +21,8 @@ use wtd_ipc::Envelope;
 use crate::action::{v1_registry, ActionDispatcher};
 use crate::ipc_server::{ClientId, RequestHandler};
 use crate::output_broadcaster::BroadcastEvent;
+use crate::target_resolver::{resolve_by_id, resolve_target};
+use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
 
 // ── Internal state ────────────────────────────────────────────────────────
@@ -163,6 +166,66 @@ fn find_pane<'a>(
     None
 }
 
+fn resolve_pane_for_resize<'a>(
+    workspaces: &'a HashMap<String, WorkspaceInstance>,
+    target: &'a str,
+) -> Option<(String, PaneId)> {
+    if let Some((workspace_name, pane_id)) = resolve_invoke_action_target(workspaces, target) {
+        if workspaces.contains_key(&workspace_name) {
+            return Some((workspace_name, pane_id));
+        }
+    }
+    for (workspace_name, inst) in workspaces {
+        if let Some(pane_id) = inst.find_pane_by_name(target) {
+            return Some((workspace_name.clone(), pane_id));
+        }
+    }
+    None
+}
+
+fn workspace_name_for_instance_id(
+    workspaces: &HashMap<String, WorkspaceInstance>,
+    instance_id: &WorkspaceInstanceId,
+) -> Option<String> {
+    workspaces
+        .iter()
+        .find(|(_, inst)| inst.id() == instance_id)
+        .map(|(name, _)| name.clone())
+}
+
+fn resolve_invoke_action_target(
+    workspaces: &HashMap<String, WorkspaceInstance>,
+    target: &str,
+) -> Option<(String, PaneId)> {
+    let instances: Vec<&WorkspaceInstance> = workspaces.values().collect();
+
+    if let Ok(resolved) = resolve_by_id(target, &instances) {
+        if let Some(workspace_name) =
+            workspace_name_for_instance_id(workspaces, &resolved.instance_id)
+        {
+            return Some((workspace_name, resolved.pane_id));
+        }
+    }
+
+    if let Ok(path) = TargetPath::parse(target) {
+        if let Ok(resolved) = resolve_target(&path, &instances) {
+            if let Some(workspace_name) =
+                workspace_name_for_instance_id(workspaces, &resolved.instance_id)
+            {
+                return Some((workspace_name, resolved.pane_id));
+            }
+        }
+    }
+
+    for (workspace_name, inst) in workspaces {
+        if let Some(pane_id) = inst.find_pane_by_name(target) {
+            return Some((workspace_name.clone(), pane_id));
+        }
+    }
+
+    None
+}
+
 /// Get scrollback lines for a pane's session.
 fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) -> Vec<String> {
     match inst.pane_state(pane_id) {
@@ -266,6 +329,8 @@ impl RequestHandler for HostRequestHandler {
 
             TypedMessage::Keys(keys) => self.handle_keys(&envelope.id, keys),
 
+            TypedMessage::PaneInput(input) => self.handle_pane_input(&envelope.id, input),
+
             TypedMessage::Capture(capture) => self.handle_capture(&envelope.id, capture),
 
             TypedMessage::Scrollback(scrollback) => {
@@ -281,6 +346,10 @@ impl RequestHandler for HostRequestHandler {
             TypedMessage::SessionInput(input) => {
                 self.handle_session_input(input);
                 None // fire-and-forget
+            }
+
+            TypedMessage::PaneResize(pane_resize) => {
+                self.handle_pane_resize(&envelope.id, pane_resize)
             }
 
             TypedMessage::FocusPane(focus) => self.handle_focus_pane(&envelope.id, focus),
@@ -693,15 +762,80 @@ impl HostRequestHandler {
             }
         };
 
-        // Send each key spec as raw text
-        for key in &keys.keys {
-            if let Err(e) = session.write_input(key.as_bytes()) {
+        let encoded = match encode_key_specs(&keys.keys) {
+            Ok(encoded) => encoded,
+            Err(e) => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    &format!("invalid key spec: {}", e),
+                ));
+            }
+        };
+
+        if let Err(e) = session.write_input(&encoded) {
+            return Some(error_envelope(
+                id,
+                ErrorCode::SessionFailed,
+                &format!("write failed: {}", e),
+            ));
+        }
+
+        Some(Envelope::new(id, &OkResponse {}))
+    }
+
+    fn handle_pane_input(&self, id: &str, input: &PaneInput) -> Option<Envelope> {
+        let state = self.state.lock().unwrap();
+        let (inst, pane_id) = match find_pane(&state.workspaces, &input.target) {
+            Some(r) => r,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::TargetNotFound,
+                    &format!("pane '{}' not found", input.target),
+                ));
+            }
+        };
+
+        let session_id = match inst.pane_state(&pane_id) {
+            Some(PaneState::Attached { session_id }) => session_id.clone(),
+            _ => {
                 return Some(error_envelope(
                     id,
                     ErrorCode::SessionFailed,
-                    &format!("write failed: {}", e),
+                    "pane not attached",
                 ));
             }
+        };
+
+        let session = match inst.session(&session_id) {
+            Some(s) => s,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "session not found",
+                ));
+            }
+        };
+
+        let bytes = match decode_base64(&input.data) {
+            Some(bytes) => bytes,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    "input data is not valid base64",
+                ));
+            }
+        };
+
+        if let Err(e) = session.write_input(&bytes) {
+            return Some(error_envelope(
+                id,
+                ErrorCode::SessionFailed,
+                &format!("write failed: {}", e),
+            ));
         }
 
         Some(Envelope::new(id, &OkResponse {}))
@@ -859,16 +993,22 @@ impl HostRequestHandler {
     fn handle_invoke_action(&self, id: &str, action: &InvokeAction) -> Option<Envelope> {
         let mut state = self.state.lock().unwrap();
 
-        // Find which workspace to dispatch to.
-        // Use target_pane_id to identify workspace if provided, otherwise use first workspace.
-        let workspace_name = if let Some(ref target) = action.target_pane_id {
-            state
-                .workspaces
-                .iter()
-                .find(|(_, inst)| inst.find_pane_by_name(target).is_some())
-                .map(|(name, _)| name.clone())
+        // Resolve the pane context up front. UI callers send pane ids here,
+        // while other clients may send canonical workspace/tab/pane paths or
+        // bare pane names.
+        let (workspace_name, target_pane) = if let Some(ref target) = action.target_pane_id {
+            match resolve_invoke_action_target(&state.workspaces, target) {
+                Some((workspace_name, pane_id)) => (Some(workspace_name), Some(pane_id)),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", target),
+                    ));
+                }
+            }
         } else {
-            state.workspaces.keys().next().cloned()
+            (state.workspaces.keys().next().cloned(), None)
         };
 
         let workspace_name = match workspace_name {
@@ -885,20 +1025,141 @@ impl HostRequestHandler {
         let settings = state.settings.clone();
         let inst = state.workspaces.get_mut(&workspace_name).unwrap();
 
-        // Resolve target pane id
-        let target_pane = action
-            .target_pane_id
-            .as_ref()
-            .and_then(|name| inst.find_pane_by_name(name));
+        // Handle tab lifecycle actions at this level (they need settings/env for session spawn).
+        match action.action.as_str() {
+            "new-tab" => {
+                let name = action
+                    .args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("tab-{}", inst.tabs().len() + 1));
+                let tab = inst.add_tab(name);
+                let pane_id = tab.layout().focus();
+                let pane_name = format!("pane-{}", pane_id.0);
+                let env = host_env();
+                inst.spawn_session_for_pane(&pane_id, pane_name, &settings, &env, &find_exe);
+                return Some(Envelope::new(
+                    id,
+                    &InvokeActionResult {
+                        result: "tab-created".to_string(),
+                        pane_id: None,
+                    },
+                ));
+            }
+            "next-tab" => {
+                let count = inst.tabs().len();
+                if count == 0 {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InvalidAction,
+                        "no tabs available",
+                    ));
+                }
+                let next = (inst.active_tab_index() + 1) % count;
+                inst.set_active_tab(next);
+                return Some(Envelope::new(
+                    id,
+                    &InvokeActionResult {
+                        result: "tab-switched".to_string(),
+                        pane_id: None,
+                    },
+                ));
+            }
+            "prev-tab" => {
+                let count = inst.tabs().len();
+                if count == 0 {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InvalidAction,
+                        "no tabs available",
+                    ));
+                }
+                let prev = if inst.active_tab_index() == 0 {
+                    count - 1
+                } else {
+                    inst.active_tab_index() - 1
+                };
+                inst.set_active_tab(prev);
+                return Some(Envelope::new(
+                    id,
+                    &InvokeActionResult {
+                        result: "tab-switched".to_string(),
+                        pane_id: None,
+                    },
+                ));
+            }
+            "goto-tab" => {
+                if let Some(tab_index) = action
+                    .args
+                    .get("index")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| usize::try_from(v).ok())
+                {
+                    if tab_index < inst.tabs().len() {
+                        inst.set_active_tab(tab_index);
+                        return Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: "tab-switched".to_string(),
+                                pane_id: None,
+                            },
+                        ));
+                    }
+                }
 
+                if let Some(name) = action.args.get("name").and_then(|v| v.as_str()) {
+                    if let Some(index) = inst.tabs().iter().position(|tab| tab.name() == name) {
+                        inst.set_active_tab(index);
+                        return Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: "tab-switched".to_string(),
+                                pane_id: None,
+                            },
+                        ));
+                    }
+                }
+
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    "invalid goto-tab target",
+                ));
+            }
+            "close-tab" => {
+                let idx = inst.active_tab_index();
+                if inst.tabs().len() > 1 {
+                    inst.close_tab(idx);
+                    return Some(Envelope::new(
+                        id,
+                        &InvokeActionResult {
+                            result: "tab-closed".to_string(),
+                            pane_id: None,
+                        },
+                    ));
+                } else {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InvalidAction,
+                        "cannot close the last tab",
+                    ));
+                }
+            }
+            _ => {} // Fall through to dispatcher
+        }
+
+        let (width, height) = inst.estimated_viewport_size().unwrap_or((120, 40));
         let registry = v1_registry();
-        let viewport = Rect {
-            x: 0,
-            y: 0,
-            width: 80,
-            height: 24,
-        };
-        let dispatcher = ActionDispatcher::new(registry, viewport);
+        let dispatcher = ActionDispatcher::new(
+            registry,
+            Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+        );
 
         match dispatcher.dispatch(inst, &action.action, &action.args, target_pane) {
             Ok(result) => {
@@ -946,6 +1207,46 @@ impl HostRequestHandler {
                     _ => ErrorCode::InternalError,
                 };
                 Some(error_envelope(id, code, &format!("{}", e)))
+            }
+        }
+    }
+
+    fn handle_pane_resize(&self, id: &str, resize: &PaneResize) -> Option<Envelope> {
+        if resize.cols == 0 || resize.rows == 0 {
+            return Some(error_envelope(
+                id,
+                ErrorCode::InvalidArgument,
+                "pane size must be greater than zero",
+            ));
+        }
+
+        let mut state = self.state.lock().unwrap();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &resize.pane_id) {
+                Some((name, pane_id)) => (name, pane_id),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", resize.pane_id),
+                    ));
+                }
+            };
+
+        let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+        match inst.resize_pane_session(&pane_id, resize.cols, resize.rows) {
+            Ok(()) => Some(Envelope::new(id, &OkResponse {})),
+            Err(e) => {
+                let code = match e {
+                    crate::workspace_instance::WorkspaceError::SessionOperation(_) => {
+                        ErrorCode::SessionFailed
+                    }
+                    crate::workspace_instance::WorkspaceError::PaneNotFound(_) => {
+                        ErrorCode::TargetNotFound
+                    }
+                    _ => ErrorCode::InternalError,
+                };
+                Some(error_envelope(id, code, &format!("{e}")))
             }
         }
     }

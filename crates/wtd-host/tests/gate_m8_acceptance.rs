@@ -220,10 +220,7 @@ fn criterion_2_readme_has_troubleshooting() {
 fn criterion_3_screenshots_exist() {
     let root = repo_root();
     let images_dir = root.join("docs/images");
-    assert!(
-        images_dir.is_dir(),
-        "docs/images/ directory must exist"
-    );
+    assert!(images_dir.is_dir(), "docs/images/ directory must exist");
 
     let required_screenshots = [
         "workspace-overview.png",
@@ -234,10 +231,7 @@ fn criterion_3_screenshots_exist() {
 
     for name in &required_screenshots {
         let path = images_dir.join(name);
-        assert!(
-            path.exists(),
-            "Screenshot missing: docs/images/{name}"
-        );
+        assert!(path.exists(), "Screenshot missing: docs/images/{name}");
 
         let metadata = fs::metadata(&path).unwrap();
         assert!(
@@ -281,10 +275,7 @@ fn criterion_3_readme_references_screenshots() {
 fn criterion_4_agent_guide_exists() {
     let root = repo_root();
     let guide = root.join("docs/AGENT_GUIDE.md");
-    assert!(
-        guide.exists(),
-        "docs/AGENT_GUIDE.md must exist"
-    );
+    assert!(guide.exists(), "docs/AGENT_GUIDE.md must exist");
 
     let content = fs::read_to_string(&guide).expect("failed to read AGENT_GUIDE.md");
 
@@ -299,8 +290,8 @@ fn criterion_4_agent_guide_exists() {
 #[test]
 fn criterion_4_agent_guide_has_architecture_overview() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     assert!(
         content.contains("wtd-host") && content.contains("wtd-ui") && content.contains("wtd.exe"),
@@ -315,8 +306,8 @@ fn criterion_4_agent_guide_has_architecture_overview() {
 #[test]
 fn criterion_4_agent_guide_has_workspace_yaml_examples() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     assert!(
         content.contains("version: 1") && content.contains("name:"),
@@ -331,8 +322,8 @@ fn criterion_4_agent_guide_has_workspace_yaml_examples() {
 #[test]
 fn criterion_4_agent_guide_has_cli_examples() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     // Core CLI commands for agents
     assert!(
@@ -356,8 +347,8 @@ fn criterion_4_agent_guide_has_cli_examples() {
 #[test]
 fn criterion_4_agent_guide_has_polling_patterns() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     // Polling/timing guidance
     assert!(
@@ -373,8 +364,8 @@ fn criterion_4_agent_guide_has_polling_patterns() {
 #[test]
 fn criterion_4_agent_guide_has_error_handling() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     assert!(
         content.contains("exit code") || content.contains("Exit code"),
@@ -389,8 +380,8 @@ fn criterion_4_agent_guide_has_error_handling() {
 #[test]
 fn criterion_4_agent_guide_has_worked_orchestration_example() {
     let root = repo_root();
-    let content =
-        fs::read_to_string(root.join("docs/AGENT_GUIDE.md")).expect("failed to read AGENT_GUIDE.md");
+    let content = fs::read_to_string(root.join("docs/AGENT_GUIDE.md"))
+        .expect("failed to read AGENT_GUIDE.md");
 
     // Must have at least one complete multi-step script example
     assert!(
@@ -400,7 +391,9 @@ fn criterion_4_agent_guide_has_worked_orchestration_example() {
 
     // The orchestration example should show the full lifecycle
     assert!(
-        content.contains("wtd open") && content.contains("wtd send") && content.contains("wtd close"),
+        content.contains("wtd open")
+            && content.contains("wtd send")
+            && content.contains("wtd close"),
         "Agent guide orchestration example must show full workspace lifecycle"
     );
 }

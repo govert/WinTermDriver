@@ -34,10 +34,7 @@ pub fn is_host_pipe_available(pipe_name: &str) -> bool {
     use windows::core::PCWSTR;
     use windows::Win32::System::Pipes::WaitNamedPipeW;
 
-    let wide: Vec<u16> = OsStr::new(pipe_name)
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let wide: Vec<u16> = OsStr::new(pipe_name).encode_wide().chain(Some(0)).collect();
     unsafe { WaitNamedPipeW(PCWSTR(wide.as_ptr()), 1).as_bool() }
 }
 
@@ -109,8 +106,7 @@ fn sid_to_string(sid_bytes: &[u8]) -> String {
     let authority_value = if authority[0] != 0 || authority[1] != 0 {
         format!(
             "0x{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            authority[0], authority[1], authority[2],
-            authority[3], authority[4], authority[5],
+            authority[0], authority[1], authority[2], authority[3], authority[4], authority[5],
         )
     } else {
         let val = ((authority[2] as u64) << 24)

@@ -669,17 +669,17 @@ pub fn vk_to_key_name(vk: u16) -> Option<KeyName> {
         0x25 => Some(KeyName::Left),  // VK_LEFT
         0x27 => Some(KeyName::Right), // VK_RIGHT
         // OEM keys (US layout mapping)
-        0xBB => Some(KeyName::Plus),        // VK_OEM_PLUS (= / +)
-        0xBD => Some(KeyName::Minus),       // VK_OEM_MINUS (- / _)
-        0xBC => Some(KeyName::Comma),       // VK_OEM_COMMA (, / <)
-        0xBE => Some(KeyName::Period),      // VK_OEM_PERIOD (. / >)
-        0xBF => Some(KeyName::Slash),       // VK_OEM_2 (/ / ?)
-        0xDC => Some(KeyName::Backslash),   // VK_OEM_5 (\ / |)
-        0xDB => Some(KeyName::LeftBracket), // VK_OEM_4 ([ / {)
+        0xBB => Some(KeyName::Plus),         // VK_OEM_PLUS (= / +)
+        0xBD => Some(KeyName::Minus),        // VK_OEM_MINUS (- / _)
+        0xBC => Some(KeyName::Comma),        // VK_OEM_COMMA (, / <)
+        0xBE => Some(KeyName::Period),       // VK_OEM_PERIOD (. / >)
+        0xBF => Some(KeyName::Slash),        // VK_OEM_2 (/ / ?)
+        0xDC => Some(KeyName::Backslash),    // VK_OEM_5 (\ / |)
+        0xDB => Some(KeyName::LeftBracket),  // VK_OEM_4 ([ / {)
         0xDD => Some(KeyName::RightBracket), // VK_OEM_6 (] / })
-        0xBA => Some(KeyName::Semicolon),   // VK_OEM_1 (; / :)
-        0xDE => Some(KeyName::Apostrophe),  // VK_OEM_7 (' / ")
-        0xC0 => Some(KeyName::Backtick),    // VK_OEM_3 (` / ~)
+        0xBA => Some(KeyName::Semicolon),    // VK_OEM_1 (; / :)
+        0xDE => Some(KeyName::Apostrophe),   // VK_OEM_7 (' / ")
+        0xC0 => Some(KeyName::Backtick),     // VK_OEM_3 (` / ~)
         _ => None,
     }
 }
@@ -1002,10 +1002,7 @@ mod tests {
 
         match classifier.classify(&event, true) {
             InputAction::ChordBinding(action) => {
-                assert_eq!(
-                    action,
-                    ActionReference::Simple("focus-pane-up".to_string())
-                );
+                assert_eq!(action, ActionReference::Simple("focus-pane-up".to_string()));
             }
             other => panic!("expected ChordBinding, got {other:?}"),
         }
@@ -1014,11 +1011,7 @@ mod tests {
     #[test]
     fn classify_single_stroke() {
         let classifier = InputClassifier::from_bindings(&test_bindings()).unwrap();
-        let event = key(
-            KeyName::Char('T'),
-            Modifiers::CTRL | Modifiers::SHIFT,
-            None,
-        );
+        let event = key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
 
         match classifier.classify(&event, false) {
             InputAction::SingleStrokeBinding(action) => {
@@ -1031,11 +1024,7 @@ mod tests {
     #[test]
     fn classify_single_stroke_ignored_when_prefix_active() {
         let classifier = InputClassifier::from_bindings(&test_bindings()).unwrap();
-        let event = key(
-            KeyName::Char('T'),
-            Modifiers::CTRL | Modifiers::SHIFT,
-            None,
-        );
+        let event = key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
 
         // Single-stroke bindings are NOT checked when prefix is active
         match classifier.classify(&event, true) {
@@ -1150,10 +1139,7 @@ mod tests {
         // When prefix is active → chord wins
         match classifier.classify(&event, true) {
             InputAction::ChordBinding(action) => {
-                assert_eq!(
-                    action,
-                    ActionReference::Simple("chord-action".to_string())
-                );
+                assert_eq!(action, ActionReference::Simple("chord-action".to_string()));
             }
             other => panic!("expected ChordBinding, got {other:?}"),
         }
@@ -1161,10 +1147,7 @@ mod tests {
         // When prefix is NOT active → single-stroke wins
         match classifier.classify(&event, false) {
             InputAction::SingleStrokeBinding(action) => {
-                assert_eq!(
-                    action,
-                    ActionReference::Simple("single-action".to_string())
-                );
+                assert_eq!(action, ActionReference::Simple("single-action".to_string()));
             }
             other => panic!("expected SingleStrokeBinding, got {other:?}"),
         }
@@ -1210,11 +1193,7 @@ mod tests {
         ));
 
         // Ctrl+Shift+T → new-tab
-        let event = key(
-            KeyName::Char('T'),
-            Modifiers::CTRL | Modifiers::SHIFT,
-            None,
-        );
+        let event = key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
         assert!(matches!(
             classifier.classify(&event, false),
             InputAction::SingleStrokeBinding(_)
@@ -1259,10 +1238,7 @@ mod tests {
         let event = key(KeyName::Char('B'), Modifiers::CTRL, None);
         match classifier.classify(&event, false) {
             InputAction::SingleStrokeBinding(action) => {
-                assert_eq!(
-                    action,
-                    ActionReference::Simple("some-action".to_string())
-                );
+                assert_eq!(action, ActionReference::Simple("some-action".to_string()));
             }
             other => panic!("expected SingleStrokeBinding, got {other:?}"),
         }

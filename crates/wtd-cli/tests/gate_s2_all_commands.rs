@@ -553,7 +553,13 @@ impl RequestHandler for S2Handler {
                 };
 
                 let text = get_pane_screen_text(inst, &pane_id);
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::Scrollback(scrollback) => {
@@ -564,23 +570,19 @@ impl RequestHandler for S2Handler {
                     }
                 }
 
-                let (inst, pane_id) =
-                    match resolve_target(&state.workspaces, &scrollback.target) {
-                        Some(r) => r,
-                        None => {
-                            return Some(error_envelope(
-                                &envelope.id,
-                                ErrorCode::TargetNotFound,
-                                &format!("pane '{}' not found", scrollback.target),
-                            ))
-                        }
-                    };
+                let (inst, pane_id) = match resolve_target(&state.workspaces, &scrollback.target) {
+                    Some(r) => r,
+                    None => {
+                        return Some(error_envelope(
+                            &envelope.id,
+                            ErrorCode::TargetNotFound,
+                            &format!("pane '{}' not found", scrollback.target),
+                        ))
+                    }
+                };
 
                 let lines = get_pane_scrollback(inst, &pane_id, scrollback.tail);
-                Some(Envelope::new(
-                    &envelope.id,
-                    &ScrollbackResult { lines },
-                ))
+                Some(Envelope::new(&envelope.id, &ScrollbackResult { lines }))
             }
 
             TypedMessage::Follow(follow) => {
@@ -597,8 +599,7 @@ impl RequestHandler for S2Handler {
 
             TypedMessage::Inspect(inspect) => {
                 let state = self.state.lock().unwrap();
-                let (inst, pane_id) = match resolve_target(&state.workspaces, &inspect.target)
-                {
+                let (inst, pane_id) = match resolve_target(&state.workspaces, &inspect.target) {
                     Some(r) => r,
                     None => {
                         return Some(error_envelope(
@@ -656,9 +657,7 @@ impl RequestHandler for S2Handler {
                 ))
             }
 
-            TypedMessage::InvokeAction(_) => {
-                Some(Envelope::new(&envelope.id, &OkResponse {}))
-            }
+            TypedMessage::InvokeAction(_) => Some(Envelope::new(&envelope.id, &OkResponse {})),
 
             TypedMessage::Keys(keys) => {
                 let state = self.state.lock().unwrap();
@@ -767,9 +766,19 @@ async fn s2_all_commands_full_lifecycle() {
     assert_eq!(resp.msg_type, ListWorkspacesResult::TYPE_NAME);
 
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "list workspaces: exit code");
-    assert!(fmt.stdout.contains("gate-s2"), "list workspaces: text contains name");
-    assert!(fmt.stdout.contains("NAME"), "list workspaces: text has header");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "list workspaces: exit code"
+    );
+    assert!(
+        fmt.stdout.contains("gate-s2"),
+        "list workspaces: text contains name"
+    );
+    assert!(
+        fmt.stdout.contains("NAME"),
+        "list workspaces: text has header"
+    );
 
     let json = assert_valid_json(&resp);
     assert!(json["workspaces"].is_array());
@@ -786,7 +795,11 @@ async fn s2_all_commands_full_lifecycle() {
     assert_eq!(resp.msg_type, ListInstancesResult::TYPE_NAME);
 
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "list instances: exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "list instances: exit code"
+    );
     assert!(fmt.stdout.contains("gate-s2"));
 
     let json = assert_valid_json(&resp);
@@ -843,7 +856,11 @@ async fn s2_all_commands_full_lifecycle() {
     assert_eq!(resp.msg_type, ListSessionsResult::TYPE_NAME);
 
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::SUCCESS, "list sessions: exit code");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::SUCCESS,
+        "list sessions: exit code"
+    );
 
     let json = assert_valid_json(&resp);
     assert!(json["sessions"].is_array());
@@ -870,7 +887,10 @@ async fn s2_all_commands_full_lifecycle() {
         Duration::from_secs(10),
     )
     .await;
-    assert!(text.contains("S2_TERMINAL_READY"), "terminal startup marker");
+    assert!(
+        text.contains("S2_TERMINAL_READY"),
+        "terminal startup marker"
+    );
 
     // ── send ──
     let marker = "S2_GATE_CMD_4W7Z";
@@ -1085,7 +1105,10 @@ async fn s2_all_commands_full_lifecycle() {
     assert_eq!(fmt.exit_code, exit_code::SUCCESS, "recreate: exit code");
 
     let json = assert_valid_json(&resp);
-    assert!(json["instanceId"].is_string(), "recreate: JSON has instanceId");
+    assert!(
+        json["instanceId"].is_string(),
+        "recreate: JSON has instanceId"
+    );
 
     // ── save ──
     let resp = client
@@ -1165,7 +1188,11 @@ async fn exit_code_2_target_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "capture → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "capture → exit 2"
+    );
 
     // scrollback
     let resp = client
@@ -1179,7 +1206,11 @@ async fn exit_code_2_target_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "scrollback → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "scrollback → exit 2"
+    );
 
     // inspect
     let resp = client
@@ -1192,7 +1223,11 @@ async fn exit_code_2_target_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "inspect → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "inspect → exit 2"
+    );
 
     // focus
     let resp = client
@@ -1219,7 +1254,11 @@ async fn exit_code_2_target_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "rename → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "rename → exit 2"
+    );
 
     // keys
     let resp = client
@@ -1247,7 +1286,11 @@ async fn exit_code_2_target_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "follow → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "follow → exit 2"
+    );
 }
 
 /// §22.9 exit code 2: Workspace not found — for all workspace-targeting commands.
@@ -1269,7 +1312,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "open unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "open unknown → exit 2"
+    );
 
     // close
     let resp = client
@@ -1283,7 +1330,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "close unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "close unknown → exit 2"
+    );
 
     // attach
     let resp = client
@@ -1296,7 +1347,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "attach unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "attach unknown → exit 2"
+    );
 
     // recreate
     let resp = client
@@ -1309,7 +1364,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "recreate unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "recreate unknown → exit 2"
+    );
 
     // save
     let resp = client
@@ -1323,7 +1382,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "save unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "save unknown → exit 2"
+    );
 
     // list panes
     let resp = client
@@ -1336,7 +1399,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "list panes unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "list panes unknown → exit 2"
+    );
 
     // list sessions
     let resp = client
@@ -1349,7 +1416,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::TARGET_NOT_FOUND, "list sessions unknown → exit 2");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::TARGET_NOT_FOUND,
+        "list sessions unknown → exit 2"
+    );
 }
 
 /// §22.9 exit code 3: Ambiguous target.
@@ -1377,8 +1448,15 @@ async fn exit_code_3_ambiguous_target() {
     assert_eq!(err.candidates.as_ref().unwrap().len(), 2);
 
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::AMBIGUOUS_TARGET, "ambiguous send → exit 3");
-    assert!(fmt.stderr.contains("Candidates:"), "stderr lists candidates");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::AMBIGUOUS_TARGET,
+        "ambiguous send → exit 3"
+    );
+    assert!(
+        fmt.stderr.contains("Candidates:"),
+        "stderr lists candidates"
+    );
 
     // capture with ambiguous target
     let resp = client
@@ -1392,7 +1470,11 @@ async fn exit_code_3_ambiguous_target() {
         .await
         .unwrap();
     let fmt = output::format_response(&resp, false);
-    assert_eq!(fmt.exit_code, exit_code::AMBIGUOUS_TARGET, "ambiguous capture → exit 3");
+    assert_eq!(
+        fmt.exit_code,
+        exit_code::AMBIGUOUS_TARGET,
+        "ambiguous capture → exit 3"
+    );
 
     // JSON mode for ambiguous error
     let json = assert_valid_json(&resp);
@@ -1424,7 +1506,10 @@ async fn json_output_structure_all_response_types() {
 
     // OpenWorkspaceResult JSON
     let json = assert_valid_json(&resp);
-    assert!(json["instanceId"].is_string(), "OpenWorkspaceResult.instanceId");
+    assert!(
+        json["instanceId"].is_string(),
+        "OpenWorkspaceResult.instanceId"
+    );
     assert!(json["state"].is_object(), "OpenWorkspaceResult.state");
     let json_fmt = output::format_response(&resp, true);
     assert_eq!(json_fmt.exit_code, exit_code::SUCCESS);
@@ -1567,7 +1652,10 @@ async fn json_output_structure_all_response_types() {
         .await
         .unwrap();
     let json = assert_valid_json(&resp);
-    assert!(json["instanceId"].is_string(), "RecreateWorkspaceResult.instanceId");
+    assert!(
+        json["instanceId"].is_string(),
+        "RecreateWorkspaceResult.instanceId"
+    );
 
     // ErrorResponse JSON
     let resp = client
@@ -1683,13 +1771,8 @@ async fn cross_pane_isolation_send_capture() {
     assert!(editor_text.contains(editor_marker));
 
     // Terminal should NOT have editor's marker
-    let terminal_text = poll_capture_until(
-        &mut client,
-        "terminal",
-        |_| true,
-        Duration::from_secs(1),
-    )
-    .await;
+    let terminal_text =
+        poll_capture_until(&mut client, "terminal", |_| true, Duration::from_secs(1)).await;
     assert!(
         !terminal_text.contains(editor_marker),
         "terminal should not contain editor's marker"

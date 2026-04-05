@@ -262,6 +262,7 @@ fn action_name(action: &ActionReference) -> &str {
     match action {
         ActionReference::Simple(s) => s.as_str(),
         ActionReference::WithArgs { action, .. } => action.as_str(),
+        ActionReference::Removed => "",
     }
 }
 
@@ -458,7 +459,12 @@ impl RequestHandler for M6Handler {
                     }
                 };
 
-                match inst.recreate(&def, &GlobalSettings::default(), &default_host_env(), find_exe_windows) {
+                match inst.recreate(
+                    &def,
+                    &GlobalSettings::default(),
+                    &default_host_env(),
+                    find_exe_windows,
+                ) {
                     Ok(()) => Some(Envelope::new(
                         &envelope.id,
                         &RecreateWorkspaceResult {
@@ -638,7 +644,13 @@ impl RequestHandler for M6Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::Scrollback(sb) => {
@@ -869,7 +881,12 @@ impl TestHost {
         }
     }
 
-    async fn connect_ui(&self) -> (wtd_ui::host_client::UiIpcReader, wtd_ui::host_client::UiIpcWriter) {
+    async fn connect_ui(
+        &self,
+    ) -> (
+        wtd_ui::host_client::UiIpcReader,
+        wtd_ui::host_client::UiIpcWriter,
+    ) {
         let client = UiIpcClient::connect_to(&self.pipe_name)
             .await
             .expect("M6: UI client must connect");
@@ -1124,11 +1141,23 @@ fn criterion_36_3_manual_interaction() {
     // ── Cursor movement: VT arrow sequences position cursor ─────────
     let mut screen = ScreenBuffer::new(40, 10, 0);
     screen.advance(b"ABCDE");
-    assert_eq!(screen.cursor().col, 5, "§36.3: cursor at col 5 after 5 chars");
+    assert_eq!(
+        screen.cursor().col,
+        5,
+        "§36.3: cursor at col 5 after 5 chars"
+    );
     screen.advance(b"\x1b[2D"); // left 2
-    assert_eq!(screen.cursor().col, 3, "§36.3: cursor at col 3 after left 2");
+    assert_eq!(
+        screen.cursor().col,
+        3,
+        "§36.3: cursor at col 3 after left 2"
+    );
     screen.advance(b"\x1b[1C"); // right 1
-    assert_eq!(screen.cursor().col, 4, "§36.3: cursor at col 4 after right 1");
+    assert_eq!(
+        screen.cursor().col,
+        4,
+        "§36.3: cursor at col 4 after right 1"
+    );
     screen.advance(b"\x1b[2;1H"); // move to row 2, col 1
     assert_eq!(screen.cursor().row, 1, "§36.3: cursor row 1 after CUP");
     assert_eq!(screen.cursor().col, 0, "§36.3: cursor col 0 after CUP");
@@ -1136,11 +1165,13 @@ fn criterion_36_3_manual_interaction() {
     // ── Pasting: bracketed paste wraps content ──────────────────────
     let mut paste_screen = ScreenBuffer::new(80, 24, 0);
     paste_screen.advance(b"\x1b[?2004h"); // enable bracketed paste
-    assert!(paste_screen.bracketed_paste(), "§36.3: DECSET 2004 must enable bracketed paste");
+    assert!(
+        paste_screen.bracketed_paste(),
+        "§36.3: DECSET 2004 must enable bracketed paste"
+    );
     let paste_bytes = prepare_paste("pasted content", paste_screen.bracketed_paste());
     assert_eq!(
-        paste_bytes,
-        b"\x1b[200~pasted content\x1b[201~",
+        paste_bytes, b"\x1b[200~pasted content\x1b[201~",
         "§36.3: bracketed paste must wrap content"
     );
 
@@ -1161,7 +1192,10 @@ fn criterion_36_3_manual_interaction() {
 
     // VT stripping as safety
     let stripped = strip_vt("\x1b[31mRed\x1b[0m text");
-    assert_eq!(stripped, "Red text", "§36.3: strip_vt must remove sequences");
+    assert_eq!(
+        stripped, "Red text",
+        "§36.3: strip_vt must remove sequences"
+    );
 
     // ── Scrollback navigation: lines scroll off visible area ────────
     let mut scroll_screen = ScreenBuffer::new(40, 5, 50);
@@ -1225,7 +1259,14 @@ async fn criterion_36_4_controller_interaction() {
     assert_eq!(resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
 
     // Wait for sessions to be ready
-    let _ = poll_capture_until(&mut reader, &mut writer, "server", "M6_SERVER_7X2P", timeout).await;
+    let _ = poll_capture_until(
+        &mut reader,
+        &mut writer,
+        "server",
+        "M6_SERVER_7X2P",
+        timeout,
+    )
+    .await;
     let _ = poll_capture_until(&mut reader, &mut writer, "logs", "M6_LOGS_4W1Q", timeout).await;
 
     // ── list panes ──────────────────────────────────────────────────
@@ -1239,11 +1280,18 @@ async fn criterion_36_4_controller_interaction() {
         .await
         .unwrap();
     let resp = reader.read_frame().await.unwrap();
-    assert_eq!(resp.msg_type, ListPanesResult::TYPE_NAME, "§36.4: list panes");
+    assert_eq!(
+        resp.msg_type,
+        ListPanesResult::TYPE_NAME,
+        "§36.4: list panes"
+    );
     let lp: ListPanesResult = resp.extract_payload().unwrap();
     assert_eq!(lp.panes.len(), 2, "§36.4: must have 2 panes");
     let pane_names: Vec<&str> = lp.panes.iter().map(|p| p.name.as_str()).collect();
-    assert!(pane_names.contains(&"server"), "§36.4: must list 'server' pane");
+    assert!(
+        pane_names.contains(&"server"),
+        "§36.4: must list 'server' pane"
+    );
     assert!(pane_names.contains(&"logs"), "§36.4: must list 'logs' pane");
 
     // ── send ────────────────────────────────────────────────────────
@@ -1259,10 +1307,15 @@ async fn criterion_36_4_controller_interaction() {
         .await
         .unwrap();
     let resp = reader.read_frame().await.unwrap();
-    assert_eq!(resp.msg_type, OkResponse::TYPE_NAME, "§36.4: send must succeed");
+    assert_eq!(
+        resp.msg_type,
+        OkResponse::TYPE_NAME,
+        "§36.4: send must succeed"
+    );
 
     // ── capture ─────────────────────────────────────────────────────
-    let text = poll_capture_until(&mut reader, &mut writer, "server", "M6_SEND_9K2T", timeout).await;
+    let text =
+        poll_capture_until(&mut reader, &mut writer, "server", "M6_SEND_9K2T", timeout).await;
     assert!(
         text.contains("M6_SEND_9K2T"),
         "§36.4: capture must return sent text output"
@@ -1294,7 +1347,11 @@ async fn criterion_36_4_controller_interaction() {
         .await
         .unwrap();
     let resp = reader.read_frame().await.unwrap();
-    assert_eq!(resp.msg_type, OkResponse::TYPE_NAME, "§36.4: keys must succeed");
+    assert_eq!(
+        resp.msg_type,
+        OkResponse::TYPE_NAME,
+        "§36.4: keys must succeed"
+    );
 
     let text = poll_capture_until(&mut reader, &mut writer, "logs", "M6_KEYS", timeout).await;
     assert!(
@@ -1391,7 +1448,10 @@ async fn criterion_36_5_semantic_naming() {
     );
 
     // Invalid paths
-    assert!(TargetPath::parse("").is_err(), "§36.5: empty path must fail");
+    assert!(
+        TargetPath::parse("").is_err(),
+        "§36.5: empty path must fail"
+    );
     assert!(
         TargetPath::parse("a/b/c/d/e").is_err(),
         "§36.5: >4 segments must fail"
@@ -1518,8 +1578,15 @@ fn criterion_36_6_prefix_chords() {
         matches!(result, PrefixOutput::Consumed),
         "§36.6: Ctrl+B must be consumed to enter prefix mode"
     );
-    assert!(psm.is_prefix_active(), "§36.6: prefix must be active after Ctrl+B");
-    assert_eq!(psm.prefix_label(), "Ctrl+B", "§36.6: prefix label must be 'Ctrl+B'");
+    assert!(
+        psm.is_prefix_active(),
+        "§36.6: prefix must be active after Ctrl+B"
+    );
+    assert_eq!(
+        psm.prefix_label(),
+        "Ctrl+B",
+        "§36.6: prefix label must be 'Ctrl+B'"
+    );
 
     let percent = KeyEvent {
         key: KeyName::Digit(5),
@@ -1527,7 +1594,10 @@ fn criterion_36_6_prefix_chords() {
         character: Some('%'),
     };
     let result = psm.process(&percent);
-    assert!(!psm.is_prefix_active(), "§36.6: prefix must be idle after chord");
+    assert!(
+        !psm.is_prefix_active(),
+        "§36.6: prefix must be idle after chord"
+    );
     match &result {
         PrefixOutput::DispatchAction(action) => {
             assert_eq!(
@@ -1664,10 +1734,7 @@ async fn criterion_36_7_partial_failure() {
     let lp: ListPanesResult = resp.extract_payload().unwrap();
 
     let bad_pane = lp.panes.iter().find(|p| p.name == "bad");
-    assert!(
-        bad_pane.is_some(),
-        "§36.7: 'bad' pane must be listed"
-    );
+    assert!(bad_pane.is_some(), "§36.7: 'bad' pane must be listed");
     assert!(
         bad_pane.unwrap().session_state.contains("detached")
             || bad_pane.unwrap().session_state.contains("Failed"),
@@ -1676,7 +1743,11 @@ async fn criterion_36_7_partial_failure() {
     );
 
     // Verify good panes are running
-    let good_panes: Vec<&PaneInfo> = lp.panes.iter().filter(|p| p.name.starts_with("good")).collect();
+    let good_panes: Vec<&PaneInfo> = lp
+        .panes
+        .iter()
+        .filter(|p| p.name.starts_with("good"))
+        .collect();
     assert_eq!(good_panes.len(), 3, "§36.7: must have 3 good panes");
     for gp in &good_panes {
         assert!(
@@ -1758,7 +1829,10 @@ fn criterion_36_9_workspace_as_code() {
     );
 
     let discovered = result.unwrap();
-    assert_eq!(discovered.name, "dev", "§36.9: discovered name must be 'dev'");
+    assert_eq!(
+        discovered.name, "dev",
+        "§36.9: discovered name must be 'dev'"
+    );
     assert_eq!(
         discovered.source,
         WorkspaceSource::Local,
@@ -1801,24 +1875,14 @@ fn criterion_36_10_recreation_determinism() {
     let env = default_host_env();
 
     // ── Open instance 1 ─────────────────────────────────────────────
-    let inst1 = WorkspaceInstance::open(
-        WorkspaceInstanceId(700),
-        &def,
-        &gs,
-        &env,
-        find_exe_windows,
-    )
-    .expect("§36.10: first open must succeed");
+    let inst1 =
+        WorkspaceInstance::open(WorkspaceInstanceId(700), &def, &gs, &env, find_exe_windows)
+            .expect("§36.10: first open must succeed");
 
     // ── Open instance 2 ─────────────────────────────────────────────
-    let inst2 = WorkspaceInstance::open(
-        WorkspaceInstanceId(701),
-        &def,
-        &gs,
-        &env,
-        find_exe_windows,
-    )
-    .expect("§36.10: second open must succeed");
+    let inst2 =
+        WorkspaceInstance::open(WorkspaceInstanceId(701), &def, &gs, &env, find_exe_windows)
+            .expect("§36.10: second open must succeed");
 
     // ── Same number of tabs ─────────────────────────────────────────
     assert_eq!(

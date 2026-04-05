@@ -48,7 +48,8 @@ impl RequestHandler for NeverRespondHandler {
 #[tokio::test]
 async fn request_times_out_after_configured_duration() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), NeverRespondHandler).unwrap());
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), NeverRespondHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let s = server.clone();
     tokio::spawn(async move { s.run(shutdown_rx).await });
@@ -87,8 +88,14 @@ async fn request_times_out_after_configured_duration() {
 async fn timeout_error_message_includes_duration() {
     let err = ClientError::RequestTimeout(30.0);
     let msg = err.to_string();
-    assert!(msg.contains("30.0"), "message should include duration: {msg}");
-    assert!(msg.contains("timed out"), "message should say timed out: {msg}");
+    assert!(
+        msg.contains("30.0"),
+        "message should include duration: {msg}"
+    );
+    assert!(
+        msg.contains("timed out"),
+        "message should say timed out: {msg}"
+    );
 }
 
 #[tokio::test]

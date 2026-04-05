@@ -1,6 +1,6 @@
 //! Command palette overlay (§24.6).
 //!
-//! Modal overlay triggered by `Ctrl+Shift+Space`. Provides fuzzy search
+//! Modal overlay triggered by the configured command-palette binding. Provides fuzzy search
 //! over all available actions, displays keybinding hints, and dispatches
 //! the selected action through the unified action system.
 
@@ -37,6 +37,51 @@ const ITEM_HINT_COLOR: (u8, u8, u8) = (78, 201, 176);
 const SELECTED_BG: (u8, u8, u8) = (55, 55, 75);
 const BORDER_COLOR: (u8, u8, u8) = (65, 65, 85);
 const CURSOR_COLOR: (u8, u8, u8) = (78, 201, 176);
+
+const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
+    // Workspace lifecycle
+    ("open-workspace", "Open or attach to a workspace"),
+    ("close-workspace", "Close workspace UI"),
+    ("recreate-workspace", "Tear down and recreate workspace"),
+    ("save-workspace", "Save current workspace state"),
+    // Window actions
+    ("new-window", "Create a new window"),
+    ("close-window", "Close window and all tabs"),
+    // Tab management
+    ("new-tab", "Create a new tab"),
+    ("close-tab", "Close the current tab"),
+    ("next-tab", "Switch to next tab"),
+    ("prev-tab", "Switch to previous tab"),
+    ("goto-tab", "Switch to tab by index or name"),
+    ("rename-tab", "Rename the tab"),
+    ("move-tab-left", "Move tab one position left"),
+    ("move-tab-right", "Move tab one position right"),
+    // Pane management
+    ("split-right", "Split pane, new pane on right"),
+    ("split-down", "Split pane, new pane below"),
+    ("close-pane", "Close pane and kill session"),
+    ("focus-next-pane", "Move focus to next pane"),
+    ("focus-prev-pane", "Move focus to previous pane"),
+    ("focus-pane-up", "Move focus up"),
+    ("focus-pane-down", "Move focus down"),
+    ("focus-pane-left", "Move focus left"),
+    ("focus-pane-right", "Move focus right"),
+    ("focus-pane", "Move focus to named pane"),
+    ("zoom-pane", "Toggle pane zoom"),
+    ("rename-pane", "Rename pane"),
+    ("resize-pane-grow-right", "Grow pane to the right"),
+    ("resize-pane-grow-down", "Grow pane downward"),
+    ("resize-pane-shrink-right", "Shrink pane from the right"),
+    ("resize-pane-shrink-down", "Shrink pane from above"),
+    // Session & clipboard
+    ("restart-session", "Kill and relaunch session"),
+    ("copy", "Copy selected text to clipboard"),
+    ("paste", "Paste clipboard content"),
+    // UI actions
+    ("toggle-command-palette", "Toggle command palette"),
+    ("toggle-fullscreen", "Toggle window fullscreen"),
+    ("enter-scrollback-mode", "Enter scrollback navigation mode"),
+];
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -91,10 +136,7 @@ impl CommandPalette {
             .chain(std::iter::once(0))
             .collect();
         let font = PCWSTR(font_wide.as_ptr());
-        let locale_wide: Vec<u16> = "en-us"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let locale_wide: Vec<u16> = "en-us".encode_utf16().chain(std::iter::once(0)).collect();
         let locale = PCWSTR(locale_wide.as_ptr());
 
         let tf_input = unsafe {
@@ -187,6 +229,11 @@ impl CommandPalette {
         }
     }
 
+    /// Returns true when the palette exposes the given action.
+    pub fn has_action(&self, action_name: &str) -> bool {
+        self.entries.iter().any(|entry| entry.name == action_name)
+    }
+
     /// Process a keyboard event while the palette is visible.
     pub fn on_key_event(&mut self, event: &KeyEvent) -> PaletteResult {
         if !self.visible {
@@ -277,13 +324,40 @@ impl CommandPalette {
         Some(PaletteResult::Consumed)
     }
 
-    /// Paint the palette overlay. Call within an active BeginDraw/EndDraw.
-    pub fn paint(
-        &self,
-        rt: &ID2D1RenderTarget,
+    /// Handle mouse wheel scrolling while the palette is visible.
+    pub fn on_wheel(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta: i16,
         window_w: f32,
         window_h: f32,
-    ) -> Result<()> {
+    ) -> Option<PaletteResult> {
+        if !self.visible {
+            return None;
+        }
+
+        let (px, py, pw, ph) = self.palette_rect(window_w, window_h);
+        if x < px || x > px + pw || y < py || y > py + ph {
+            return Some(PaletteResult::Consumed);
+        }
+
+        if self.filtered.is_empty() || delta == 0 {
+            return Some(PaletteResult::Consumed);
+        }
+
+        let steps = (delta / 120).abs().max(1) as usize;
+        if delta > 0 {
+            self.selected = self.selected.saturating_sub(steps);
+        } else {
+            self.selected = (self.selected + steps).min(self.filtered.len() - 1);
+        }
+        self.ensure_visible();
+        Some(PaletteResult::Consumed)
+    }
+
+    /// Paint the palette overlay. Call within an active BeginDraw/EndDraw.
+    pub fn paint(&self, rt: &ID2D1RenderTarget, window_w: f32, window_h: f32) -> Result<()> {
         if !self.visible {
             return Ok(());
         }
@@ -395,13 +469,7 @@ impl CommandPalette {
         }
     }
 
-    unsafe fn paint_input(
-        &self,
-        rt: &ID2D1RenderTarget,
-        px: f32,
-        py: f32,
-        pw: f32,
-    ) -> Result<()> {
+    unsafe fn paint_input(&self, rt: &ID2D1RenderTarget, px: f32, py: f32, pw: f32) -> Result<()> {
         let input_rect = D2D_RECT_F {
             left: px + PADDING,
             top: py + PADDING,
@@ -427,7 +495,13 @@ impl CommandPalette {
 
         if self.query.is_empty() {
             let brush = make_brush(rt, INPUT_PLACEHOLDER_COLOR)?;
-            draw_text(rt, "Type to search actions\u{2026}", &self.tf_input, &text_rect, &brush);
+            draw_text(
+                rt,
+                "Type to search actions\u{2026}",
+                &self.tf_input,
+                &text_rect,
+                &brush,
+            );
         } else {
             let brush = make_brush(rt, INPUT_TEXT_COLOR)?;
             draw_text(rt, &self.query, &self.tf_input, &text_rect, &brush);
@@ -451,13 +525,7 @@ impl CommandPalette {
         Ok(())
     }
 
-    unsafe fn paint_items(
-        &self,
-        rt: &ID2D1RenderTarget,
-        px: f32,
-        py: f32,
-        pw: f32,
-    ) -> Result<()> {
+    unsafe fn paint_items(&self, rt: &ID2D1RenderTarget, px: f32, py: f32, pw: f32) -> Result<()> {
         let items_y = py + INPUT_HEIGHT + PADDING;
         let visible_count = self.filtered.len().min(MAX_VISIBLE_ITEMS);
 
@@ -509,7 +577,13 @@ impl CommandPalette {
                 right: item_rect.right - 130.0,
                 bottom: item_rect.bottom - 2.0,
             };
-            draw_text(rt, &entry.description, &self.tf_desc, &desc_rect, &desc_brush);
+            draw_text(
+                rt,
+                &entry.description,
+                &self.tf_desc,
+                &desc_rect,
+                &desc_brush,
+            );
 
             // Keybinding hint (right-aligned, vertically centered).
             if let Some(ref hint) = entry.keybinding {
@@ -574,47 +648,7 @@ pub fn fuzzy_score(query: &str, target: &str) -> Option<i32> {
 /// annotated with keybinding hints derived from the provided bindings.
 pub fn build_palette_entries(bindings: &BindingsDefinition) -> Vec<PaletteEntry> {
     let hints = build_keybinding_hints(bindings);
-
-    let actions: &[(&str, &str)] = &[
-        ("open-workspace", "Open or attach to a workspace"),
-        ("close-workspace", "Close workspace UI"),
-        ("recreate-workspace", "Recreate instance from definition"),
-        ("save-workspace", "Save workspace state as definition"),
-        ("new-window", "Create a new window"),
-        ("close-window", "Close window and all tabs"),
-        ("new-tab", "Create a new tab"),
-        ("close-tab", "Close tab and all panes"),
-        ("next-tab", "Switch to the next tab"),
-        ("prev-tab", "Switch to the previous tab"),
-        ("goto-tab", "Switch to tab by index or name"),
-        ("rename-tab", "Rename the tab"),
-        ("move-tab-left", "Move tab one position left"),
-        ("move-tab-right", "Move tab one position right"),
-        ("split-right", "Split pane, new pane on right"),
-        ("split-down", "Split pane, new pane below"),
-        ("close-pane", "Close pane and kill session"),
-        ("focus-next-pane", "Move focus to next pane"),
-        ("focus-prev-pane", "Move focus to previous pane"),
-        ("focus-pane-up", "Move focus up"),
-        ("focus-pane-down", "Move focus down"),
-        ("focus-pane-left", "Move focus left"),
-        ("focus-pane-right", "Move focus right"),
-        ("focus-pane", "Move focus to named pane"),
-        ("zoom-pane", "Toggle pane zoom"),
-        ("rename-pane", "Rename pane"),
-        ("resize-pane-grow-right", "Grow pane to the right"),
-        ("resize-pane-grow-down", "Grow pane downward"),
-        ("resize-pane-shrink-right", "Shrink pane from the right"),
-        ("resize-pane-shrink-down", "Shrink pane from above"),
-        ("restart-session", "Kill and relaunch session"),
-        ("copy", "Copy selected text to clipboard"),
-        ("paste", "Paste clipboard content"),
-        ("toggle-command-palette", "Toggle command palette"),
-        ("toggle-fullscreen", "Toggle fullscreen"),
-        ("enter-scrollback-mode", "Enter scrollback navigation"),
-    ];
-
-    actions
+    RUNNABLE_ACTIONS
         .iter()
         .map(|(name, desc)| PaletteEntry {
             name: name.to_string(),
@@ -626,6 +660,7 @@ pub fn build_palette_entries(bindings: &BindingsDefinition) -> Vec<PaletteEntry>
 
 /// Build a reverse map from action name to keybinding display string.
 pub fn build_keybinding_hints(bindings: &BindingsDefinition) -> HashMap<String, String> {
+    let bindings = wtd_core::effective_bindings(bindings);
     let mut hints: HashMap<String, String> = HashMap::new();
 
     // Single-stroke keys are preferred for display (more direct).
@@ -659,10 +694,7 @@ fn action_name_from_ref(ar: &ActionReference) -> String {
 
 // ── Drawing helpers ──────────────────────────────────────────────────────────
 
-fn make_brush(
-    rt: &ID2D1RenderTarget,
-    color: (u8, u8, u8),
-) -> Result<ID2D1SolidColorBrush> {
+fn make_brush(rt: &ID2D1RenderTarget, color: (u8, u8, u8)) -> Result<ID2D1SolidColorBrush> {
     let c = D2D1_COLOR_F {
         r: color.0 as f32 / 255.0,
         g: color.1 as f32 / 255.0,
@@ -762,7 +794,7 @@ mod tests {
         // "split" has all consecutive matches — should score higher
         let s1 = fuzzy_score("split", "split-right").unwrap();
         let s2 = fuzzy_score("spirt", "split-right"); // non-consecutive
-        // spirt: s(0) p(1) i(3) r(6) t(10) — should match but lower
+                                                      // spirt: s(0) p(1) i(3) r(6) t(10) — should match but lower
         match s2 {
             Some(s2) => assert!(s1 > s2),
             None => {} // also acceptable if 'i' before 'r' doesn't match order
@@ -779,9 +811,12 @@ mod tests {
             prefix_timeout: None,
             chords: None,
             keys: Some(
-                [("Ctrl+Shift+T".to_string(), ActionReference::Simple("new-tab".to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "Ctrl+Shift+T".to_string(),
+                    ActionReference::Simple("new-tab".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             ),
         };
         let hints = build_keybinding_hints(&bindings);
@@ -795,17 +830,17 @@ mod tests {
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(
-                [("%".to_string(), ActionReference::Simple("split-right".to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "%".to_string(),
+                    ActionReference::Simple("split-right".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             ),
             keys: None,
         };
         let hints = build_keybinding_hints(&bindings);
-        assert_eq!(
-            hints.get("split-right"),
-            Some(&"Ctrl+B, %".to_string())
-        );
+        assert_eq!(hints.get("split-right"), Some(&"Ctrl+B, %".to_string()));
     }
 
     #[test]
@@ -815,19 +850,34 @@ mod tests {
             prefix: Some("Ctrl+B".to_string()),
             prefix_timeout: Some(2000),
             chords: Some(
-                [("c".to_string(), ActionReference::Simple("new-tab".to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "c".to_string(),
+                    ActionReference::Simple("new-tab".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             ),
             keys: Some(
-                [("Ctrl+Shift+T".to_string(), ActionReference::Simple("new-tab".to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "Ctrl+Shift+T".to_string(),
+                    ActionReference::Simple("new-tab".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             ),
         };
         let hints = build_keybinding_hints(&bindings);
         // Single-stroke is inserted first, so it wins.
         assert_eq!(hints.get("new-tab"), Some(&"Ctrl+Shift+T".to_string()));
+    }
+
+    #[test]
+    fn default_bindings_expand_to_palette_shortcut_hint() {
+        let hints = build_keybinding_hints(&wtd_core::global_settings::default_bindings());
+        assert_eq!(
+            hints.get("toggle-command-palette"),
+            Some(&"Ctrl+Shift+P".to_string())
+        );
     }
 
     // ── Palette entries ──
@@ -842,7 +892,23 @@ mod tests {
             keys: None,
         };
         let entries = build_palette_entries(&bindings);
-        assert_eq!(entries.len(), 36);
+        assert_eq!(entries.len(), RUNNABLE_ACTIONS.len());
+    }
+
+    #[test]
+    fn tab_and_pane_actions_included_in_palette() {
+        let bindings = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        let entries = build_palette_entries(&bindings);
+        assert!(entries.iter().any(|e| e.name == "new-tab"));
+        assert!(entries.iter().any(|e| e.name == "next-tab"));
+        assert!(entries.iter().any(|e| e.name == "prev-tab"));
+        assert!(entries.iter().any(|e| e.name == "split-right"));
     }
 
     #[test]
@@ -862,8 +928,8 @@ mod tests {
     fn entries_have_keybinding_from_tmux_bindings() {
         let bindings = wtd_core::global_settings::tmux_bindings();
         let entries = build_palette_entries(&bindings);
-        let new_tab = entries.iter().find(|e| e.name == "new-tab").unwrap();
-        assert_eq!(new_tab.keybinding, Some("Ctrl+Shift+T".to_string()));
+        let split_right = entries.iter().find(|e| e.name == "split-right").unwrap();
+        assert_eq!(split_right.keybinding, Some("Alt+Shift+D".to_string()));
     }
 
     #[test]

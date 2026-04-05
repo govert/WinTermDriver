@@ -27,7 +27,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     fn center_x(self) -> f64 {
@@ -398,9 +403,7 @@ impl LayoutTree {
                 None => break,
             };
             if let NodeKind::Split {
-                orientation,
-                first,
-                ..
+                orientation, first, ..
             } = &self.node(p).kind
             {
                 in_first = *first == cur;
@@ -440,12 +443,11 @@ impl LayoutTree {
 
         // Grow in the pane's favour: increase ratio when pane is first child
         // and growing, or when pane is second child and shrinking.
-        let new_ratio =
-            if (in_first && growing) || (!in_first && !growing) {
-                old_ratio + delta
-            } else {
-                old_ratio - delta
-            };
+        let new_ratio = if (in_first && growing) || (!in_first && !growing) {
+            old_ratio + delta
+        } else {
+            old_ratio - delta
+        };
 
         // Clamp to [lo, hi] ensuring minimum pane sizes.
         let min_first = self.min_dim(first_idx, &orient) as f64 / total_dim as f64;
@@ -524,11 +526,7 @@ impl LayoutTree {
         }
     }
 
-    fn build_from_node(
-        &mut self,
-        node: &PaneNode,
-        mappings: &mut Vec<(String, PaneId)>,
-    ) -> Idx {
+    fn build_from_node(&mut self, node: &PaneNode, mappings: &mut Vec<(String, PaneId)>) -> Idx {
         match node {
             PaneNode::Pane(leaf) => {
                 let id = self.alloc_pane_id();
@@ -563,20 +561,14 @@ impl LayoutTree {
         }
     }
 
-    fn split(
-        &mut self,
-        target: PaneId,
-        orientation: Orientation,
-    ) -> Result<PaneId, LayoutError> {
+    fn split(&mut self, target: PaneId, orientation: Orientation) -> Result<PaneId, LayoutError> {
         let target_idx = self.pane_idx(target.clone())?;
         let target_parent = self.node(target_idx).parent;
 
         let new_id = self.alloc_pane_id();
         let new_pane_idx = self.alloc_node(Node {
             parent: None,
-            kind: NodeKind::Pane {
-                id: new_id.clone(),
-            },
+            kind: NodeKind::Pane { id: new_id.clone() },
         });
 
         // Move original pane out of its slot to a fresh slot.
@@ -790,7 +782,12 @@ mod tests {
         let p2 = tree.split_right(p1.clone()).unwrap();
 
         let result = tree.close_pane(p1).unwrap();
-        assert_eq!(result, CloseResult::Closed { new_focus: p2.clone() });
+        assert_eq!(
+            result,
+            CloseResult::Closed {
+                new_focus: p2.clone()
+            }
+        );
         assert_eq!(tree.pane_count(), 1);
         assert_eq!(tree.panes(), vec![p2]);
     }
@@ -804,7 +801,12 @@ mod tests {
 
         // Close p2 — the V-split subtree (p1, p3) becomes root.
         let result = tree.close_pane(p2).unwrap();
-        assert_eq!(result, CloseResult::Closed { new_focus: p1.clone() });
+        assert_eq!(
+            result,
+            CloseResult::Closed {
+                new_focus: p1.clone()
+            }
+        );
         assert_eq!(tree.pane_count(), 2);
         assert_eq!(tree.panes(), vec![p1.clone(), p3.clone()]);
 

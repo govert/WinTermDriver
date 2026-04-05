@@ -143,7 +143,10 @@ fn status_bar_renders_all_session_states() {
 
         // Verify label is non-empty
         let label = status.label();
-        assert!(!label.is_empty(), "status label must not be empty for {status:?}");
+        assert!(
+            !label.is_empty(),
+            "status label must not be empty for {status:?}"
+        );
 
         renderer.begin_draw();
         renderer.clear_background();

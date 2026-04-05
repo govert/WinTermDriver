@@ -39,9 +39,7 @@ fn next_id() -> String {
 
 // ── IPC connection helpers ──────────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -57,9 +55,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -908,7 +904,8 @@ async fn capture_9_cursor_field_consistency() {
     assert!(
         total > cursor,
         "cursor ({}) must be < total_lines ({})",
-        cursor, total,
+        cursor,
+        total,
     );
 
     // Capture B: lines = total - cursor.  This starts from the same absolute
@@ -1049,7 +1046,9 @@ async fn capture_10_json_shape() {
     let p2 = &resp2.payload;
 
     assert!(
-        p2.get("anchorFound").map(|v| v.is_boolean()).unwrap_or(false),
+        p2.get("anchorFound")
+            .map(|v| v.is_boolean())
+            .unwrap_or(false),
         "'anchorFound' must be a boolean when anchor was requested; payload: {:?}",
         p2,
     );

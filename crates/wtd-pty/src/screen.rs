@@ -42,9 +42,15 @@ impl CellAttrs {
     pub const HIDDEN: u16 = 1 << 6;
     pub const STRIKETHROUGH: u16 = 1 << 7;
 
-    pub fn is_set(self, flag: u16) -> bool { self.0 & flag != 0 }
-    pub fn set(&mut self, flag: u16) { self.0 |= flag; }
-    pub fn clear(&mut self, flag: u16) { self.0 &= !flag; }
+    pub fn is_set(self, flag: u16) -> bool {
+        self.0 & flag != 0
+    }
+    pub fn set(&mut self, flag: u16) {
+        self.0 |= flag;
+    }
+    pub fn clear(&mut self, flag: u16) {
+        self.0 &= !flag;
+    }
 }
 
 // ── Cell ─────────────────────────────────────────────────────────────────────
@@ -158,8 +164,14 @@ impl Grid {
     }
 
     /// Scroll the region [top, bottom] (inclusive, 0-based rows) up by n.
-    fn scroll_region_up(&mut self, top: usize, bottom: usize, n: usize,
-                         scrollback: &mut VecDeque<Vec<Cell>>, max_scrollback: usize) {
+    fn scroll_region_up(
+        &mut self,
+        top: usize,
+        bottom: usize,
+        n: usize,
+        scrollback: &mut VecDeque<Vec<Cell>>,
+        max_scrollback: usize,
+    ) {
         if top == 0 && bottom == self.rows.saturating_sub(1) {
             self.scroll_up(n, scrollback, max_scrollback);
             return;
@@ -267,14 +279,30 @@ impl Grid {
 fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
     let mut params: Vec<&'static str> = vec!["0"]; // reset
 
-    if attrs.is_set(CellAttrs::BOLD) { params.push("1"); }
-    if attrs.is_set(CellAttrs::DIM) { params.push("2"); }
-    if attrs.is_set(CellAttrs::ITALIC) { params.push("3"); }
-    if attrs.is_set(CellAttrs::UNDERLINE) { params.push("4"); }
-    if attrs.is_set(CellAttrs::BLINK) { params.push("5"); }
-    if attrs.is_set(CellAttrs::INVERSE) { params.push("7"); }
-    if attrs.is_set(CellAttrs::HIDDEN) { params.push("8"); }
-    if attrs.is_set(CellAttrs::STRIKETHROUGH) { params.push("9"); }
+    if attrs.is_set(CellAttrs::BOLD) {
+        params.push("1");
+    }
+    if attrs.is_set(CellAttrs::DIM) {
+        params.push("2");
+    }
+    if attrs.is_set(CellAttrs::ITALIC) {
+        params.push("3");
+    }
+    if attrs.is_set(CellAttrs::UNDERLINE) {
+        params.push("4");
+    }
+    if attrs.is_set(CellAttrs::BLINK) {
+        params.push("5");
+    }
+    if attrs.is_set(CellAttrs::INVERSE) {
+        params.push("7");
+    }
+    if attrs.is_set(CellAttrs::HIDDEN) {
+        params.push("8");
+    }
+    if attrs.is_set(CellAttrs::STRIKETHROUGH) {
+        params.push("9");
+    }
 
     // Build dynamic param strings for colors (cannot be &'static str).
     let mut dynamic: Vec<String> = Vec::new();
@@ -351,7 +379,12 @@ pub struct Cursor {
 
 impl Cursor {
     fn default_visible() -> Self {
-        Cursor { row: 0, col: 0, visible: true, shape: CursorShape::Block }
+        Cursor {
+            row: 0,
+            col: 0,
+            visible: true,
+            shape: CursorShape::Block,
+        }
     }
 }
 
@@ -458,25 +491,41 @@ impl ScreenBuffer {
 
     // ── Accessors ────────────────────────────────────────────────────────────
 
-    pub fn cols(&self) -> usize { self.cols }
-    pub fn rows(&self) -> usize { self.rows }
-    pub fn on_alternate(&self) -> bool { self.on_alternate }
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+    pub fn on_alternate(&self) -> bool {
+        self.on_alternate
+    }
 
     /// Current cursor state.
-    pub fn cursor(&self) -> &Cursor { &self.cursor }
+    pub fn cursor(&self) -> &Cursor {
+        &self.cursor
+    }
 
     /// Current mouse tracking mode.
-    pub fn mouse_mode(&self) -> MouseMode { self.mouse_mode }
+    pub fn mouse_mode(&self) -> MouseMode {
+        self.mouse_mode
+    }
 
     /// Whether SGR extended mouse format (mode 1006) is active.
-    pub fn sgr_mouse(&self) -> bool { self.sgr_mouse }
+    pub fn sgr_mouse(&self) -> bool {
+        self.sgr_mouse
+    }
 
     /// Whether bracketed paste mode (DECSET 2004) is active.
-    pub fn bracketed_paste(&self) -> bool { self.bracketed_paste }
+    pub fn bracketed_paste(&self) -> bool {
+        self.bracketed_paste
+    }
 
     /// Cell at (row, col) in the visible screen (0-based).
     pub fn cell(&self, row: usize, col: usize) -> Option<&Cell> {
-        if row >= self.rows || col >= self.cols { return None; }
+        if row >= self.rows || col >= self.cols {
+            return None;
+        }
         Some(self.active_grid().cell(row, col))
     }
 
@@ -498,7 +547,9 @@ impl ScreenBuffer {
 
     /// Read a single row as plain text (without the trailing newline).
     pub fn row_text(&self, row: usize) -> Option<String> {
-        if row >= self.rows { return None; }
+        if row >= self.rows {
+            return None;
+        }
         let g = self.active_grid();
         let mut s = String::with_capacity(self.cols);
         for c in 0..self.cols {
@@ -511,7 +562,9 @@ impl ScreenBuffer {
     }
 
     /// Number of scrollback rows currently stored.
-    pub fn scrollback_len(&self) -> usize { self.scrollback.len() }
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
+    }
 
     /// A row from scrollback (0 = oldest).
     pub fn scrollback_row(&self, idx: usize) -> Option<&Vec<Cell>> {
@@ -547,6 +600,7 @@ impl ScreenBuffer {
         let sb_len = self.scrollback.len();
         let total = sb_len + self.rows;
         let total_lines = total as u32;
+        let active_grid = self.active_grid();
 
         let mut anchor_found: Option<bool> = None;
 
@@ -557,7 +611,7 @@ impl ScreenBuffer {
                 let line_text = if i < sb_len {
                     cells_to_string(&self.scrollback[i])
                 } else {
-                    cells_to_string(self.primary.row_slice(i - sb_len))
+                    cells_to_string(active_grid.row_slice(i - sb_len))
                 };
 
                 let matched = if let Some(pattern) = after {
@@ -579,8 +633,8 @@ impl ScreenBuffer {
             None
         };
 
-        let mut start = anchor_start
-            .unwrap_or_else(|| default_capture_start(lines, all, sb_len, total));
+        let mut start =
+            anchor_start.unwrap_or_else(|| default_capture_start(lines, all, sb_len, total));
 
         // ── Apply max_lines cap ───────────────────────────────────────────
         if let Some(max) = max_lines {
@@ -605,7 +659,7 @@ impl ScreenBuffer {
                     out.push('\n');
                 } else {
                     let row = i - sb_len;
-                    let raw = cells_to_string(self.primary.row_slice(row));
+                    let raw = cells_to_string(active_grid.row_slice(row));
                     out.push_str(&raw);
                     out.push('\n');
                 }
@@ -644,9 +698,7 @@ impl ScreenBuffer {
         for row in 0..self.rows {
             if row > 0 {
                 // Position cursor at start of this row (rows are 1-based in VT).
-                out.extend_from_slice(
-                    format!("\x1b[{};1H", row + 1).as_bytes(),
-                );
+                out.extend_from_slice(format!("\x1b[{};1H", row + 1).as_bytes());
             }
 
             let mut col = 0usize;
@@ -690,7 +742,11 @@ impl ScreenBuffer {
                     if rc.wide_continuation {
                         continue;
                     }
-                    let ch = if rc.character == '\0' { ' ' } else { rc.character };
+                    let ch = if rc.character == '\0' {
+                        ' '
+                    } else {
+                        rc.character
+                    };
                     let mut buf = [0u8; 4];
                     let s = ch.encode_utf8(&mut buf);
                     out.extend_from_slice(s.as_bytes());
@@ -729,11 +785,19 @@ impl ScreenBuffer {
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn active_grid(&self) -> &Grid {
-        if self.on_alternate { &self.alternate } else { &self.primary }
+        if self.on_alternate {
+            &self.alternate
+        } else {
+            &self.primary
+        }
     }
 
     fn active_grid_mut(&mut self) -> &mut Grid {
-        if self.on_alternate { &mut self.alternate } else { &mut self.primary }
+        if self.on_alternate {
+            &mut self.alternate
+        } else {
+            &mut self.primary
+        }
     }
 
     /// Write a character at cursor position and advance cursor.
@@ -754,11 +818,19 @@ impl ScreenBuffer {
             let on_alt = self.on_alternate;
             // Only add to scrollback from primary screen's top margin.
             if top == 0 && !on_alt {
-                let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                let grid = if on_alt {
+                    &mut self.alternate
+                } else {
+                    &mut self.primary
+                };
                 grid.scroll_region_up(top, bot, 1, &mut self.scrollback, max_sb);
             } else {
                 let mut dummy: VecDeque<Vec<Cell>> = VecDeque::new();
-                let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                let grid = if on_alt {
+                    &mut self.alternate
+                } else {
+                    &mut self.primary
+                };
                 grid.scroll_region_up(top, bot, 1, &mut dummy, 0);
             }
             self.cursor.row = self.scroll_bottom;
@@ -827,7 +899,10 @@ impl ScreenBuffer {
                 8 => self.pen_attrs.set(CellAttrs::HIDDEN),
                 9 => self.pen_attrs.set(CellAttrs::STRIKETHROUGH),
                 21 => self.pen_attrs.clear(CellAttrs::BOLD),
-                22 => { self.pen_attrs.clear(CellAttrs::BOLD); self.pen_attrs.clear(CellAttrs::DIM); }
+                22 => {
+                    self.pen_attrs.clear(CellAttrs::BOLD);
+                    self.pen_attrs.clear(CellAttrs::DIM);
+                }
                 23 => self.pen_attrs.clear(CellAttrs::ITALIC),
                 24 => self.pen_attrs.clear(CellAttrs::UNDERLINE),
                 25 => self.pen_attrs.clear(CellAttrs::BLINK),
@@ -845,14 +920,30 @@ impl ScreenBuffer {
                         self.pen_fg = Color::Indexed(subs[2] as u8);
                     } else if subs.len() >= 5 && subs[1] == 2 {
                         self.pen_fg = Color::Rgb(subs[2] as u8, subs[3] as u8, subs[4] as u8);
-                    } else if i + 1 < flat.len() && flat[i+1][0] == 5 {
-                        let n = if i + 2 < flat.len() { flat[i+2][0] as u8 } else { 0 };
+                    } else if i + 1 < flat.len() && flat[i + 1][0] == 5 {
+                        let n = if i + 2 < flat.len() {
+                            flat[i + 2][0] as u8
+                        } else {
+                            0
+                        };
                         self.pen_fg = Color::Indexed(n);
                         i += 2;
-                    } else if i + 1 < flat.len() && flat[i+1][0] == 2 {
-                        let r = if i+2 < flat.len() { flat[i+2][0] as u8 } else { 0 };
-                        let g = if i+3 < flat.len() { flat[i+3][0] as u8 } else { 0 };
-                        let b = if i+4 < flat.len() { flat[i+4][0] as u8 } else { 0 };
+                    } else if i + 1 < flat.len() && flat[i + 1][0] == 2 {
+                        let r = if i + 2 < flat.len() {
+                            flat[i + 2][0] as u8
+                        } else {
+                            0
+                        };
+                        let g = if i + 3 < flat.len() {
+                            flat[i + 3][0] as u8
+                        } else {
+                            0
+                        };
+                        let b = if i + 4 < flat.len() {
+                            flat[i + 4][0] as u8
+                        } else {
+                            0
+                        };
                         self.pen_fg = Color::Rgb(r, g, b);
                         i += 4;
                     }
@@ -866,14 +957,30 @@ impl ScreenBuffer {
                         self.pen_bg = Color::Indexed(subs[2] as u8);
                     } else if subs.len() >= 5 && subs[1] == 2 {
                         self.pen_bg = Color::Rgb(subs[2] as u8, subs[3] as u8, subs[4] as u8);
-                    } else if i + 1 < flat.len() && flat[i+1][0] == 5 {
-                        let n = if i + 2 < flat.len() { flat[i+2][0] as u8 } else { 0 };
+                    } else if i + 1 < flat.len() && flat[i + 1][0] == 5 {
+                        let n = if i + 2 < flat.len() {
+                            flat[i + 2][0] as u8
+                        } else {
+                            0
+                        };
                         self.pen_bg = Color::Indexed(n);
                         i += 2;
-                    } else if i + 1 < flat.len() && flat[i+1][0] == 2 {
-                        let r = if i+2 < flat.len() { flat[i+2][0] as u8 } else { 0 };
-                        let g = if i+3 < flat.len() { flat[i+3][0] as u8 } else { 0 };
-                        let b = if i+4 < flat.len() { flat[i+4][0] as u8 } else { 0 };
+                    } else if i + 1 < flat.len() && flat[i + 1][0] == 2 {
+                        let r = if i + 2 < flat.len() {
+                            flat[i + 2][0] as u8
+                        } else {
+                            0
+                        };
+                        let g = if i + 3 < flat.len() {
+                            flat[i + 3][0] as u8
+                        } else {
+                            0
+                        };
+                        let b = if i + 4 < flat.len() {
+                            flat[i + 4][0] as u8
+                        } else {
+                            0
+                        };
                         self.pen_bg = Color::Rgb(r, g, b);
                         i += 4;
                     }
@@ -947,7 +1054,9 @@ impl ScreenBuffer {
 
 fn unicode_width(c: char) -> usize {
     // Fast path for common ASCII.
-    if (c as u32) < 0x300 { return 1; }
+    if (c as u32) < 0x300 {
+        return 1;
+    }
     // CJK Unified Ideographs, Fullwidth Forms, etc. — very conservative subset.
     match c as u32 {
         0x1100..=0x115F |  // Hangul Jamo
@@ -987,7 +1096,9 @@ impl Perform for ScreenBuffer {
             0x07 => {}
             // BS
             0x08 => {
-                if self.cursor.col > 0 { self.cursor.col -= 1; }
+                if self.cursor.col > 0 {
+                    self.cursor.col -= 1;
+                }
             }
             // HT (tab)
             0x09 => {
@@ -1002,11 +1113,19 @@ impl Perform for ScreenBuffer {
                     let max_sb = self.max_scrollback;
                     let on_alt = self.on_alternate;
                     if top == 0 && !on_alt {
-                        let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                        let grid = if on_alt {
+                            &mut self.alternate
+                        } else {
+                            &mut self.primary
+                        };
                         grid.scroll_region_up(top, bot, 1, &mut self.scrollback, max_sb);
                     } else {
                         let mut dummy: VecDeque<Vec<Cell>> = VecDeque::new();
-                        let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                        let grid = if on_alt {
+                            &mut self.alternate
+                        } else {
+                            &mut self.primary
+                        };
                         grid.scroll_region_up(top, bot, 1, &mut dummy, 0);
                     }
                 } else {
@@ -1017,7 +1136,9 @@ impl Perform for ScreenBuffer {
                 }
             }
             // CR
-            0x0D => { self.cursor.col = 0; }
+            0x0D => {
+                self.cursor.col = 0;
+            }
             _ => {}
         }
     }
@@ -1109,8 +1230,10 @@ impl Perform for ScreenBuffer {
                 let cols = self.cols;
                 let grid = self.active_grid_mut();
                 grid.scroll_region_down(row, bot, n);
-                for r in row..row+n {
-                    if r > bot { break; }
+                for r in row..row + n {
+                    if r > bot {
+                        break;
+                    }
                     for c in 0..cols {
                         *grid.cell_mut(r, c) = Cell::blank();
                     }
@@ -1122,7 +1245,8 @@ impl Perform for ScreenBuffer {
                 let row = self.cursor.row;
                 let bot = self.scroll_bottom;
                 let mut dummy: VecDeque<Vec<Cell>> = VecDeque::new();
-                self.active_grid_mut().scroll_region_up(row, bot, n, &mut dummy, 0);
+                self.active_grid_mut()
+                    .scroll_region_up(row, bot, n, &mut dummy, 0);
             }
             // DCH — delete characters
             ([], 'P') => {
@@ -1148,11 +1272,19 @@ impl Perform for ScreenBuffer {
                 let max_sb = self.max_scrollback;
                 let on_alt = self.on_alternate;
                 if top == 0 && !on_alt {
-                    let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                    let grid = if on_alt {
+                        &mut self.alternate
+                    } else {
+                        &mut self.primary
+                    };
                     grid.scroll_region_up(top, bot, n, &mut self.scrollback, max_sb);
                 } else {
                     let mut dummy: VecDeque<Vec<Cell>> = VecDeque::new();
-                    let grid = if on_alt { &mut self.alternate } else { &mut self.primary };
+                    let grid = if on_alt {
+                        &mut self.alternate
+                    } else {
+                        &mut self.primary
+                    };
                     grid.scroll_region_up(top, bot, n, &mut dummy, 0);
                 }
             }
@@ -1361,14 +1493,14 @@ mod tests {
     #[test]
     fn cursor_up_down_left_right() {
         let mut b = buf(80, 24);
-        feed(&mut b, "\x1b[5;5H");  // row=4, col=4
-        feed(&mut b, "\x1b[2A");    // up 2 → row=2
+        feed(&mut b, "\x1b[5;5H"); // row=4, col=4
+        feed(&mut b, "\x1b[2A"); // up 2 → row=2
         assert_eq!(b.cursor().row, 2);
-        feed(&mut b, "\x1b[3B");    // down 3 → row=5
+        feed(&mut b, "\x1b[3B"); // down 3 → row=5
         assert_eq!(b.cursor().row, 5);
-        feed(&mut b, "\x1b[2C");    // right 2 → col=6
+        feed(&mut b, "\x1b[2C"); // right 2 → col=6
         assert_eq!(b.cursor().col, 6);
-        feed(&mut b, "\x1b[1D");    // left 1 → col=5
+        feed(&mut b, "\x1b[1D"); // left 1 → col=5
         assert_eq!(b.cursor().col, 5);
     }
 
@@ -1488,6 +1620,42 @@ mod tests {
         assert_eq!(b.scrollback_len(), sb_before);
     }
 
+    #[test]
+    fn capture_extended_visible_uses_alternate_screen() {
+        let mut b = buf(40, 5);
+        feed(&mut b, "primary-visible");
+        feed(&mut b, "\x1b[?1049h");
+        feed(&mut b, "alternate-visible");
+
+        let capture = b.capture_extended(None, false, None, None, None, false);
+
+        assert!(
+            capture.text.contains("alternate-visible"),
+            "capture should include alternate screen text; got:\n{}",
+            capture.text
+        );
+        assert!(
+            !capture.text.contains("primary-visible"),
+            "visible-only capture should not include primary screen text while on alternate"
+        );
+    }
+
+    #[test]
+    fn capture_extended_all_uses_alternate_visible_rows() {
+        let mut b = buf(40, 5);
+        feed(&mut b, "primary-visible");
+        feed(&mut b, "\x1b[?1049h");
+        feed(&mut b, "alternate-visible");
+
+        let capture = b.capture_extended(None, true, None, None, None, false);
+
+        assert!(
+            capture.text.contains("alternate-visible"),
+            "all capture should include alternate screen text; got:\n{}",
+            capture.text
+        );
+    }
+
     // ── Scrollback ────────────────────────────────────────────────────────────
 
     #[test]
@@ -1572,7 +1740,7 @@ mod tests {
         let mut b = buf(80, 24);
         feed(&mut b, "ABCDE");
         feed(&mut b, "\x1b[1;3H"); // row=0, col=2
-        feed(&mut b, "\x1b[0K");   // EL 0: erase to end of line
+        feed(&mut b, "\x1b[0K"); // EL 0: erase to end of line
         assert_eq!(b.cell(0, 0).unwrap().character, 'A');
         assert_eq!(b.cell(0, 1).unwrap().character, 'B');
         assert_eq!(b.cell(0, 2).unwrap().character, ' ');
@@ -1637,9 +1805,9 @@ mod tests {
     fn save_restore_cursor() {
         let mut b = buf(80, 24);
         feed(&mut b, "\x1b[5;10H"); // row=4, col=9
-        feed(&mut b, "\x1b7");      // DECSC save
-        feed(&mut b, "\x1b[1;1H");  // move away
-        feed(&mut b, "\x1b8");      // DECRC restore
+        feed(&mut b, "\x1b7"); // DECSC save
+        feed(&mut b, "\x1b[1;1H"); // move away
+        feed(&mut b, "\x1b8"); // DECRC restore
         assert_eq!(b.cursor().row, 4);
         assert_eq!(b.cursor().col, 9);
     }
@@ -1763,7 +1931,7 @@ mod tests {
         assert_eq!(r.total_lines, 7);
         assert_eq!(r.lines, 5);
         assert_eq!(r.cursor, 2); // total(7) - 5 = 2
-        // Scrollback rows are trimmed; visible rows keep full width
+                                 // Scrollback rows are trimmed; visible rows keep full width
         assert!(r.text.starts_with("line2\n"), "got: {:?}", r.text);
         assert!(r.text.contains("line3\n"), "got: {:?}", r.text);
         assert!(r.text.contains("line4     \n"), "got: {:?}", r.text);
@@ -1811,7 +1979,7 @@ mod tests {
         let r = b.capture_extended(None, false, None, Some(&re), None, false);
         assert_eq!(r.anchor_found, Some(true));
         assert_eq!(r.cursor, 3); // scrollback[3] = "line3     "
-        assert_eq!(r.lines, 4);  // lines 3..6
+        assert_eq!(r.lines, 4); // lines 3..6
         assert!(r.text.starts_with("line3\n"), "got: {:?}", r.text);
     }
 
@@ -1821,9 +1989,13 @@ mod tests {
         let r = b.capture_extended(None, true, None, None, Some(3), false);
         assert_eq!(r.lines, 3);
         assert_eq!(r.cursor, 4); // total(7) - max(3) = 4
-        // Only visible rows returned
+                                 // Only visible rows returned
         assert!(r.text.contains("line4     "), "got: {:?}", r.text);
-        assert!(!r.text.contains("line3"), "should not contain scrollback: {:?}", r.text);
+        assert!(
+            !r.text.contains("line3"),
+            "should not contain scrollback: {:?}",
+            r.text
+        );
     }
 
     #[test]

@@ -560,9 +560,7 @@ impl ActionDispatcher {
         self.registry.validate_args(action_name, args)?;
 
         // Check workspace is active for most actions
-        if def.target_type != TargetType::Global
-            && *workspace.state() != WorkspaceState::Active
-        {
+        if def.target_type != TargetType::Global && *workspace.state() != WorkspaceState::Active {
             return Err(ActionError::Workspace(WorkspaceError::InvalidState(
                 workspace.state().clone(),
             )));
@@ -611,22 +609,26 @@ impl ActionDispatcher {
             }
             "focus-pane-up" => {
                 let tab = active_tab_mut(workspace)?;
-                tab.layout_mut().focus_direction(Direction::Up, self.viewport);
+                tab.layout_mut()
+                    .focus_direction(Direction::Up, self.viewport);
                 Ok(ActionResult::Ok)
             }
             "focus-pane-down" => {
                 let tab = active_tab_mut(workspace)?;
-                tab.layout_mut().focus_direction(Direction::Down, self.viewport);
+                tab.layout_mut()
+                    .focus_direction(Direction::Down, self.viewport);
                 Ok(ActionResult::Ok)
             }
             "focus-pane-left" => {
                 let tab = active_tab_mut(workspace)?;
-                tab.layout_mut().focus_direction(Direction::Left, self.viewport);
+                tab.layout_mut()
+                    .focus_direction(Direction::Left, self.viewport);
                 Ok(ActionResult::Ok)
             }
             "focus-pane-right" => {
                 let tab = active_tab_mut(workspace)?;
-                tab.layout_mut().focus_direction(Direction::Right, self.viewport);
+                tab.layout_mut()
+                    .focus_direction(Direction::Right, self.viewport);
                 Ok(ActionResult::Ok)
             }
             "focus-pane" => {
@@ -654,28 +656,48 @@ impl ActionDispatcher {
                 let pane_id = self.resolve_pane(workspace, target_pane_id)?;
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
                 let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
-                tab.layout_mut().resize_pane(pane_id, ResizeDirection::GrowRight, amount, self.viewport)?;
+                tab.layout_mut().resize_pane(
+                    pane_id,
+                    ResizeDirection::GrowRight,
+                    amount,
+                    self.viewport,
+                )?;
                 Ok(ActionResult::Ok)
             }
             "resize-pane-grow-down" => {
                 let pane_id = self.resolve_pane(workspace, target_pane_id)?;
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
                 let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
-                tab.layout_mut().resize_pane(pane_id, ResizeDirection::GrowDown, amount, self.viewport)?;
+                tab.layout_mut().resize_pane(
+                    pane_id,
+                    ResizeDirection::GrowDown,
+                    amount,
+                    self.viewport,
+                )?;
                 Ok(ActionResult::Ok)
             }
             "resize-pane-shrink-right" => {
                 let pane_id = self.resolve_pane(workspace, target_pane_id)?;
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
                 let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
-                tab.layout_mut().resize_pane(pane_id, ResizeDirection::ShrinkRight, amount, self.viewport)?;
+                tab.layout_mut().resize_pane(
+                    pane_id,
+                    ResizeDirection::ShrinkRight,
+                    amount,
+                    self.viewport,
+                )?;
                 Ok(ActionResult::Ok)
             }
             "resize-pane-shrink-down" => {
                 let pane_id = self.resolve_pane(workspace, target_pane_id)?;
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
                 let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
-                tab.layout_mut().resize_pane(pane_id, ResizeDirection::ShrinkDown, amount, self.viewport)?;
+                tab.layout_mut().resize_pane(
+                    pane_id,
+                    ResizeDirection::ShrinkDown,
+                    amount,
+                    self.viewport,
+                )?;
                 Ok(ActionResult::Ok)
             }
 
@@ -725,10 +747,7 @@ impl ActionDispatcher {
             Ok(id)
         } else {
             // Use focused pane of first tab (active tab)
-            let tab = workspace
-                .tabs()
-                .first()
-                .ok_or(ActionError::NoActiveTab)?;
+            let tab = workspace.tabs().first().ok_or(ActionError::NoActiveTab)?;
             Ok(tab.layout().focus())
         }
     }
@@ -769,9 +788,10 @@ fn find_tab_for_pane_mut<'a>(
 fn active_tab_mut(
     workspace: &mut WorkspaceInstance,
 ) -> Result<&mut crate::workspace_instance::TabInstance, ActionError> {
+    let idx = workspace.active_tab_index();
     workspace
         .tabs_mut()
-        .first_mut()
+        .get_mut(idx)
         .ok_or(ActionError::NoActiveTab)
 }
 
@@ -795,7 +815,10 @@ mod tests {
         let def = r.get("split-right").unwrap();
         assert_eq!(def.target_type, TargetType::Pane);
         assert_eq!(def.args.len(), 1); // profile?
-        assert_eq!(def.description, "Split focused pane horizontally, new pane on right");
+        assert_eq!(
+            def.description,
+            "Split focused pane horizontally, new pane on right"
+        );
     }
 
     #[test]
@@ -817,7 +840,9 @@ mod tests {
         // split-right with no args is fine (profile is optional)
         assert!(r.validate_args("split-right", &json!({})).is_ok());
         // with valid profile arg
-        assert!(r.validate_args("split-right", &json!({"profile": "cmd"})).is_ok());
+        assert!(r
+            .validate_args("split-right", &json!({"profile": "cmd"}))
+            .is_ok());
     }
 
     #[test]
@@ -864,17 +889,15 @@ mod tests {
         let r = v1_registry();
         // name is required
         assert!(r.validate_args("open-workspace", &json!({})).is_err());
-        assert!(
-            r.validate_args("open-workspace", &json!({"name": "test"}))
-                .is_ok()
-        );
-        assert!(
-            r.validate_args(
+        assert!(r
+            .validate_args("open-workspace", &json!({"name": "test"}))
+            .is_ok());
+        assert!(r
+            .validate_args(
                 "open-workspace",
                 &json!({"name": "test", "file": "a.yaml", "recreate": true})
             )
-            .is_ok()
-        );
+            .is_ok());
     }
 
     #[test]
@@ -883,15 +906,13 @@ mod tests {
         // both args optional
         assert!(r.validate_args("goto-tab", &json!({})).is_ok());
         assert!(r.validate_args("goto-tab", &json!({"index": 2})).is_ok());
-        assert!(
-            r.validate_args("goto-tab", &json!({"name": "main"}))
-                .is_ok()
-        );
+        assert!(r
+            .validate_args("goto-tab", &json!({"name": "main"}))
+            .is_ok());
         // wrong type
-        assert!(
-            r.validate_args("goto-tab", &json!({"index": "two"}))
-                .is_err()
-        );
+        assert!(r
+            .validate_args("goto-tab", &json!({"index": "two"}))
+            .is_err());
     }
 
     #[test]
@@ -906,8 +927,12 @@ mod tests {
     #[test]
     fn all_target_types_represented() {
         let r = v1_registry();
-        let types: std::collections::HashSet<TargetType> =
-            r.action_names().iter().filter_map(|n| r.get(n)).map(|d| d.target_type).collect();
+        let types: std::collections::HashSet<TargetType> = r
+            .action_names()
+            .iter()
+            .filter_map(|n| r.get(n))
+            .map(|d| d.target_type)
+            .collect();
         assert!(types.contains(&TargetType::Global));
         assert!(types.contains(&TargetType::Workspace));
         assert!(types.contains(&TargetType::Window));
@@ -919,10 +944,7 @@ mod tests {
 
     #[test]
     fn dispatch_unknown_action_error() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
         let result = dispatcher.dispatch(&mut workspace, "nonexistent", &json!({}), None);
         assert!(matches!(result, Err(ActionError::UnknownAction(_))));
@@ -930,38 +952,22 @@ mod tests {
 
     #[test]
     fn dispatch_invalid_args_error() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
         // rename-tab requires "name" string arg
-        let result = dispatcher.dispatch(
-            &mut workspace,
-            "rename-tab",
-            &json!({"name": 42}),
-            None,
-        );
+        let result = dispatcher.dispatch(&mut workspace, "rename-tab", &json!({"name": 42}), None);
         assert!(matches!(result, Err(ActionError::InvalidArgument(_))));
     }
 
     #[test]
     fn dispatch_split_right_modifies_layout() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
 
         // Initially one pane
         assert_eq!(workspace.tabs()[0].layout().pane_count(), 1);
 
-        let result = dispatcher.dispatch(
-            &mut workspace,
-            "split-right",
-            &json!({}),
-            None,
-        );
+        let result = dispatcher.dispatch(&mut workspace, "split-right", &json!({}), None);
         assert!(result.is_ok());
         match result.unwrap() {
             ActionResult::PaneCreated { pane_id } => {
@@ -976,28 +982,17 @@ mod tests {
 
     #[test]
     fn dispatch_split_down_modifies_layout() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
 
-        let result = dispatcher.dispatch(
-            &mut workspace,
-            "split-down",
-            &json!({}),
-            None,
-        );
+        let result = dispatcher.dispatch(&mut workspace, "split-down", &json!({}), None);
         assert!(result.is_ok());
         assert_eq!(workspace.tabs()[0].layout().pane_count(), 2);
     }
 
     #[test]
     fn dispatch_close_pane_removes_from_layout() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
 
         // Split first to have 2 panes
@@ -1017,7 +1012,10 @@ mod tests {
         );
         assert!(result.is_ok());
         match result.unwrap() {
-            ActionResult::PaneClosed { pane_id, close_result } => {
+            ActionResult::PaneClosed {
+                pane_id,
+                close_result,
+            } => {
                 assert_eq!(pane_id, target);
                 assert!(matches!(close_result, CloseResult::Closed { .. }));
             }
@@ -1029,10 +1027,7 @@ mod tests {
 
     #[test]
     fn dispatch_focus_next_cycles() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
 
         // Split to get 2 panes
@@ -1052,10 +1047,7 @@ mod tests {
 
     #[test]
     fn dispatch_zoom_toggles() {
-        let dispatcher = ActionDispatcher::new(
-            v1_registry(),
-            Rect::new(0, 0, 120, 40),
-        );
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
         let mut workspace = test_workspace();
 
         assert!(!workspace.tabs()[0].layout().is_zoomed());

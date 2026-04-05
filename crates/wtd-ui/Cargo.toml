@@ -40,4 +40,5 @@ windows = { version = "0.58", features = [
 ] }
 
 [dev-dependencies]
+crossterm = "0.28"
 wtd-host = { path = "../wtd-host" }

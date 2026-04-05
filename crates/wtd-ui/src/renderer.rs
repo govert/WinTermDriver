@@ -902,9 +902,7 @@ impl TerminalRenderer {
         y_origin: f32,
     ) -> Result<()> {
         let (r, g, b) = CURSOR_COLOR;
-        let brush = self
-            .rt
-            .CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
+        let brush = self.rt.CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
 
         let cell_left = x_origin + cursor.col as f32 * self.cell_width;
         let cell_top = y_origin + cursor.row as f32 * self.cell_height;
@@ -955,9 +953,7 @@ impl TerminalRenderer {
     ) -> Result<()> {
         let (sr, sc, er, ec) = sel.normalised();
         let (r, g, b) = SELECTION_COLOR;
-        let brush = self
-            .rt
-            .CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
+        let brush = self.rt.CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
         brush.SetOpacity(0.5);
 
         for row in sr..=er {
@@ -1003,10 +999,7 @@ impl TerminalRenderer {
         a_bold == b_bold && a_italic == b_italic
     }
 
-    fn measure_cell(
-        dw: &IDWriteFactory,
-        tf: &IDWriteTextFormat,
-    ) -> Result<(f32, f32)> {
+    fn measure_cell(dw: &IDWriteFactory, tf: &IDWriteTextFormat) -> Result<(f32, f32)> {
         let text: Vec<u16> = "M".encode_utf16().collect();
         let layout = unsafe { dw.CreateTextLayout(&text, tf, 1000.0, 1000.0)? };
         let mut metrics = DWRITE_TEXT_METRICS::default();
@@ -1059,10 +1052,7 @@ mod tests {
         // Bright red
         assert_eq!(color_to_rgb(&Color::AnsiBright(1), true), (255, 85, 85));
         // Bright white
-        assert_eq!(
-            color_to_rgb(&Color::AnsiBright(7), true),
-            (255, 255, 255)
-        );
+        assert_eq!(color_to_rgb(&Color::AnsiBright(7), true), (255, 255, 255));
     }
 
     #[test]
@@ -1070,10 +1060,7 @@ mod tests {
         // Index 0 = black
         assert_eq!(color_to_rgb(&Color::Indexed(0), true), (0, 0, 0));
         // Index 15 = bright white
-        assert_eq!(
-            color_to_rgb(&Color::Indexed(15), true),
-            (255, 255, 255)
-        );
+        assert_eq!(color_to_rgb(&Color::Indexed(15), true), (255, 255, 255));
     }
 
     #[test]
@@ -1095,7 +1082,10 @@ mod tests {
 
     #[test]
     fn color_to_rgb_truecolor() {
-        assert_eq!(color_to_rgb(&Color::Rgb(42, 128, 255), true), (42, 128, 255));
+        assert_eq!(
+            color_to_rgb(&Color::Rgb(42, 128, 255), true),
+            (42, 128, 255)
+        );
     }
 
     #[test]
@@ -1127,8 +1117,8 @@ mod tests {
         };
         let (fg, bg) = resolve_cell_colors(&cell);
         // Swapped
-        assert_eq!(fg, (0, 170, 0));   // was bg
-        assert_eq!(bg, (170, 0, 0));   // was fg
+        assert_eq!(fg, (0, 170, 0)); // was bg
+        assert_eq!(bg, (170, 0, 0)); // was fg
     }
 
     #[test]

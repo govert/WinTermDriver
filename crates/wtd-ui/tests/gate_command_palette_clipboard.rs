@@ -139,7 +139,11 @@ fn palette_opens_searches_and_dispatches_action() {
 
     // Initially not visible.
     assert!(!palette.is_visible());
-    assert_eq!(palette.entry_count(), 36, "v1 catalog has 36 actions");
+    assert_eq!(
+        palette.entry_count(),
+        36,
+        "palette shows the runnable action subset"
+    );
 
     // Show the palette.
     palette.show();
@@ -259,7 +263,7 @@ fn palette_click_interactions() {
     let result = palette.on_click(center_x, first_item_y, window_w, window_h);
     match result {
         Some(PaletteResult::Action(ref action)) => {
-            // First action in unfiltered list is "open-workspace".
+            // First action in unfiltered list is "open-workspace" (workspace lifecycle group).
             assert_eq!(
                 action_name(action),
                 "open-workspace",
@@ -289,7 +293,10 @@ fn palette_fuzzy_search_targets_specific_actions() {
     for ch in "zoom".chars() {
         palette.on_key_event(&char_key(ch));
     }
-    assert!(palette.filtered_count() >= 1, "zoom should match at least one action");
+    assert!(
+        palette.filtered_count() >= 1,
+        "zoom should match at least one action"
+    );
     let result = palette.on_key_event(&make_key(KeyName::Enter, Modifiers::NONE, None));
     match result {
         PaletteResult::Action(ref action) => {
@@ -298,32 +305,36 @@ fn palette_fuzzy_search_targets_specific_actions() {
         other => panic!("expected zoom-pane, got: {:?}", other),
     }
 
-    // Search for "paste" — should find "paste".
+    // Search for "restart" — should find "restart-session".
     palette.show();
-    for ch in "paste".chars() {
+    for ch in "restart".chars() {
         palette.on_key_event(&char_key(ch));
     }
     assert!(palette.filtered_count() >= 1);
     let result = palette.on_key_event(&make_key(KeyName::Enter, Modifiers::NONE, None));
     match result {
         PaletteResult::Action(ref action) => {
-            assert_eq!(action_name(action), "paste");
+            assert_eq!(action_name(action), "restart-session");
         }
-        other => panic!("expected paste, got: {:?}", other),
+        other => panic!("expected restart-session, got: {:?}", other),
     }
 
-    // Search for "copy" — should find "copy".
+    // Search for "close" — should find close-tab or close-pane.
     palette.show();
-    for ch in "copy".chars() {
+    for ch in "close".chars() {
         palette.on_key_event(&char_key(ch));
     }
     assert!(palette.filtered_count() >= 1);
     let result = palette.on_key_event(&make_key(KeyName::Enter, Modifiers::NONE, None));
     match result {
         PaletteResult::Action(ref action) => {
-            assert_eq!(action_name(action), "copy");
+            let name = action_name(action);
+            assert!(
+                name.starts_with("close-"),
+                "expected a close-* action, got: {name}"
+            );
         }
-        other => panic!("expected copy, got: {:?}", other),
+        other => panic!("expected a close action, got: {:?}", other),
     }
 
     destroy_test_window(hwnd);
@@ -336,12 +347,12 @@ fn palette_entries_include_keybinding_hints() {
     let bindings = tmux_bindings();
     let entries = build_palette_entries(&bindings);
 
-    // new-tab has single-stroke Ctrl+Shift+T.
-    let new_tab = entries.iter().find(|e| e.name == "new-tab").unwrap();
+    // split-right has single-stroke Alt+Shift+D in the tmux bindings.
+    let split_right = entries.iter().find(|e| e.name == "split-right").unwrap();
     assert_eq!(
-        new_tab.keybinding,
-        Some("Ctrl+Shift+T".to_string()),
-        "new-tab should have Ctrl+Shift+T keybinding hint"
+        split_right.keybinding,
+        Some("Alt+Shift+D".to_string()),
+        "split-right should have Alt+Shift+D keybinding hint"
     );
 
     // zoom-pane has chord Ctrl+B, z.
@@ -377,7 +388,10 @@ fn clipboard_copy_extracts_text_from_screen_buffer() {
         end_col: 12,
     };
     let extracted = extract_selection_text(&screen, &selection);
-    assert_eq!(extracted, "Hello, World!", "selection must extract plain text without VT");
+    assert_eq!(
+        extracted, "Hello, World!",
+        "selection must extract plain text without VT"
+    );
 
     // Verify extract trims trailing whitespace.
     let wide_sel = TextSelection {
@@ -455,7 +469,10 @@ fn screen_buffer_tracks_bracketed_paste_mode() {
 
     // Enable DECSET 2004.
     screen.advance(b"\x1b[?2004h");
-    assert!(screen.bracketed_paste(), "DECSET 2004 must enable bracketed paste");
+    assert!(
+        screen.bracketed_paste(),
+        "DECSET 2004 must enable bracketed paste"
+    );
 
     // Prepare paste should wrap.
     let paste = prepare_paste("test", screen.bracketed_paste());
@@ -463,7 +480,10 @@ fn screen_buffer_tracks_bracketed_paste_mode() {
 
     // Disable DECSET 2004.
     screen.advance(b"\x1b[?2004l");
-    assert!(!screen.bracketed_paste(), "DECRST 2004 must disable bracketed paste");
+    assert!(
+        !screen.bracketed_paste(),
+        "DECRST 2004 must disable bracketed paste"
+    );
 
     // Prepare paste should not wrap.
     let paste = prepare_paste("test", screen.bracketed_paste());
@@ -492,7 +512,10 @@ fn clipboard_round_trip_with_vt_stripped_content() {
         end_col: 17,
     };
     let extracted = extract_selection_text(&screen, &selection);
-    assert_eq!(extracted, "WARNING: disk full", "must extract plain text from VT-styled cells");
+    assert_eq!(
+        extracted, "WARNING: disk full",
+        "must extract plain text from VT-styled cells"
+    );
 
     // Step 2: Copy to clipboard.
     copy_to_clipboard(&extracted).expect("copy must succeed");
@@ -606,7 +629,9 @@ fn palette_renders_in_composited_frame() {
     renderer.begin_draw();
     renderer.clear_background();
     tab_strip.paint(rt).unwrap();
-    renderer.paint_pane_viewport(&screen, 0.0, 32.0, 800.0, 544.0, None).unwrap();
+    renderer
+        .paint_pane_viewport(&screen, 0.0, 32.0, 800.0, 544.0, None)
+        .unwrap();
     palette.paint(rt, 800.0, 600.0).unwrap();
     renderer.end_draw().unwrap();
 
@@ -638,7 +663,10 @@ fn fuzzy_score_ranking() {
 
     // Consecutive character bonus.
     let s_consec = fuzzy_score("split", "split-right Split pane on right").unwrap();
-    assert!(s_consec > 10, "consecutive match should have substantial score");
+    assert!(
+        s_consec > 10,
+        "consecutive match should have substantial score"
+    );
 
     // No match returns None.
     assert!(fuzzy_score("xyz123", "split-right").is_none());
@@ -666,7 +694,11 @@ fn paste_workflow_with_bracketed_paste() {
         "must end with bracketed paste end marker"
     );
     let inner = &to_send[6..to_send.len() - 6];
-    assert_eq!(inner, paste_text.as_bytes(), "inner content must match paste text");
+    assert_eq!(
+        inner,
+        paste_text.as_bytes(),
+        "inner content must match paste text"
+    );
 
     // Application disables bracketed paste (e.g. shell exits to raw mode).
     screen.advance(b"\x1b[?2004l");
@@ -674,7 +706,11 @@ fn paste_workflow_with_bracketed_paste() {
 
     // Same paste text — should NOT be wrapped.
     let to_send = prepare_paste(paste_text, screen.bracketed_paste());
-    assert_eq!(to_send, paste_text.as_bytes(), "without bracketed paste, raw bytes");
+    assert_eq!(
+        to_send,
+        paste_text.as_bytes(),
+        "without bracketed paste, raw bytes"
+    );
 }
 
 // ── Test 16: wrap_bracketed_paste preserves binary content ──────────────

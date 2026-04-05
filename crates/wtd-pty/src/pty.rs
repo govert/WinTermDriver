@@ -12,9 +12,9 @@ use windows::Win32::System::Console::{
 use windows::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
-    EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW,
 };
 
 use crate::error::PtyError;
@@ -227,14 +227,7 @@ impl PtySession {
     pub fn peek_output_available(&self) -> u32 {
         let mut avail = 0u32;
         unsafe {
-            let _ = PeekNamedPipe(
-                self.output_read.0,
-                None,
-                0,
-                None,
-                Some(&mut avail),
-                None,
-            );
+            let _ = PeekNamedPipe(self.output_read.0, None, 0, None, Some(&mut avail), None);
         }
         avail
     }
@@ -248,7 +241,9 @@ impl PtySession {
 
     /// Forcibly terminate the child process.
     pub fn terminate(&self) {
-        unsafe { let _ = TerminateProcess(self.process_handle.0, 1); }
+        unsafe {
+            let _ = TerminateProcess(self.process_handle.0, 1);
+        }
     }
 
     /// Returns the raw output-read pipe handle for advanced callers (e.g. async I/O).

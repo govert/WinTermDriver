@@ -37,7 +37,6 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     // ── Workspace commands ──────────────────────────────────────────
-
     /// Open workspace from definition.
     Open {
         /// Workspace name.
@@ -81,7 +80,6 @@ pub enum Command {
     },
 
     // ── List commands ───────────────────────────────────────────────
-
     /// List workspaces, instances, panes, or sessions.
     List {
         #[command(subcommand)]
@@ -89,7 +87,6 @@ pub enum Command {
     },
 
     // ── Pane / session commands ─────────────────────────────────────
-
     /// Focus a pane in the UI.
     Focus {
         /// Target path (e.g. workspace/tab/pane).
@@ -116,7 +113,6 @@ pub enum Command {
     },
 
     // ── Input commands ──────────────────────────────────────────────
-
     /// Send text to a session.
     Send {
         /// Target path (e.g. workspace/pane).
@@ -137,8 +133,24 @@ pub enum Command {
         key_specs: Vec<String>,
     },
 
-    // ── Inspection commands ─────────────────────────────────────────
+    /// Send raw input bytes to a session.
+    Input {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Input data. Use --escape for C-style escapes, --hex for hex bytes, or --base64.
+        data: String,
+        /// Interpret data using C-style escapes such as \e, \r, \n, and \x1b.
+        #[arg(long, conflicts_with_all = ["hex", "base64"])]
+        escape: bool,
+        /// Interpret data as hexadecimal bytes.
+        #[arg(long, conflicts_with_all = ["escape", "base64"])]
+        hex: bool,
+        /// Interpret data as base64-encoded bytes.
+        #[arg(long, conflicts_with_all = ["escape", "hex"])]
+        base64: bool,
+    },
 
+    // ── Inspection commands ─────────────────────────────────────────
     /// Capture the visible screen content as text.
     Capture {
         /// Target path (e.g. workspace/pane).
@@ -187,8 +199,16 @@ pub enum Command {
         target: String,
     },
 
-    // ── Host management commands ────────────────────────────────────
+    /// Export a workspace attach snapshot to JSON.
+    Snapshot {
+        /// Workspace name.
+        name: String,
+        /// Output file path. Prints to stdout when omitted.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
 
+    // ── Host management commands ────────────────────────────────────
     /// Manage the host process.
     Host {
         #[command(subcommand)]
@@ -196,7 +216,6 @@ pub enum Command {
     },
 
     // ── Shell completions ───────────────────────────────────────────
-
     /// Generate shell completion scripts.
     #[command(hide = true)]
     Completions {
@@ -336,6 +355,25 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn snapshot_basic() {
+        let cli = parse(&["snapshot", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Snapshot { ref name, ref file } if name == "dev" && file.is_none()
+        ));
+    }
+
+    #[test]
+    fn snapshot_with_file() {
+        let cli = parse(&["snapshot", "dev", "--file", "snap.json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Snapshot { ref name, ref file }
+            if name == "dev" && file.as_deref() == Some(std::path::Path::new("snap.json"))
+        ));
+    }
+
     // ── List commands ───────────────────────────────────────────
 
     #[test]
@@ -343,7 +381,9 @@ mod tests {
         let cli = parse(&["list", "workspaces"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List { what: ListCommand::Workspaces }
+            Command::List {
+                what: ListCommand::Workspaces
+            }
         ));
     }
 
@@ -352,7 +392,9 @@ mod tests {
         let cli = parse(&["list", "instances"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List { what: ListCommand::Instances }
+            Command::List {
+                what: ListCommand::Instances
+            }
         ));
     }
 
@@ -496,12 +538,41 @@ mod tests {
         assert!(parse(&["keys", "dev/server"]).is_err());
     }
 
+    #[test]
+    fn input_escape_mode() {
+        let cli = parse(&["input", "dev/server", "\\e[<35;40;12M", "--escape"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Input { ref target, ref data, escape, hex, base64 }
+            if target == "dev/server" && data == "\\e[<35;40;12M" && escape && !hex && !base64
+        ));
+    }
+
+    #[test]
+    fn input_hex_mode() {
+        let cli = parse(&["input", "dev/server", "1b5b41", "--hex"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Input { ref target, ref data, escape, hex, base64 }
+            if target == "dev/server" && data == "1b5b41" && !escape && hex && !base64
+        ));
+    }
+
     // ── Inspection commands ─────────────────────────────────────
 
     #[test]
     fn capture_basic() {
         let cli = parse(&["capture", "dev/server"]).unwrap();
-        if let Command::Capture { target, lines, all, after, after_regex, max_lines, count } = &cli.command {
+        if let Command::Capture {
+            target,
+            lines,
+            all,
+            after,
+            after_regex,
+            max_lines,
+            count,
+        } = &cli.command
+        {
             assert_eq!(target, "dev/server");
             assert!(lines.is_none());
             assert!(!all);
@@ -516,8 +587,31 @@ mod tests {
 
     #[test]
     fn capture_with_flags() {
-        let cli = parse(&["capture", "dev/server", "--lines", "50", "--all", "--after", "START", "--after-regex", "^\\$", "--max-lines", "100", "--count"]).unwrap();
-        if let Command::Capture { target, lines, all, after, after_regex, max_lines, count } = &cli.command {
+        let cli = parse(&[
+            "capture",
+            "dev/server",
+            "--lines",
+            "50",
+            "--all",
+            "--after",
+            "START",
+            "--after-regex",
+            "^\\$",
+            "--max-lines",
+            "100",
+            "--count",
+        ])
+        .unwrap();
+        if let Command::Capture {
+            target,
+            lines,
+            all,
+            after,
+            after_regex,
+            max_lines,
+            count,
+        } = &cli.command
+        {
             assert_eq!(target, "dev/server");
             assert_eq!(*lines, Some(50));
             assert!(*all);
@@ -588,7 +682,9 @@ mod tests {
         let cli = parse(&["host", "status"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Host { action: HostCommand::Status }
+            Command::Host {
+                action: HostCommand::Status
+            }
         ));
     }
 
@@ -597,7 +693,9 @@ mod tests {
         let cli = parse(&["host", "stop"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Host { action: HostCommand::Stop }
+            Command::Host {
+                action: HostCommand::Stop
+            }
         ));
     }
 
@@ -629,18 +727,21 @@ mod tests {
     #[test]
     fn id_flag() {
         let cli = parse(&[
-            "--id", "550e8400-e29b-41d4-a716-446655440000",
-            "capture", "dev/server",
-        ]).unwrap();
-        assert_eq!(cli.id.as_deref(), Some("550e8400-e29b-41d4-a716-446655440000"));
+            "--id",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "capture",
+            "dev/server",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.id.as_deref(),
+            Some("550e8400-e29b-41d4-a716-446655440000")
+        );
     }
 
     #[test]
     fn id_flag_with_inspect() {
-        let cli = parse(&[
-            "inspect", "dev/server",
-            "--id", "abc-123",
-        ]).unwrap();
+        let cli = parse(&["inspect", "dev/server", "--id", "abc-123"]).unwrap();
         assert_eq!(cli.id.as_deref(), Some("abc-123"));
     }
 
@@ -664,10 +765,7 @@ mod tests {
 
     #[test]
     fn combined_global_flags() {
-        let cli = parse(&[
-            "--json", "--verbose",
-            "list", "panes", "dev",
-        ]).unwrap();
+        let cli = parse(&["--json", "--verbose", "list", "panes", "dev"]).unwrap();
         assert!(cli.json);
         assert!(cli.verbose);
     }
@@ -695,7 +793,10 @@ mod tests {
     #[test]
     fn list_help() {
         let err = parse(&["list", "--help"]).unwrap_err();
-        assert!(err.contains("workspaces"), "expected list subcommands in help, got: {err}");
+        assert!(
+            err.contains("workspaces"),
+            "expected list subcommands in help, got: {err}"
+        );
     }
 
     // ── Error messages ──────────────────────────────────────────
@@ -734,7 +835,9 @@ mod tests {
         let cli = parse(&["completions", "powershell"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Completions { shell: Shell::PowerShell }
+            Command::Completions {
+                shell: Shell::PowerShell
+            }
         ));
     }
 
@@ -745,7 +848,9 @@ mod tests {
         let cli = parse(&["capture", "server"]).unwrap();
         if let Command::Capture { target, .. } = &cli.command {
             assert_eq!(target, "server");
-        } else { panic!("expected Capture"); }
+        } else {
+            panic!("expected Capture");
+        }
     }
 
     #[test]
@@ -753,7 +858,9 @@ mod tests {
         let cli = parse(&["capture", "dev/server"]).unwrap();
         if let Command::Capture { target, .. } = &cli.command {
             assert_eq!(target, "dev/server");
-        } else { panic!("expected Capture"); }
+        } else {
+            panic!("expected Capture");
+        }
     }
 
     #[test]
@@ -761,7 +868,9 @@ mod tests {
         let cli = parse(&["capture", "dev/backend/server"]).unwrap();
         if let Command::Capture { target, .. } = &cli.command {
             assert_eq!(target, "dev/backend/server");
-        } else { panic!("expected Capture"); }
+        } else {
+            panic!("expected Capture");
+        }
     }
 
     #[test]
@@ -769,6 +878,8 @@ mod tests {
         let cli = parse(&["capture", "dev/main/backend/server"]).unwrap();
         if let Command::Capture { target, .. } = &cli.command {
             assert_eq!(target, "dev/main/backend/server");
-        } else { panic!("expected Capture"); }
+        } else {
+            panic!("expected Capture");
+        }
     }
 }

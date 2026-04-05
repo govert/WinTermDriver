@@ -62,7 +62,11 @@ fn session_start_running_and_io() {
         session.process_pending_output();
         session.screen().visible_text().contains("HELLO_WTD")
     });
-    assert!(found, "expected HELLO_WTD in output, got:\n{}", session.screen().visible_text());
+    assert!(
+        found,
+        "expected HELLO_WTD in output, got:\n{}",
+        session.screen().visible_text()
+    );
 }
 
 // ── Test 2: Session exit detected, exit code captured ────────────────────────
@@ -125,7 +129,10 @@ fn restart_on_failure_with_backoff() {
         session.check_exit().is_some()
     });
     assert!(exited, "process should have exited");
-    assert!(session.should_restart(), "on-failure policy with exit 1 should restart");
+    assert!(
+        session.should_restart(),
+        "on-failure policy with exit 1 should restart"
+    );
 
     // Check backoff progression
     let delay1 = session.next_restart_delay();
@@ -171,7 +178,10 @@ fn no_restart_on_success_with_on_failure_policy() {
         session.check_exit().is_some()
     });
     assert!(exited);
-    assert!(!session.should_restart(), "exit 0 with on-failure should not restart");
+    assert!(
+        !session.should_restart(),
+        "exit 0 with on-failure should not restart"
+    );
 }
 
 #[test]
@@ -189,7 +199,10 @@ fn always_restart_even_on_success() {
         session.check_exit().is_some()
     });
     assert!(exited);
-    assert!(session.should_restart(), "always policy should restart on exit 0");
+    assert!(
+        session.should_restart(),
+        "always policy should restart on exit 0"
+    );
 }
 
 #[test]

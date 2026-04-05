@@ -122,9 +122,8 @@ async fn stop_host_cleans_up_pipe_and_pid_file() {
 
     let pn = pipe_name.clone();
     let d = dir.clone();
-    let host_handle = tokio::spawn(async move {
-        run_host(&pn, NoopHandler, shutdown_rx, &d).await
-    });
+    let host_handle =
+        tokio::spawn(async move { run_host(&pn, NoopHandler, shutdown_rx, &d).await });
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 

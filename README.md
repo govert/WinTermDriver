@@ -129,6 +129,19 @@ wtd-ui --workspace dev
 
 Opens a graphical terminal window with Direct2D rendering, tab strip, split panes, and keyboard navigation.
 
+## Diagnostics
+
+For resize, repaint, and mouse-capture investigations on the Windows host path,
+run the built-in crossterm probe:
+
+```powershell
+pwsh .\tools\Run-WtdCrosstermProbe.ps1 -AutoResize
+```
+
+This launches a deterministic terminal surface inside `wtd`, attaches
+`wtd-ui`, captures the visible buffer after startup and after scripted window
+resizes, and writes logs under `logs\wtd-crossterm-probe\...`.
+
 ## Workspace YAML
 
 Workspace definitions live in `.wtd/<name>.yaml` (project-local) or `%APPDATA%\WinTermDriver\workspaces\<name>.yaml` (user-global). Project-local files take priority.

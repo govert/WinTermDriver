@@ -322,7 +322,10 @@ fn cursor_resize_h_near_vertical_splitter() {
     layout.update(&tree, 0.0, 0.0, COLS, ROWS);
 
     // Within hit zone of vertical splitter at x=320.
-    assert_eq!(layout.cursor_hint(321.0, 100.0), CursorHint::ResizeHorizontal);
+    assert_eq!(
+        layout.cursor_hint(321.0, 100.0),
+        CursorHint::ResizeHorizontal
+    );
 }
 
 #[test]
@@ -425,7 +428,10 @@ fn full_drag_resize_relayout_cycle() {
     layout.on_mouse_up(336.0, 100.0);
 
     let r1_after = layout.pane_pixel_rect(&p1).unwrap().width;
-    assert!(r1_after > r1_before, "p1 should be wider after dragging splitter right");
+    assert!(
+        r1_after > r1_before,
+        "p1 should be wider after dragging splitter right"
+    );
 }
 
 // ── Rendering (D2D) ─────────────────────────────────────────────────────────

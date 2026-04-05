@@ -12,4 +12,5 @@ pub mod pipe_security;
 pub mod request_handler;
 pub mod session;
 pub mod target_resolver;
+pub mod terminal_input;
 pub mod workspace_instance;

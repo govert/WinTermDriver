@@ -5,11 +5,14 @@ use wtd_ipc::message::*;
 
 #[test]
 fn encode_decode_roundtrip() {
-    let envelope = Envelope::new("test-id", &Handshake {
-        client_type: ClientType::Ui,
-        client_version: "1.0.0".into(),
-        protocol_version: 1,
-    });
+    let envelope = Envelope::new(
+        "test-id",
+        &Handshake {
+            client_type: ClientType::Ui,
+            client_version: "1.0.0".into(),
+            protocol_version: 1,
+        },
+    );
 
     let frame = framing::encode(&envelope).unwrap();
 
@@ -33,15 +36,21 @@ fn encode_decode_multiple_message_types() {
     let messages: Vec<Envelope> = vec![
         Envelope::new("id-1", &ListWorkspaces {}),
         Envelope::new("id-2", &OkResponse {}),
-        Envelope::new("id-3", &ErrorResponse {
-            code: ErrorCode::InternalError,
-            message: "boom".into(),
-            candidates: None,
-        }),
-        Envelope::new("id-4", &SessionOutput {
-            session_id: "s1".into(),
-            data: "dGVzdA==".into(),
-        }),
+        Envelope::new(
+            "id-3",
+            &ErrorResponse {
+                code: ErrorCode::InternalError,
+                message: "boom".into(),
+                candidates: None,
+            },
+        ),
+        Envelope::new(
+            "id-4",
+            &SessionOutput {
+                session_id: "s1".into(),
+                data: "dGVzdA==".into(),
+            },
+        ),
     ];
 
     for envelope in &messages {
@@ -57,8 +66,7 @@ fn length_prefix_is_correct() {
     let frame = framing::encode(&envelope).unwrap();
 
     let expected_json = serde_json::to_vec(&envelope).unwrap();
-    let prefix_len =
-        u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+    let prefix_len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
 
     assert_eq!(prefix_len, expected_json.len());
     assert_eq!(&frame[LENGTH_PREFIX_SIZE..], &expected_json[..]);
@@ -87,13 +95,16 @@ fn decode_frame_too_short_incomplete_payload() {
 fn oversize_message_rejected_on_encode() {
     // Create an envelope with a payload larger than 16 MiB.
     let huge_string = "x".repeat(MAX_MESSAGE_SIZE + 1);
-    let envelope = Envelope::new("big", &CaptureResult {
-        text: huge_string,
-        lines: 0,
-        total_lines: 0,
-        anchor_found: None,
-        cursor: None,
-    });
+    let envelope = Envelope::new(
+        "big",
+        &CaptureResult {
+            text: huge_string,
+            lines: 0,
+            total_lines: 0,
+            anchor_found: None,
+            cursor: None,
+        },
+    );
 
     let result = framing::encode(&envelope);
     let err = result.unwrap_err();
@@ -131,11 +142,14 @@ fn read_length_prefix_too_short() {
 fn concatenated_frames() {
     // Simulate reading two frames from a stream.
     let env1 = Envelope::new("a", &OkResponse {});
-    let env2 = Envelope::new("b", &Handshake {
-        client_type: ClientType::Cli,
-        client_version: "1.0".into(),
-        protocol_version: 1,
-    });
+    let env2 = Envelope::new(
+        "b",
+        &Handshake {
+            client_type: ClientType::Cli,
+            client_version: "1.0".into(),
+            protocol_version: 1,
+        },
+    );
 
     let frame1 = framing::encode(&env1).unwrap();
     let frame2 = framing::encode(&env2).unwrap();

@@ -36,8 +36,7 @@ pub fn data_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home =
-            std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
         format!(r"{}\AppData\Roaming", home)
     });
     PathBuf::from(appdata).join("WinTermDriver")
@@ -56,8 +55,7 @@ pub fn pid_file_path() -> PathBuf {
 /// Write the current process PID to the PID file in `dir`.
 pub fn write_pid_file_in(dir: &Path) -> Result<(), LifecycleError> {
     fs::create_dir_all(dir).map_err(LifecycleError::PidFile)?;
-    fs::write(pid_file_in(dir), std::process::id().to_string())
-        .map_err(LifecycleError::PidFile)
+    fs::write(pid_file_in(dir), std::process::id().to_string()).map_err(LifecycleError::PidFile)
 }
 
 /// Write the current process PID to the default PID file.
@@ -101,12 +99,11 @@ pub fn is_process_running(pid: u32) -> bool {
         match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(handle) => {
                 let mut exit_code = 0u32;
-                let running =
-                    if GetExitCodeProcess(handle, &mut exit_code).is_ok() {
-                        exit_code == 259 // STILL_ACTIVE
-                    } else {
-                        false
-                    };
+                let running = if GetExitCodeProcess(handle, &mut exit_code).is_ok() {
+                    exit_code == 259 // STILL_ACTIVE
+                } else {
+                    false
+                };
                 let _ = CloseHandle(handle);
                 running
             }
@@ -155,10 +152,7 @@ pub enum SingleInstanceCheck {
 ///
 /// The named pipe serves as the single-instance mutex (§16.5).
 /// Uses `data_dir` for PID file stale-check.
-pub fn check_single_instance_in(
-    pipe_name: &str,
-    dir: &Path,
-) -> SingleInstanceCheck {
+pub fn check_single_instance_in(pipe_name: &str, dir: &Path) -> SingleInstanceCheck {
     if wtd_ipc::connect::is_host_pipe_available(pipe_name) {
         return SingleInstanceCheck::AlreadyRunning;
     }
@@ -198,9 +192,7 @@ mod ctrl_handler {
         }
     }
 
-    pub fn install(
-        tx: watch::Sender<bool>,
-    ) -> Result<(), super::LifecycleError> {
+    pub fn install(tx: watch::Sender<bool>) -> Result<(), super::LifecycleError> {
         SHUTDOWN_TX
             .set(tx)
             .map_err(|_| super::LifecycleError::CtrlHandlerAlreadyInstalled)?;
@@ -216,17 +208,13 @@ mod ctrl_handler {
 /// Routes CTRL_C, CTRL_CLOSE, CTRL_LOGOFF, and CTRL_SHUTDOWN events
 /// to the shutdown watch channel. Can only be called once per process.
 #[cfg(windows)]
-pub fn install_ctrl_handler(
-    tx: tokio::sync::watch::Sender<bool>,
-) -> Result<(), LifecycleError> {
+pub fn install_ctrl_handler(tx: tokio::sync::watch::Sender<bool>) -> Result<(), LifecycleError> {
     ctrl_handler::install(tx)
 }
 
 /// No-op on non-Windows platforms.
 #[cfg(not(windows))]
-pub fn install_ctrl_handler(
-    _tx: tokio::sync::watch::Sender<bool>,
-) -> Result<(), LifecycleError> {
+pub fn install_ctrl_handler(_tx: tokio::sync::watch::Sender<bool>) -> Result<(), LifecycleError> {
     Ok(())
 }
 
@@ -250,8 +238,7 @@ pub async fn run_host(
     write_pid_file_in(dir)?;
 
     let result = {
-        let server =
-            crate::ipc_server::IpcServer::new(pipe_name.to_owned(), handler)?;
+        let server = crate::ipc_server::IpcServer::new(pipe_name.to_owned(), handler)?;
         server.run(shutdown_rx).await
     };
 
@@ -279,14 +266,11 @@ pub async fn run_host_with_broadcaster(
 ) -> Result<(), LifecycleError> {
     write_pid_file_in(dir)?;
 
-    let dyn_handler: std::sync::Arc<dyn crate::ipc_server::RequestHandler> =
-        handler.clone();
-    let server = std::sync::Arc::new(
-        crate::ipc_server::IpcServer::with_arc_handler(
-            pipe_name.to_owned(),
-            dyn_handler,
-        )?,
-    );
+    let dyn_handler: std::sync::Arc<dyn crate::ipc_server::RequestHandler> = handler.clone();
+    let server = std::sync::Arc::new(crate::ipc_server::IpcServer::with_arc_handler(
+        pipe_name.to_owned(),
+        dyn_handler,
+    )?);
 
     let broadcaster_handle = {
         let h = handler;
@@ -329,15 +313,9 @@ mod tests {
 
     #[test]
     fn single_instance_no_pipe() {
-        let tmp = std::env::temp_dir().join(format!(
-            "wtd-test-nopipe-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("wtd-test-nopipe-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
-        let result = check_single_instance_in(
-            r"\\.\pipe\wtd-test-nonexistent-999999",
-            &tmp,
-        );
+        let result = check_single_instance_in(r"\\.\pipe\wtd-test-nonexistent-999999", &tmp);
         assert_ne!(result, SingleInstanceCheck::AlreadyRunning);
         let _ = std::fs::remove_dir_all(&tmp);
     }

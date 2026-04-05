@@ -17,13 +17,14 @@ pub mod workspace_loader;
 
 pub use global_settings::{
     default_bindings, effective_bindings, load_global_settings, merge_bindings, tmux_bindings,
-    windows_terminal_bindings, FontConfig, GlobalSettings, LogLevel, SettingsLoadError, ThemeConfig,
+    windows_terminal_bindings, FontConfig, GlobalSettings, LogLevel, SettingsLoadError,
+    ThemeConfig,
 };
-pub use workspace::BindingPreset;
 pub use profile_resolver::{resolve_launch_spec, ResolveError, ResolvedLaunchSpec};
+pub use target::{TargetPath, TargetPathError};
+pub use workspace::BindingPreset;
 pub use workspace_discovery::{
     ensure_dir, ensure_user_workspaces_dir, find_workspace, find_workspace_in, list_workspaces,
     list_workspaces_in, user_workspaces_dir, DiscoveredWorkspace, DiscoveryError, WorkspaceSource,
 };
-pub use target::{TargetPath, TargetPathError};
 pub use workspace_loader::{load_workspace_definition, LoadError, ValidationError};

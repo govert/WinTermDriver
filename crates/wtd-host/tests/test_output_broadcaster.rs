@@ -31,7 +31,10 @@ fn unique_pipe_name() -> String {
 }
 
 /// Create a temp YAML workspace file and return its absolute path.
-fn create_temp_workspace(name: &str, startup_cmd: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+fn create_temp_workspace(
+    name: &str,
+    startup_cmd: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
     let tmp_dir = std::env::temp_dir().join(format!(
         "wtd-bcast-{}-{}-{}",
         name,
@@ -60,9 +63,7 @@ tabs:
     (tmp_dir, yaml_path)
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -155,8 +156,7 @@ async fn start_host_with_broadcaster(
     watch::Sender<bool>,
 ) {
     let dyn_handler: Arc<dyn RequestHandler> = handler.clone();
-    let server =
-        Arc::new(IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap());
+    let server = Arc::new(IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap());
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -259,9 +259,7 @@ async fn ui_client_receives_session_output() {
             break;
         }
 
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionOutput" {
                     session_output_count += 1;
@@ -347,18 +345,13 @@ async fn session_output_is_valid_base64() {
         if tokio::time::Instant::now() > deadline {
             break;
         }
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionOutput" {
                     let output: SessionOutput = envelope.extract_payload().unwrap();
                     // Verify base64 decodes successfully and produces non-empty bytes.
                     let decoded = decode_base64(&output.data);
-                    assert!(
-                        !decoded.is_empty(),
-                        "decoded base64 should be non-empty"
-                    );
+                    assert!(!decoded.is_empty(), "decoded base64 should be non-empty");
                     assert!(
                         !output.session_id.is_empty(),
                         "session_id should not be empty"

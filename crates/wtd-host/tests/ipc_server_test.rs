@@ -45,9 +45,7 @@ impl RequestHandler for TestHandler {
     }
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -103,12 +101,9 @@ async fn connect_handshake_and_list_workspaces() {
     assert_eq!(ack_payload.protocol_version, PROTOCOL_VERSION);
 
     // ListWorkspaces
-    write_frame(
-        &mut client,
-        &Envelope::new("lw-1", &ListWorkspaces {}),
-    )
-    .await
-    .unwrap();
+    write_frame(&mut client, &Envelope::new("lw-1", &ListWorkspaces {}))
+        .await
+        .unwrap();
     let resp = read_frame(&mut client).await.unwrap();
     assert_eq!(resp.msg_type, "ListWorkspacesResult");
     assert_eq!(resp.id, "lw-1");
@@ -126,9 +121,7 @@ async fn connect_handshake_and_list_workspaces() {
 #[tokio::test]
 async fn two_concurrent_clients() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), TestHandler).unwrap(),
-    );
+    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), TestHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -183,9 +176,7 @@ async fn two_concurrent_clients() {
 #[tokio::test]
 async fn same_user_sid_accepted() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), TestHandler).unwrap(),
-    );
+    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), TestHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -208,9 +199,7 @@ async fn same_user_sid_accepted() {
 #[tokio::test]
 async fn streaming_output_to_ui_client() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), TestHandler).unwrap(),
-    );
+    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), TestHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -272,9 +261,7 @@ async fn streaming_output_to_ui_client() {
 #[tokio::test]
 async fn reject_request_before_handshake() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), TestHandler).unwrap(),
-    );
+    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), TestHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -283,12 +270,9 @@ async fn reject_request_before_handshake() {
     let mut client = connect_client(&pipe_name).await;
 
     // Send ListWorkspaces WITHOUT handshake.
-    write_frame(
-        &mut client,
-        &Envelope::new("no-hs", &ListWorkspaces {}),
-    )
-    .await
-    .unwrap();
+    write_frame(&mut client, &Envelope::new("no-hs", &ListWorkspaces {}))
+        .await
+        .unwrap();
 
     let resp = read_frame(&mut client).await.unwrap();
     assert_eq!(resp.msg_type, "Error");
@@ -304,9 +288,7 @@ async fn reject_request_before_handshake() {
 #[tokio::test]
 async fn reject_wrong_protocol_version() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), TestHandler).unwrap(),
-    );
+    let server = std::sync::Arc::new(IpcServer::new(pipe_name.clone(), TestHandler).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();

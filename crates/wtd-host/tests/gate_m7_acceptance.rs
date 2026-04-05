@@ -86,9 +86,7 @@ fn decode_base64(input: &str) -> Vec<u8> {
 
 // ── Connection helpers ──────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -153,9 +151,8 @@ impl TestHost {
     async fn start(yaml_path: &std::path::Path, pipe_name: &str) -> Self {
         let handler = Arc::new(HostRequestHandler::new(GlobalSettings::default()));
         let dyn_handler: Arc<dyn RequestHandler> = handler.clone();
-        let server = Arc::new(
-            IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap(),
-        );
+        let server =
+            Arc::new(IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap());
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -419,9 +416,7 @@ tabs:
             break;
         }
 
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionOutput" {
                     session_output_count += 1;

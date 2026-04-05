@@ -99,11 +99,7 @@ fn next_id() -> String {
 // ── Temp directory helpers ──────────────────────────────────────────
 
 fn temp_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "wtd-gate-open-{}-{}",
-        label,
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("wtd-gate-open-{}-{}", label, std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -373,7 +369,13 @@ impl RequestHandler for GateHandler {
                     ));
                 }
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::CloseWorkspace(close) => {
@@ -480,15 +482,25 @@ async fn open_discovers_from_cwd_and_list_panes_shows_name() {
         .unwrap();
     assert_eq!(resp.msg_type, ListPanesResult::TYPE_NAME);
     let lp: ListPanesResult = resp.extract_payload().unwrap();
-    assert_eq!(lp.panes.len(), 1, "single-pane workspace should have 1 pane");
+    assert_eq!(
+        lp.panes.len(),
+        1,
+        "single-pane workspace should have 1 pane"
+    );
     assert_eq!(lp.panes[0].name, "shell", "pane name from YAML definition");
     assert_eq!(lp.panes[0].tab, "main", "tab name from YAML definition");
 
     // Verify text output formatting includes pane name
     let fmt = output::format_response(&resp, false);
     assert_eq!(fmt.exit_code, exit_code::SUCCESS);
-    assert!(fmt.stdout.contains("shell"), "text output should contain pane name 'shell'");
-    assert!(fmt.stdout.contains("main"), "text output should contain tab name 'main'");
+    assert!(
+        fmt.stdout.contains("shell"),
+        "text output should contain pane name 'shell'"
+    );
+    assert!(
+        fmt.stdout.contains("main"),
+        "text output should contain tab name 'main'"
+    );
 
     // Verify JSON output includes pane name
     let fmt_json = output::format_response(&resp, true);
@@ -565,7 +577,11 @@ async fn open_multi_pane_lists_all_panes_by_name() {
     assert_eq!(resp.msg_type, ListPanesResult::TYPE_NAME);
     let lp: ListPanesResult = resp.extract_payload().unwrap();
 
-    assert_eq!(lp.panes.len(), 3, "three-pane workspace should have 3 panes");
+    assert_eq!(
+        lp.panes.len(),
+        3,
+        "three-pane workspace should have 3 panes"
+    );
 
     // Collect pane names for assertion
     let pane_names: Vec<&str> = lp.panes.iter().map(|p| p.name.as_str()).collect();
@@ -590,10 +606,22 @@ async fn open_multi_pane_lists_all_panes_by_name() {
     // Verify text output contains all pane names
     let fmt = output::format_response(&resp, false);
     assert_eq!(fmt.exit_code, exit_code::SUCCESS);
-    assert!(fmt.stdout.contains("editor"), "text output should contain 'editor'");
-    assert!(fmt.stdout.contains("build"), "text output should contain 'build'");
-    assert!(fmt.stdout.contains("logs"), "text output should contain 'logs'");
-    assert!(fmt.stdout.contains("dev"), "text output should contain tab 'dev'");
+    assert!(
+        fmt.stdout.contains("editor"),
+        "text output should contain 'editor'"
+    );
+    assert!(
+        fmt.stdout.contains("build"),
+        "text output should contain 'build'"
+    );
+    assert!(
+        fmt.stdout.contains("logs"),
+        "text output should contain 'logs'"
+    );
+    assert!(
+        fmt.stdout.contains("dev"),
+        "text output should contain tab 'dev'"
+    );
 
     // 3. Wait for all sessions to start producing output
     let text = poll_capture_until(
@@ -603,7 +631,10 @@ async fn open_multi_pane_lists_all_panes_by_name() {
         Duration::from_secs(10),
     )
     .await;
-    assert!(text.contains("EDITOR_READY"), "editor pane should have startup output");
+    assert!(
+        text.contains("EDITOR_READY"),
+        "editor pane should have startup output"
+    );
 
     let text = poll_capture_until(
         &mut client,
@@ -612,7 +643,10 @@ async fn open_multi_pane_lists_all_panes_by_name() {
         Duration::from_secs(10),
     )
     .await;
-    assert!(text.contains("BUILD_READY"), "build pane should have startup output");
+    assert!(
+        text.contains("BUILD_READY"),
+        "build pane should have startup output"
+    );
 
     let text = poll_capture_until(
         &mut client,
@@ -621,7 +655,10 @@ async fn open_multi_pane_lists_all_panes_by_name() {
         Duration::from_secs(10),
     )
     .await;
-    assert!(text.contains("LOGS_READY"), "logs pane should have startup output");
+    assert!(
+        text.contains("LOGS_READY"),
+        "logs pane should have startup output"
+    );
 
     // 4. Close workspace
     let resp = client

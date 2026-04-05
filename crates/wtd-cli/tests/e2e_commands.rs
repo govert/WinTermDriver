@@ -468,7 +468,13 @@ impl RequestHandler for E2eHandler {
                 };
 
                 let text = get_pane_screen_text(inst, &pane_id);
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             TypedMessage::Scrollback(scrollback) => {
@@ -481,23 +487,19 @@ impl RequestHandler for E2eHandler {
                     }
                 }
 
-                let (inst, pane_id) =
-                    match find_pane(&state.workspaces, &scrollback.target) {
-                        Some(r) => r,
-                        None => {
-                            return Some(error_envelope(
-                                &envelope.id,
-                                ErrorCode::TargetNotFound,
-                                &format!("pane '{}' not found", scrollback.target),
-                            ))
-                        }
-                    };
+                let (inst, pane_id) = match find_pane(&state.workspaces, &scrollback.target) {
+                    Some(r) => r,
+                    None => {
+                        return Some(error_envelope(
+                            &envelope.id,
+                            ErrorCode::TargetNotFound,
+                            &format!("pane '{}' not found", scrollback.target),
+                        ))
+                    }
+                };
 
                 let lines = get_pane_scrollback(inst, &pane_id, scrollback.tail);
-                Some(Envelope::new(
-                    &envelope.id,
-                    &ScrollbackResult { lines },
-                ))
+                Some(Envelope::new(&envelope.id, &ScrollbackResult { lines }))
             }
 
             TypedMessage::Follow(follow) => {
@@ -668,7 +670,13 @@ async fn poll_capture_until(
     let mut last_text = String::new();
     while start.elapsed() < timeout {
         let resp = client
-            .request(&Envelope::new(&next_id(), &Capture { target: target.to_string(), ..Default::default() }))
+            .request(&Envelope::new(
+                &next_id(),
+                &Capture {
+                    target: target.to_string(),
+                    ..Default::default()
+                },
+            ))
             .await
             .unwrap();
         if resp.msg_type == CaptureResult::TYPE_NAME {

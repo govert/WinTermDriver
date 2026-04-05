@@ -94,10 +94,7 @@ impl Drop for TempDir {
     }
 }
 
-fn create_temp_workspace(
-    label: &str,
-    startup_cmd: &str,
-) -> (TempDir, std::path::PathBuf) {
+fn create_temp_workspace(label: &str, startup_cmd: &str) -> (TempDir, std::path::PathBuf) {
     let tmp_dir = std::env::temp_dir().join(format!(
         "wtd-gate-s5ui-{}-{}-{}",
         label,
@@ -126,9 +123,7 @@ tabs:
     (TempDir { path: tmp_dir }, yaml_path)
 }
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -175,8 +170,7 @@ async fn start_host_with_broadcaster(
     watch::Sender<bool>,
 ) {
     let dyn_handler: Arc<dyn RequestHandler> = handler.clone();
-    let server =
-        Arc::new(IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap());
+    let server = Arc::new(IpcServer::with_arc_handler(pipe_name.to_owned(), dyn_handler).unwrap());
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -279,9 +273,7 @@ async fn ui_client_receives_live_session_output() {
             break;
         }
 
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionOutput" {
                     session_output_count += 1;
@@ -337,8 +329,7 @@ async fn ui_client_receives_session_state_changed_on_exit() {
         start_host_with_broadcaster(&pipe_name, handler).await;
 
     // Use "exit" as the startup command so cmd.exe exits quickly.
-    let (_tmp_dir, yaml_path) =
-        create_temp_workspace("s5ui-exit", "echo EXIT_READY");
+    let (_tmp_dir, yaml_path) = create_temp_workspace("s5ui-exit", "echo EXIT_READY");
 
     // CLI: open workspace.
     let mut cli = connect_client(&pipe_name).await;
@@ -402,14 +393,10 @@ async fn ui_client_receives_session_state_changed_on_exit() {
             break;
         }
 
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionStateChanged" {
-                    if let Ok(changed) =
-                        envelope.extract_payload::<SessionStateChanged>()
-                    {
+                    if let Ok(changed) = envelope.extract_payload::<SessionStateChanged>() {
                         assert!(
                             !changed.session_id.is_empty(),
                             "SessionStateChanged.session_id must not be empty",
@@ -461,8 +448,7 @@ async fn session_output_arrives_within_expected_latency() {
     let (server_task, broadcaster, shutdown_tx) =
         start_host_with_broadcaster(&pipe_name, handler).await;
 
-    let (_tmp_dir, yaml_path) =
-        create_temp_workspace("s5ui-lat", "echo LATENCY_READY");
+    let (_tmp_dir, yaml_path) = create_temp_workspace("s5ui-lat", "echo LATENCY_READY");
 
     // CLI: open workspace.
     let mut cli = connect_client(&pipe_name).await;
@@ -496,9 +482,7 @@ async fn session_output_arrives_within_expected_latency() {
         if tokio::time::Instant::now() > drain_deadline {
             break;
         }
-        match tokio::time::timeout(Duration::from_millis(500), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(500), read_frame(&mut ui_read)).await {
             Ok(Ok(_)) => continue,
             _ => break,
         }
@@ -534,9 +518,7 @@ async fn session_output_arrives_within_expected_latency() {
             break;
         }
 
-        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
             Ok(Ok(envelope)) => {
                 if envelope.msg_type == "SessionOutput" {
                     if let Ok(output) = envelope.extract_payload::<SessionOutput>() {
@@ -589,8 +571,7 @@ async fn multiple_ui_clients_receive_broadcasts() {
     let (server_task, broadcaster, shutdown_tx) =
         start_host_with_broadcaster(&pipe_name, handler).await;
 
-    let (_tmp_dir, yaml_path) =
-        create_temp_workspace("s5ui-multi", "echo MULTI_READY");
+    let (_tmp_dir, yaml_path) = create_temp_workspace("s5ui-multi", "echo MULTI_READY");
 
     // CLI: open workspace.
     let mut cli = connect_client(&pipe_name).await;
@@ -651,9 +632,7 @@ async fn multiple_ui_clients_receive_broadcasts() {
             if tokio::time::Instant::now() > deadline {
                 return false;
             }
-            match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut reader))
-                .await
-            {
+            match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut reader)).await {
                 Ok(Ok(envelope)) => {
                     if envelope.msg_type == "SessionOutput" {
                         if let Ok(output) = envelope.extract_payload::<SessionOutput>() {
@@ -673,13 +652,17 @@ async fn multiple_ui_clients_receive_broadcasts() {
     }
 
     // Both UI clients should receive the marker concurrently.
-    let (found1, found2) = tokio::join!(
-        wait_for_marker(ui1, &marker),
-        wait_for_marker(ui2, &marker),
-    );
+    let (found1, found2) =
+        tokio::join!(wait_for_marker(ui1, &marker), wait_for_marker(ui2, &marker),);
 
-    assert!(found1, "UI client 1 should receive SessionOutput with marker");
-    assert!(found2, "UI client 2 should receive SessionOutput with marker");
+    assert!(
+        found1,
+        "UI client 1 should receive SessionOutput with marker"
+    );
+    assert!(
+        found2,
+        "UI client 2 should receive SessionOutput with marker"
+    );
 
     let _ = shutdown_tx.send(true);
     broadcaster.abort();

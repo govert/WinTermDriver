@@ -8,7 +8,9 @@
 use std::sync::mpsc;
 
 use serde_json::Value;
-use wtd_ipc::message::{self, AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload};
+use wtd_ipc::message::{
+    self, AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload,
+};
 use wtd_ipc::{parse_envelope, Envelope, TypedMessage};
 
 use crate::host_client::UiIpcClient;
@@ -19,14 +21,9 @@ use crate::host_client::UiIpcClient;
 #[derive(Debug)]
 pub enum HostEvent {
     /// Connection established and workspace state received.
-    Connected {
-        state: Value,
-    },
+    Connected { state: Value },
     /// Raw VT output for a session (already base64-decoded to bytes).
-    SessionOutput {
-        session_id: String,
-        data: Vec<u8>,
-    },
+    SessionOutput { session_id: String, data: Vec<u8> },
     /// A session changed state (running → exited, etc.).
     SessionStateChanged {
         session_id: String,
@@ -34,10 +31,7 @@ pub enum HostEvent {
         exit_code: Option<i32>,
     },
     /// A session's title changed (from VT escape sequence).
-    TitleChanged {
-        session_id: String,
-        title: String,
-    },
+    TitleChanged { session_id: String, title: String },
     /// The layout tree for a tab changed.
     LayoutChanged {
         workspace: String,
@@ -51,13 +45,9 @@ pub enum HostEvent {
         new_state: String,
     },
     /// An error response was received.
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// The IPC connection was lost.
-    Disconnected {
-        reason: String,
-    },
+    Disconnected { reason: String },
 }
 
 // ── Commands sent from the UI thread ─────────────────────────────────
@@ -68,13 +58,19 @@ pub enum HostCommand {
     /// Forward raw keyboard input bytes to a session (base64-encoded by bridge).
     SessionInput { session_id: String, data: Vec<u8> },
     /// Notify host of a pane resize.
-    PaneResize { pane_id: String, cols: u16, rows: u16 },
+    PaneResize {
+        pane_id: String,
+        cols: u16,
+        rows: u16,
+    },
     /// Invoke an action on the host.
     InvokeAction {
         action: String,
         target_pane_id: Option<String>,
         args: Value,
     },
+    /// Re-fetch the attached workspace snapshot from the host.
+    RefreshWorkspace,
     /// Disconnect from host.
     Disconnect,
 }
@@ -158,17 +154,17 @@ impl HostBridge {
     }
 
     /// Invoke an action on the host.
-    pub fn send_action(
-        &self,
-        action: String,
-        target_pane_id: Option<String>,
-        args: Value,
-    ) {
+    pub fn send_action(&self, action: String, target_pane_id: Option<String>, args: Value) {
         self.send(HostCommand::InvokeAction {
             action,
             target_pane_id,
             args,
         });
+    }
+
+    /// Re-fetch the current workspace snapshot.
+    pub fn refresh_workspace(&self) {
+        self.send(HostCommand::RefreshWorkspace);
     }
 }
 
@@ -219,7 +215,7 @@ async fn run_attached(
     let attach_req = Envelope::new(
         "ui-attach-1",
         &AttachWorkspace {
-            workspace: workspace_name,
+            workspace: workspace_name.clone(),
         },
     );
 
@@ -252,14 +248,10 @@ async fn run_attached(
         if let Ok(result) = attach_result.extract_payload::<AttachWorkspaceResult>() {
             emit_connected_and_initial_screens(&event_tx, result.state);
         } else {
-            let _ = event_tx.send(HostEvent::Connected {
-                state: Value::Null,
-            });
+            let _ = event_tx.send(HostEvent::Connected { state: Value::Null });
         }
     } else {
-        let _ = event_tx.send(HostEvent::Connected {
-            state: Value::Null,
-        });
+        let _ = event_tx.send(HostEvent::Connected { state: Value::Null });
     }
 
     // Split into reader/writer and run the bidirectional message loop.
@@ -298,6 +290,12 @@ async fn run_attached(
             result = reader.read_frame() => {
                 match result {
                     Ok(envelope) => {
+                        if envelope.msg_type == AttachWorkspaceResult::TYPE_NAME {
+                            if let Ok(result) = envelope.extract_payload::<AttachWorkspaceResult>() {
+                                emit_connected_and_initial_screens(&event_tx, result.state);
+                                continue;
+                            }
+                        }
                         if let Some(event) = envelope_to_event(&envelope) {
                             if event_tx.send(event).is_err() {
                                 break;
@@ -313,6 +311,22 @@ async fn run_attached(
                 }
             }
             Some(cmd) = tokio_cmd_rx.recv() => {
+                if matches!(cmd, HostCommand::RefreshWorkspace) {
+                    msg_counter += 1;
+                    let envelope = Envelope::new(
+                        format!("ui-refresh-{msg_counter}"),
+                        &AttachWorkspace {
+                            workspace: workspace_name.clone(),
+                        },
+                    );
+                    if let Err(e) = writer.write_frame(&envelope).await {
+                        let _ = event_tx.send(HostEvent::Disconnected {
+                            reason: format!("write error: {e}"),
+                        });
+                        break;
+                    }
+                    continue;
+                }
                 msg_counter += 1;
                 let envelope = command_to_envelope(cmd, msg_counter);
                 if let Err(e) = writer.write_frame(&envelope).await {
@@ -334,7 +348,10 @@ fn emit_connected_and_initial_screens(event_tx: &mpsc::Sender<HostEvent>, state:
     let state_clone = state.clone();
     let _ = event_tx.send(HostEvent::Connected { state });
 
-    if let Some(screens) = state_clone.get("sessionScreens").and_then(|v| v.as_object()) {
+    if let Some(screens) = state_clone
+        .get("sessionScreens")
+        .and_then(|v| v.as_object())
+    {
         for (session_id, b64_val) in screens {
             if let Some(b64) = b64_val.as_str() {
                 let data = base64_decode(b64);
@@ -405,7 +422,14 @@ fn command_to_envelope(cmd: HostCommand, counter: u64) -> Envelope {
             pane_id,
             cols,
             rows,
-        } => Envelope::new(id, &message::PaneResize { pane_id, cols, rows }),
+        } => Envelope::new(
+            id,
+            &message::PaneResize {
+                pane_id,
+                cols,
+                rows,
+            },
+        ),
         HostCommand::InvokeAction {
             action,
             target_pane_id,
@@ -418,20 +442,25 @@ fn command_to_envelope(cmd: HostCommand, counter: u64) -> Envelope {
                 args,
             },
         ),
+        HostCommand::RefreshWorkspace => {
+            unreachable!("RefreshWorkspace is handled directly in the IPC loop")
+        }
         HostCommand::Disconnect => {
             // Should not reach here — handled by the relay task.
-            Envelope::new(id, &message::SessionInput {
-                session_id: String::new(),
-                data: String::new(),
-            })
+            Envelope::new(
+                id,
+                &message::SessionInput {
+                    session_id: String::new(),
+                    data: String::new(),
+                },
+            )
         }
     }
 }
 
 // ── Base64 encode/decode (simple, no external dependency) ────────────
 
-const B64_CHARS: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(input: &[u8]) -> String {
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
@@ -468,7 +497,10 @@ fn base64_decode(input: &str) -> Vec<u8> {
         }
     }
 
-    let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'=' && b != b'\n' && b != b'\r').collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'=' && b != b'\n' && b != b'\r')
+        .collect();
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
     for chunk in bytes.chunks(4) {
         if chunk.len() < 2 {
@@ -476,8 +508,16 @@ fn base64_decode(input: &str) -> Vec<u8> {
         }
         let b0 = val(chunk[0]) as u32;
         let b1 = val(chunk[1]) as u32;
-        let b2 = if chunk.len() > 2 { val(chunk[2]) as u32 } else { 0 };
-        let b3 = if chunk.len() > 3 { val(chunk[3]) as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 {
+            val(chunk[2]) as u32
+        } else {
+            0
+        };
+        let b3 = if chunk.len() > 3 {
+            val(chunk[3]) as u32
+        } else {
+            0
+        };
         let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
         out.push(((triple >> 16) & 0xff) as u8);
         if chunk.len() > 2 {

@@ -1,7 +1,7 @@
 //! Workspace definition types — the durable, persisted layer (§9.1, §10).
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ── WorkspaceName ──────────────────────────────────────────────────────────────
 
@@ -74,6 +74,18 @@ pub struct DefaultsDefinition {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, Option<String>>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "terminalSize"
+    )]
+    pub terminal_size: Option<TerminalSizeDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSizeDefinition {
+    pub cols: u16,
+    pub rows: u16,
 }
 
 // ── RestartPolicy (§9.1.3) ────────────────────────────────────────────────────
@@ -157,6 +169,12 @@ pub struct SessionLaunchDefinition {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "terminalSize"
+    )]
+    pub terminal_size: Option<TerminalSizeDefinition>,
 }
 
 // ── ProfileDefinition (§9.1.8) ────────────────────────────────────────────────
@@ -189,11 +207,7 @@ pub struct ProfileDefinition {
         rename = "identityFile"
     )]
     pub identity_file: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "useAgent"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "useAgent")]
     pub use_agent: Option<bool>,
     #[serde(
         default,

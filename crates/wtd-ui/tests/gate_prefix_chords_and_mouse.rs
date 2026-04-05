@@ -94,10 +94,7 @@ fn prefix_chord_percent_dispatches_split_right() {
         matches!(result, PrefixOutput::Consumed),
         "Ctrl+B must be consumed to enter prefix mode"
     );
-    assert!(
-        psm.is_prefix_active(),
-        "prefix must be active after Ctrl+B"
-    );
+    assert!(psm.is_prefix_active(), "prefix must be active after Ctrl+B");
 
     // Press % → dispatches split-right chord
     let result = psm.process(&percent());
@@ -160,10 +157,7 @@ fn mouse_click_changes_pane_focus() {
     let rect2 = pane_layout.pane_pixel_rect(&pane2).unwrap();
 
     // Pane1 is on the left, pane2 is on the right (from split_right)
-    assert!(
-        rect2.x > rect1.x,
-        "pane2 must be to the right of pane1"
-    );
+    assert!(rect2.x > rect1.x, "pane2 must be to the right of pane1");
 
     // Create a stub TabStrip (we need a DirectWrite factory — use the pane_layout approach instead)
     // Instead, test via PaneLayout.on_mouse_down directly, which is what MouseHandler delegates to.
@@ -180,10 +174,7 @@ fn mouse_click_changes_pane_focus() {
                 "clicking in pane2's area must produce FocusPane(pane2)"
             );
         }
-        other => panic!(
-            "expected FocusPane(pane2), got: {:?}",
-            other
-        ),
+        other => panic!("expected FocusPane(pane2), got: {:?}", other),
     }
 
     // Click in the center of pane1
@@ -198,10 +189,7 @@ fn mouse_click_changes_pane_focus() {
                 "clicking in pane1's area must produce FocusPane(pane1)"
             );
         }
-        other => panic!(
-            "expected FocusPane(pane1), got: {:?}",
-            other
-        ),
+        other => panic!("expected FocusPane(pane1), got: {:?}", other),
     }
 }
 
@@ -248,10 +236,7 @@ fn splitter_drag_resizes_panes() {
             direction,
             cells,
         }) => {
-            assert_eq!(
-                pane_id, pane1,
-                "resize must reference pane_before (pane1)"
-            );
+            assert_eq!(pane_id, pane1, "resize must reference pane_before (pane1)");
             assert_eq!(
                 direction,
                 wtd_core::layout::ResizeDirection::GrowRight,
@@ -276,10 +261,7 @@ fn splitter_drag_resizes_panes() {
 
     // Release the mouse
     pane_layout.on_mouse_up(drag_x, splitter_y);
-    assert!(
-        !pane_layout.is_dragging(),
-        "drag must end on mouse up"
-    );
+    assert!(!pane_layout.is_dragging(), "drag must end on mouse up");
 
     // Verify the resize actually changed the layout by applying it to the tree
     let mut tree_mut = tree;

@@ -156,7 +156,13 @@ impl RequestHandler for M1Handler {
                 let pane_id = inst.find_pane_by_name(&send.target)?;
                 let session_id = match inst.pane_state(&pane_id) {
                     Some(PaneState::Attached { session_id }) => session_id.clone(),
-                    _ => return Some(error_envelope(&envelope.id, ErrorCode::SessionFailed, "pane not attached")),
+                    _ => {
+                        return Some(error_envelope(
+                            &envelope.id,
+                            ErrorCode::SessionFailed,
+                            "pane not attached",
+                        ))
+                    }
                 };
 
                 let session = inst.session(&session_id)?;
@@ -194,7 +200,13 @@ impl RequestHandler for M1Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -204,9 +216,7 @@ impl RequestHandler for M1Handler {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -246,7 +256,13 @@ async fn do_capture(
 ) -> String {
     write_frame(
         client,
-        &Envelope::new("cap", &Capture { target: target.to_string(), ..Default::default() }),
+        &Envelope::new(
+            "cap",
+            &Capture {
+                target: target.to_string(),
+                ..Default::default()
+            },
+        ),
     )
     .await
     .unwrap();

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use wtd_core::workspace::ActionReference;
 
 use crate::input::{
-    InputAction, InputClassifier, KeyEvent, KeyName, KeySpec, Modifiers, key_event_to_bytes,
+    key_event_to_bytes, InputAction, InputClassifier, KeyEvent, KeyName, KeySpec, Modifiers,
 };
 
 // ── Output ──────────────────────────────────────────────────────────────────

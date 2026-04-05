@@ -65,14 +65,9 @@ mod tests {
         let gs = GlobalSettings::default();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(100),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("workspace instance should open");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(100), &def, &gs, &env, find_exe_windows)
+                .expect("workspace instance should open");
 
         // Step 3: Verify workspace is Active with one session
         assert_eq!(*inst.state(), WorkspaceState::Active);
@@ -85,7 +80,10 @@ mod tests {
         let pane_ids = inst.tabs()[0].layout().panes();
         assert_eq!(pane_ids.len(), 1);
         assert!(
-            matches!(inst.pane_state(&pane_ids[0]), Some(PaneState::Attached { .. })),
+            matches!(
+                inst.pane_state(&pane_ids[0]),
+                Some(PaneState::Attached { .. })
+            ),
             "pane should be attached to a session"
         );
 
@@ -115,14 +113,9 @@ mod tests {
         let gs = GlobalSettings::default();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(101),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("split workspace should open");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(101), &def, &gs, &env, find_exe_windows)
+                .expect("split workspace should open");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
         assert_eq!(inst.session_count(), 2);
@@ -165,14 +158,9 @@ mod tests {
         let gs = GlobalSettings::default();
         let env = default_host_env();
 
-        let mut inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(102),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("workspace should open");
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(102), &def, &gs, &env, find_exe_windows)
+                .expect("workspace should open");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
 
@@ -183,9 +171,9 @@ mod tests {
                 session.process_pending_output();
             }
             // Check if any session's screen contains the marker
-            inst.sessions().values().any(|s| {
-                s.screen().visible_text().contains("GATE_MARKER")
-            })
+            inst.sessions()
+                .values()
+                .any(|s| s.screen().visible_text().contains("GATE_MARKER"))
         });
 
         assert!(
@@ -204,14 +192,9 @@ mod tests {
         let gs = GlobalSettings::default();
         let env = default_host_env();
 
-        let mut inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(103),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("workspace should open");
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(103), &def, &gs, &env, find_exe_windows)
+                .expect("workspace should open");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
 
@@ -221,8 +204,7 @@ mod tests {
                 session.process_pending_output();
             }
             inst.sessions().values().any(|s| {
-                matches!(s.state(), &SessionState::Running)
-                    && !s.screen().visible_text().is_empty()
+                matches!(s.state(), &SessionState::Running) && !s.screen().visible_text().is_empty()
             })
         });
         assert!(ready, "session should be Running with initial output");
@@ -280,14 +262,9 @@ mod tests {
         let gs = GlobalSettings::default();
         let env = default_host_env();
 
-        let mut inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(104),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("workspace should open");
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(104), &def, &gs, &env, find_exe_windows)
+                .expect("workspace should open");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
 
@@ -297,8 +274,7 @@ mod tests {
                 session.process_pending_output();
             }
             inst.sessions().values().any(|s| {
-                matches!(s.state(), &SessionState::Running)
-                    && !s.screen().visible_text().is_empty()
+                matches!(s.state(), &SessionState::Running) && !s.screen().visible_text().is_empty()
             })
         });
         assert!(ready, "session should be Running with initial output");

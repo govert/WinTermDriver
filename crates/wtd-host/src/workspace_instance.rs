@@ -11,7 +11,7 @@ use wtd_core::ids::{PaneId, SessionId, TabId, WorkspaceInstanceId};
 use wtd_core::layout::LayoutTree;
 use wtd_core::workspace::{
     PaneLeaf, PaneNode, RestartPolicy, SessionLaunchDefinition, TabDefinition,
-    WorkspaceDefinition,
+    TerminalSizeDefinition, WorkspaceDefinition,
 };
 use wtd_core::{resolve_launch_spec, ResolveError};
 use wtd_pty::PtySize;
@@ -20,6 +20,9 @@ use crate::session::{Session, SessionConfig, SessionState};
 
 #[cfg(windows)]
 use wtd_pty::JobObject;
+
+const DEFAULT_PTY_COLS: u16 = 80;
+const DEFAULT_PTY_ROWS: u16 = 24;
 
 // ── Workspace state machine (§27.2) ─────────────────────────────────────────
 
@@ -91,6 +94,12 @@ pub enum WorkspaceError {
     #[error("job object creation failed: {0}")]
     JobObject(String),
 
+    #[error("pane \"{0}\" not found")]
+    PaneNotFound(String),
+
+    #[error("session operation failed: {0}")]
+    SessionOperation(String),
+
     #[error("profile resolution failed: {0}")]
     ProfileResolution(#[from] ResolveError),
 }
@@ -115,10 +124,12 @@ pub struct WorkspaceInstance {
     name: String,
     state: WorkspaceState,
     tabs: Vec<TabInstance>,
+    active_tab_index: usize,
     sessions: HashMap<SessionId, Session>,
     panes: HashMap<PaneId, PaneRecord>,
     #[cfg(windows)]
     job: Option<JobObject>,
+    default_size: PtySize,
     next_session_id: u64,
     next_tab_id: u64,
 }
@@ -141,10 +152,12 @@ impl WorkspaceInstance {
             name: workspace_def.name.clone(),
             state: WorkspaceState::Creating,
             tabs: Vec::new(),
+            active_tab_index: 0,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
             job: None,
+            default_size: PtySize::new(DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS),
             next_session_id: 1,
             next_tab_id: 1,
         };
@@ -161,6 +174,7 @@ impl WorkspaceInstance {
             id: self.id.clone(),
             name: self.name.clone(),
             state: self.state.clone(),
+            active_tab_index: self.active_tab_index,
             tabs: self
                 .tabs
                 .iter()
@@ -334,6 +348,59 @@ impl WorkspaceInstance {
             .count()
     }
 
+    pub fn active_tab_index(&self) -> usize {
+        self.active_tab_index
+    }
+
+    pub fn set_active_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.active_tab_index = index;
+        }
+    }
+
+    /// Add a new empty tab and return a reference to it.
+    pub fn add_tab(&mut self, name: String) -> &TabInstance {
+        let tab_id = TabId(self.next_tab_id);
+        self.next_tab_id += 1;
+        let layout = LayoutTree::new();
+        let pane_id = layout.focus();
+        let pane_name = format!("pane-{}", pane_id.0);
+        self.panes.insert(
+            pane_id,
+            PaneRecord {
+                name: pane_name,
+                state: PaneState::Detached {
+                    error: "pending session".to_string(),
+                },
+                original_def: None,
+            },
+        );
+        self.tabs.push(TabInstance {
+            id: tab_id,
+            name,
+            layout,
+        });
+        self.active_tab_index = self.tabs.len() - 1;
+        self.tabs.last().unwrap()
+    }
+
+    /// Close a tab by index, stopping all its sessions.
+    pub fn close_tab(&mut self, tab_index: usize) {
+        if tab_index >= self.tabs.len() || self.tabs.len() <= 1 {
+            return; // Don't close the last tab.
+        }
+        let tab = &self.tabs[tab_index];
+        let pane_ids: Vec<PaneId> = tab.layout().panes();
+        for pane_id in &pane_ids {
+            self.stop_pane_session(pane_id);
+            self.panes.remove(pane_id);
+        }
+        self.tabs.remove(tab_index);
+        if self.active_tab_index >= self.tabs.len() {
+            self.active_tab_index = self.tabs.len() - 1;
+        }
+    }
+
     // ── Target-resolution helpers ────────────────────────────────────────────
 
     /// Find a tab by name.
@@ -415,6 +482,37 @@ impl WorkspaceInstance {
         }
     }
 
+    /// Resize the PTY/screen associated with a pane.
+    pub fn resize_pane_session(
+        &mut self,
+        pane_id: &PaneId,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), WorkspaceError> {
+        let session_id = match self.panes.get(pane_id) {
+            Some(rec) => match &rec.state {
+                PaneState::Attached { session_id } => session_id.clone(),
+                PaneState::Detached { .. } => {
+                    return Err(WorkspaceError::SessionOperation(
+                        "pane is detached".to_string(),
+                    ));
+                }
+            },
+            None => {
+                return Err(WorkspaceError::PaneNotFound(format!("{}", pane_id.0)));
+            }
+        };
+
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| WorkspaceError::SessionOperation("session not found".to_string()))?;
+
+        session
+            .resize(cols, rows)
+            .map_err(|e| WorkspaceError::SessionOperation(format!("resize failed: {}", e)))
+    }
+
     /// Restart the session in a pane.
     pub fn restart_pane_session(&mut self, pane_id: &PaneId) -> Result<(), WorkspaceError> {
         let session_id = match self.panes.get(pane_id) {
@@ -428,11 +526,31 @@ impl WorkspaceInstance {
         };
         if let Some(session) = self.sessions.get_mut(&session_id) {
             session.stop();
-            session.restart().map_err(|e| {
-                WorkspaceError::JobObject(format!("restart failed: {}", e))
-            })?;
+            session
+                .restart()
+                .map_err(|e| WorkspaceError::JobObject(format!("restart failed: {}", e)))?;
         }
         Ok(())
+    }
+
+    /// Estimate an effective viewport from the largest known session dimensions.
+    ///
+    /// Used by the action dispatcher as a fallback when exact UI geometry
+    /// isn't available in this runtime layer.
+    pub fn estimated_viewport_size(&self) -> Option<(u16, u16)> {
+        let mut cols = 0u16;
+        let mut rows = 0u16;
+
+        for session in self.sessions.values() {
+            cols = cols.max(session.screen().cols().try_into().ok()?);
+            rows = rows.max(session.screen().rows().try_into().ok()?);
+        }
+
+        if cols == 0 || rows == 0 {
+            None
+        } else {
+            Some((cols, rows))
+        }
     }
 
     /// Spawn a session for a pane created by a split action.
@@ -493,7 +611,7 @@ impl WorkspaceInstance {
             env: resolved.env,
             restart_policy: RestartPolicy::Never,
             startup_command: None,
-            size: PtySize::new(80, 24),
+            size: self.default_size,
             name: pane_name.clone(),
             max_scrollback: 10_000,
         };
@@ -544,10 +662,12 @@ impl WorkspaceInstance {
             name: name.to_string(),
             state: WorkspaceState::Active,
             tabs: Vec::new(),
+            active_tab_index: 0,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
             job: None,
+            default_size: PtySize::new(DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS),
             next_session_id: 1,
             next_tab_id: 1,
         };
@@ -596,10 +716,12 @@ impl WorkspaceInstance {
             name: name.to_string(),
             state: WorkspaceState::Active,
             tabs: Vec::new(),
+            active_tab_index: 0,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
             job: None,
+            default_size: PtySize::new(DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS),
             next_session_id: 1,
             next_tab_id: 1,
         };
@@ -685,6 +807,12 @@ impl WorkspaceInstance {
             .as_ref()
             .and_then(|d| d.restart_policy.clone())
             .unwrap_or(RestartPolicy::Never);
+        self.default_size = workspace_def
+            .defaults
+            .as_ref()
+            .and_then(|d| d.terminal_size.as_ref())
+            .map(pty_size_from_definition)
+            .unwrap_or_else(|| PtySize::new(DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS));
 
         let max_scrollback = workspace_def
             .defaults
@@ -740,7 +868,11 @@ impl WorkspaceInstance {
                     env: resolved.env,
                     restart_policy: restart_policy.clone(),
                     startup_command: session_launch.startup_command.clone(),
-                    size: PtySize::new(80, 24),
+                    size: session_launch
+                        .terminal_size
+                        .as_ref()
+                        .map(pty_size_from_definition)
+                        .unwrap_or(self.default_size),
                     name: pane_name.clone(),
                     max_scrollback,
                 };
@@ -823,6 +955,7 @@ pub struct AttachSnapshot {
     pub id: WorkspaceInstanceId,
     pub name: String,
     pub state: WorkspaceState,
+    pub active_tab_index: usize,
     pub tabs: Vec<TabSnapshot>,
     pub pane_states: HashMap<PaneId, PaneState>,
     pub session_states: HashMap<SessionId, SessionState>,
@@ -882,6 +1015,10 @@ fn collect_pane_defs_recursive(
     }
 }
 
+fn pty_size_from_definition(size: &TerminalSizeDefinition) -> PtySize {
+    PtySize::new(size.cols.max(1), size.rows.max(1))
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -905,10 +1042,7 @@ mod tests {
     }
 
     fn find_exe_windows(name: &str) -> bool {
-        matches!(
-            name,
-            "cmd.exe" | "powershell.exe" | "pwsh.exe"
-        )
+        matches!(name, "cmd.exe" | "powershell.exe" | "pwsh.exe")
     }
 
     fn simple_workspace_def() -> WorkspaceDefinition {
@@ -1123,14 +1257,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(1),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(1), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
         assert_eq!(inst.tabs().len(), 1);
@@ -1165,14 +1294,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(2),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(2), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
         assert_eq!(inst.session_count(), 2);
@@ -1199,14 +1323,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(3),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed despite partial failure");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(3), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed despite partial failure");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
         // Two sessions attempted (one failed at start, one succeeded)
@@ -1223,10 +1342,7 @@ mod tests {
                 Some(PaneState::Attached { .. }) => attached += 1,
                 Some(PaneState::Detached { error }) => {
                     detached += 1;
-                    assert!(
-                        !error.is_empty(),
-                        "detached pane should have error message"
-                    );
+                    assert!(!error.is_empty(), "detached pane should have error message");
                 }
                 None => panic!("pane {:?} has no state", pane_id),
             }
@@ -1249,14 +1365,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let mut inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(4),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed");
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(4), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
 
         assert_eq!(*inst.state(), WorkspaceState::Active);
 
@@ -1274,14 +1385,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let mut inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(5),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed");
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(5), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
 
         // Capture original session IDs
         let original_ids: Vec<SessionId> = inst.sessions().keys().cloned().collect();
@@ -1296,7 +1402,10 @@ mod tests {
 
         // Session IDs should be different (fresh sessions)
         let new_ids: Vec<SessionId> = inst.sessions().keys().cloned().collect();
-        assert_ne!(original_ids, new_ids, "recreate should produce new session IDs");
+        assert_ne!(
+            original_ids, new_ids,
+            "recreate should produce new session IDs"
+        );
     }
 
     #[cfg(windows)]
@@ -1306,14 +1415,9 @@ mod tests {
         let gs = default_global_settings();
         let env = default_host_env();
 
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(6),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        )
-        .expect("open should succeed");
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(6), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
 
         let saved = inst.save();
 
@@ -1351,13 +1455,8 @@ mod tests {
 
         // We test the snapshot structure; on non-windows the sessions won't
         // actually spawn, but the data structures are still exercised.
-        let inst = WorkspaceInstance::open(
-            WorkspaceInstanceId(7),
-            &def,
-            &gs,
-            &env,
-            find_exe_windows,
-        );
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(7), &def, &gs, &env, find_exe_windows);
 
         // On non-windows, open will still succeed (sessions fail gracefully).
         if let Ok(inst) = inst {
@@ -1365,6 +1464,7 @@ mod tests {
             assert_eq!(snap.name, "test-simple");
             assert_eq!(snap.state, WorkspaceState::Active);
             assert_eq!(snap.tabs.len(), 1);
+            assert_eq!(snap.active_tab_index, 0);
         }
     }
 }

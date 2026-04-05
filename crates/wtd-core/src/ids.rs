@@ -20,8 +20,14 @@ macro_rules! newtype_id {
     };
 }
 
-newtype_id!(WorkspaceInstanceId, "Opaque ID for a running workspace instance.");
-newtype_id!(SessionId, "Opaque ID for a PTY session within a workspace instance.");
+newtype_id!(
+    WorkspaceInstanceId,
+    "Opaque ID for a running workspace instance."
+);
+newtype_id!(
+    SessionId,
+    "Opaque ID for a PTY session within a workspace instance."
+);
 newtype_id!(PaneId, "Opaque ID for a UI pane viewport.");
 newtype_id!(TabId, "Opaque ID for a tab.");
 

@@ -8,7 +8,8 @@
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 use crate::error::PtyError;
@@ -45,7 +46,9 @@ impl JobObject {
             .map_err(|e| PtyError::JobObject(e.to_string()))?;
         }
 
-        Ok(Self { handle: OwnedHandle(h) })
+        Ok(Self {
+            handle: OwnedHandle(h),
+        })
     }
 
     /// Add a process (identified by its open `HANDLE`) to this Job Object.

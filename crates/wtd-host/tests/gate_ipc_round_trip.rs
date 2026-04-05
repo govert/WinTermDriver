@@ -19,9 +19,8 @@ use wtd_core::GlobalSettings;
 use wtd_host::ipc_server::*;
 use wtd_host::workspace_instance::{PaneState, WorkspaceInstance};
 use wtd_ipc::message::{
-    self, Capture, CaptureResult, ClientType, ErrorCode, ErrorResponse, Handshake,
-    HandshakeAck, MessagePayload, OkResponse, OpenWorkspace, OpenWorkspaceResult,
-    TypedMessage,
+    self, Capture, CaptureResult, ClientType, ErrorCode, ErrorResponse, Handshake, HandshakeAck,
+    MessagePayload, OkResponse, OpenWorkspace, OpenWorkspaceResult, TypedMessage,
 };
 use wtd_ipc::Envelope;
 
@@ -237,7 +236,13 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -247,9 +252,7 @@ impl RequestHandler for GateHandler {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-async fn connect_client(
-    pipe_name: &str,
-) -> tokio::net::windows::named_pipe::NamedPipeClient {
+async fn connect_client(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
     for _ in 0..200 {
         match ClientOptions::new().open(pipe_name) {
             Ok(client) => return client,
@@ -267,9 +270,7 @@ async fn connect_client(
     panic!("timed out waiting for pipe server");
 }
 
-async fn do_handshake(
-    client: &mut tokio::net::windows::named_pipe::NamedPipeClient,
-) {
+async fn do_handshake(client: &mut tokio::net::windows::named_pipe::NamedPipeClient) {
     write_frame(
         client,
         &Envelope::new(
@@ -293,9 +294,8 @@ async fn do_handshake(
 #[tokio::test]
 async fn ipc_open_send_capture_round_trip() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap(),
-    );
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -330,7 +330,8 @@ async fn ipc_open_send_capture_round_trip() {
 
     // 2. Wait for startup command output ("echo GATE_MARKER" from fixture).
     //    Poll Capture until the startup marker appears.
-    let startup_found = poll_capture_for(&mut client, "shell", "GATE_MARKER", Duration::from_secs(10)).await;
+    let startup_found =
+        poll_capture_for(&mut client, "shell", "GATE_MARKER", Duration::from_secs(10)).await;
     assert!(
         startup_found,
         "startup command output 'GATE_MARKER' should appear via IPC Capture"

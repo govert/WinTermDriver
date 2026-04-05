@@ -281,7 +281,13 @@ impl RequestHandler for M4Handler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -354,8 +360,7 @@ async fn m4_visual_terminal_acceptance() {
     // ── Start IPC server and connect as UI client ────────────────────
     let pipe_name = unique_pipe_name();
     let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), M4Handler::new())
-            .expect("M4: IPC server must start"),
+        IpcServer::new(pipe_name.clone(), M4Handler::new()).expect("M4: IPC server must start"),
     );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -447,7 +452,11 @@ async fn m4_visual_terminal_acceptance() {
     tab_strip.add_tab("logs".to_string());
     tab_strip.layout(800.0);
 
-    assert_eq!(tab_strip.tab_count(), 2, "M4 criterion 1: must have two tabs");
+    assert_eq!(
+        tab_strip.tab_count(),
+        2,
+        "M4 criterion 1: must have two tabs"
+    );
     assert_eq!(
         tab_strip.active_tab().unwrap().name,
         "dev",
@@ -506,19 +515,13 @@ async fn m4_visual_terminal_acceptance() {
     let terminal_cols = (pr_terminal.width / cell_w) as u16;
 
     let mut screen_editor = ScreenBuffer::new(editor_cols.max(1), content_rows, 100);
-    screen_editor.advance(
-        b"C:\\> echo M4_EDITOR_8K3W\r\nM4_EDITOR_8K3W\r\n\r\nC:\\> ",
-    );
+    screen_editor.advance(b"C:\\> echo M4_EDITOR_8K3W\r\nM4_EDITOR_8K3W\r\n\r\nC:\\> ");
 
     let mut screen_terminal = ScreenBuffer::new(terminal_cols.max(1), content_rows, 100);
-    screen_terminal.advance(
-        b"C:\\> echo M4_TERMINAL_2F9V\r\nM4_TERMINAL_2F9V\r\n\r\nC:\\> ",
-    );
+    screen_terminal.advance(b"C:\\> echo M4_TERMINAL_2F9V\r\nM4_TERMINAL_2F9V\r\n\r\nC:\\> ");
 
     let mut screen_logs = ScreenBuffer::new(content_cols, content_rows, 100);
-    screen_logs.advance(
-        b"C:\\> echo M4_LOGS_5T7R\r\nM4_LOGS_5T7R\r\n\r\nC:\\> ",
-    );
+    screen_logs.advance(b"C:\\> echo M4_LOGS_5T7R\r\nM4_LOGS_5T7R\r\n\r\nC:\\> ");
 
     assert!(screen_editor.visible_text().contains("M4_EDITOR_8K3W"));
     assert!(screen_terminal.visible_text().contains("M4_TERMINAL_2F9V"));
@@ -636,16 +639,30 @@ async fn m4_visual_terminal_acceptance() {
     tab_strip.paint(renderer.render_target()).unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_editor, pr_editor.x, pr_editor.y, pr_editor.width, pr_editor.height, None,
+            &screen_editor,
+            pr_editor.x,
+            pr_editor.y,
+            pr_editor.width,
+            pr_editor.height,
+            None,
         )
         .unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_terminal, pr_terminal.x, pr_terminal.y, pr_terminal.width, pr_terminal.height, None,
+            &screen_terminal,
+            pr_terminal.x,
+            pr_terminal.y,
+            pr_terminal.width,
+            pr_terminal.height,
+            None,
         )
         .unwrap();
-    dev_pane_layout.paint(renderer.render_target(), &editor_pane).unwrap();
-    status_bar.paint(renderer.render_target(), 600.0 - status_bar.height()).unwrap();
+    dev_pane_layout
+        .paint(renderer.render_target(), &editor_pane)
+        .unwrap();
+    status_bar
+        .paint(renderer.render_target(), 600.0 - status_bar.height())
+        .unwrap();
     renderer
         .end_draw()
         .expect("M4 criterion 2: re-render after switching back to dev must complete");
@@ -672,18 +689,30 @@ async fn m4_visual_terminal_acceptance() {
     tab_strip.paint(renderer.render_target()).unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_editor, pr_editor.x, pr_editor.y, pr_editor.width, pr_editor.height, None,
+            &screen_editor,
+            pr_editor.x,
+            pr_editor.y,
+            pr_editor.width,
+            pr_editor.height,
+            None,
         )
         .unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_terminal, pr_terminal.x, pr_terminal.y, pr_terminal.width, pr_terminal.height, None,
+            &screen_terminal,
+            pr_terminal.x,
+            pr_terminal.y,
+            pr_terminal.width,
+            pr_terminal.height,
+            None,
         )
         .unwrap();
     dev_pane_layout
         .paint(renderer.render_target(), &terminal_pane)
         .expect("M4 criterion 3: focus indicator must render on terminal pane");
-    status_bar.paint(renderer.render_target(), 600.0 - status_bar.height()).unwrap();
+    status_bar
+        .paint(renderer.render_target(), 600.0 - status_bar.height())
+        .unwrap();
     renderer
         .end_draw()
         .expect("M4 criterion 3: composited frame with focus on terminal pane must complete");
@@ -703,18 +732,30 @@ async fn m4_visual_terminal_acceptance() {
     tab_strip.paint(renderer.render_target()).unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_editor, pr_editor.x, pr_editor.y, pr_editor.width, pr_editor.height, None,
+            &screen_editor,
+            pr_editor.x,
+            pr_editor.y,
+            pr_editor.width,
+            pr_editor.height,
+            None,
         )
         .unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_terminal, pr_terminal.x, pr_terminal.y, pr_terminal.width, pr_terminal.height, None,
+            &screen_terminal,
+            pr_terminal.x,
+            pr_terminal.y,
+            pr_terminal.width,
+            pr_terminal.height,
+            None,
         )
         .unwrap();
     dev_pane_layout
         .paint(renderer.render_target(), &editor_pane)
         .expect("M4 criterion 3: focus indicator must render after cycling back to editor");
-    status_bar.paint(renderer.render_target(), 600.0 - status_bar.height()).unwrap();
+    status_bar
+        .paint(renderer.render_target(), 600.0 - status_bar.height())
+        .unwrap();
     renderer
         .end_draw()
         .expect("M4 criterion 3: composited frame after focus cycle must complete");
@@ -745,15 +786,27 @@ async fn m4_visual_terminal_acceptance() {
     tab_strip.paint(renderer.render_target()).unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_editor, pr_editor.x, pr_editor.y, pr_editor.width, pr_editor.height, None,
+            &screen_editor,
+            pr_editor.x,
+            pr_editor.y,
+            pr_editor.width,
+            pr_editor.height,
+            None,
         )
         .unwrap();
     renderer
         .paint_pane_viewport(
-            &screen_terminal, pr_terminal.x, pr_terminal.y, pr_terminal.width, pr_terminal.height, None,
+            &screen_terminal,
+            pr_terminal.x,
+            pr_terminal.y,
+            pr_terminal.width,
+            pr_terminal.height,
+            None,
         )
         .unwrap();
-    dev_pane_layout.paint(renderer.render_target(), &editor_pane).unwrap();
+    dev_pane_layout
+        .paint(renderer.render_target(), &editor_pane)
+        .unwrap();
     status_bar
         .paint(renderer.render_target(), 600.0 - status_bar.height())
         .expect("M4 criterion 4: status bar with workspace + pane info must render");

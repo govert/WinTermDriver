@@ -45,6 +45,24 @@ pub fn request_repaint(hwnd: HWND) {
     }
 }
 
+/// Return the current client area size in pixels.
+pub fn client_size(hwnd: HWND) -> Option<(u32, u32)> {
+    unsafe {
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_ok() {
+            let width = (client.right - client.left).max(0) as u32;
+            let height = (client.bottom - client.top).max(0) as u32;
+            if width > 0 && height > 0 {
+                Some((width, height))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
 // ── Mouse events ─────────────────────────────────────────────────────────────
 
 /// A mouse event captured from the window proc.
@@ -175,8 +193,15 @@ pub fn create_terminal_window(title: &str, width: i32, height: i32) -> Result<HW
             None,
         )?;
 
-        let _ = ShowWindow(hwnd, SW_SHOW);
         Ok(hwnd)
+    }
+}
+
+/// Show the window once initial layout and host sizing are ready.
+pub fn show_terminal_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = UpdateWindow(hwnd);
     }
 }
 
@@ -217,12 +242,16 @@ fn extract_mouse_pos(lparam: LPARAM) -> (f32, f32) {
     (x, y)
 }
 
-unsafe extern "system" fn wndproc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+fn client_pos_from_screen(hwnd: HWND, lparam: LPARAM) -> (f32, f32) {
+    let mut point = POINT {
+        x: (lparam.0 & 0xFFFF) as i16 as i32,
+        y: ((lparam.0 >> 16) & 0xFFFF) as i16 as i32,
+    };
+    let _ = unsafe { ScreenToClient(hwnd, &mut point) };
+    (point.x as f32, point.y as f32)
+}
+
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_PAINT => {
             NEEDS_PAINT.store(true, Ordering::Relaxed);
@@ -233,8 +262,23 @@ unsafe extern "system" fn wndproc(
             LRESULT(0)
         }
         WM_SIZE => {
-            let width = (lparam.0 & 0xFFFF) as u32;
-            let height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+            let mut width = (lparam.0 & 0xFFFF) as u32;
+            let mut height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+
+            if width == 0 || height == 0 {
+                let mut client = RECT::default();
+                if GetClientRect(hwnd, &mut client).is_ok() {
+                    let measured_w = client.right - client.left;
+                    let measured_h = client.bottom - client.top;
+                    width = measured_w as u32;
+                    height = measured_h as u32;
+                }
+            }
+
+            if width == 0 || height == 0 {
+                return LRESULT(0);
+            }
+
             RESIZE_WIDTH.store(width, Ordering::Relaxed);
             RESIZE_HEIGHT.store(height, Ordering::Relaxed);
             RESIZED.store(true, Ordering::Relaxed);
@@ -306,9 +350,7 @@ unsafe extern "system" fn wndproc(
         WM_MOUSEWHEEL => {
             // Wheel delta is in the high word of wparam (signed).
             let delta = ((wparam.0 >> 16) & 0xFFFF) as i16;
-            // For WM_MOUSEWHEEL, lparam coordinates are screen-relative.
-            // Convert to client-relative.
-            let (x, y) = extract_mouse_pos(lparam);
+            let (x, y) = client_pos_from_screen(hwnd, lparam);
             mouse_queue().lock().unwrap().push(MouseEvent {
                 kind: MouseEventKind::Wheel(delta),
                 x,

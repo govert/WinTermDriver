@@ -6,13 +6,17 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::global_settings::GlobalSettings;
-use crate::workspace::{ProfileDefinition, ProfileType, SessionLaunchDefinition, WorkspaceDefinition};
+use crate::workspace::{
+    ProfileDefinition, ProfileType, SessionLaunchDefinition, WorkspaceDefinition,
+};
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ResolveError {
-    #[error("profile '{name}' not found in workspace profiles, global settings, or built-in types")]
+    #[error(
+        "profile '{name}' not found in workspace profiles, global settings, or built-in types"
+    )]
     ProfileNotFound { name: String },
     #[error("custom profile '{name}' requires an 'executable' field")]
     CustomMissingExecutable { name: String },
@@ -80,9 +84,21 @@ pub fn resolve_launch_spec(
     let cwd = resolve_cwd(session, workspace_def, profile_def, &profile_type, host_env);
 
     // ── 6. Resolve merged env (§25.3) ─────────────────────────────────────────
-    let env = resolve_env(session, workspace_def, global_settings, profile_def, &profile_type, host_env);
+    let env = resolve_env(
+        session,
+        workspace_def,
+        global_settings,
+        profile_def,
+        &profile_type,
+        host_env,
+    );
 
-    Ok(ResolvedLaunchSpec { executable, args, cwd, env })
+    Ok(ResolvedLaunchSpec {
+        executable,
+        args,
+        cwd,
+        env,
+    })
 }
 
 // ── Profile lookup (§25.1) ────────────────────────────────────────────────────
@@ -106,11 +122,13 @@ fn lookup_profile<'a>(
     // 3. Built-in type names.
     match name {
         "powershell" => Ok((ProfileType::Powershell, None)),
-        "cmd"        => Ok((ProfileType::Cmd, None)),
-        "wsl"        => Ok((ProfileType::Wsl, None)),
-        "ssh"        => Ok((ProfileType::Ssh, None)),
-        "custom"     => Ok((ProfileType::Custom, None)),
-        _ => Err(ResolveError::ProfileNotFound { name: name.to_string() }),
+        "cmd" => Ok((ProfileType::Cmd, None)),
+        "wsl" => Ok((ProfileType::Wsl, None)),
+        "ssh" => Ok((ProfileType::Ssh, None)),
+        "custom" => Ok((ProfileType::Custom, None)),
+        _ => Err(ResolveError::ProfileNotFound {
+            name: name.to_string(),
+        }),
     }
 }
 
@@ -136,9 +154,9 @@ fn resolve_executable(
                 Ok("powershell.exe".to_string())
             }
         }
-        ProfileType::Cmd    => Ok("cmd.exe".to_string()),
-        ProfileType::Wsl    => Ok("wsl.exe".to_string()),
-        ProfileType::Ssh    => Ok("ssh.exe".to_string()),
+        ProfileType::Cmd => Ok("cmd.exe".to_string()),
+        ProfileType::Wsl => Ok("wsl.exe".to_string()),
+        ProfileType::Ssh => Ok("ssh.exe".to_string()),
         ProfileType::Custom => Err(ResolveError::CustomMissingExecutable {
             name: profile_name.to_string(),
         }),
@@ -147,15 +165,18 @@ fn resolve_executable(
 
 // ── Arguments (§25.2) ────────────────────────────────────────────────────────
 
-fn resolve_args(profile_type: &ProfileType, profile_def: Option<&ProfileDefinition>) -> Vec<String> {
+fn resolve_args(
+    profile_type: &ProfileType,
+    profile_def: Option<&ProfileDefinition>,
+) -> Vec<String> {
     // Profile definition args override built-in defaults.
     if let Some(args) = profile_def.and_then(|d| d.args.as_ref()) {
         return args.clone();
     }
     match profile_type {
         ProfileType::Powershell => vec!["-NoLogo".to_string()],
-        ProfileType::Cmd        => vec![],
-        ProfileType::Custom     => vec![],
+        ProfileType::Cmd => vec![],
+        ProfileType::Custom => vec![],
         ProfileType::Wsl => {
             if let Some(distro) = profile_def.and_then(|d| d.distribution.as_deref()) {
                 vec!["-d".to_string(), distro.to_string()]
@@ -169,7 +190,9 @@ fn resolve_args(profile_type: &ProfileType, profile_def: Option<&ProfileDefiniti
 
 /// Construct SSH arguments from profile fields (§25.2 SSH row).
 fn build_ssh_args(profile_def: Option<&ProfileDefinition>) -> Vec<String> {
-    let Some(def) = profile_def else { return vec![] };
+    let Some(def) = profile_def else {
+        return vec![];
+    };
     let Some(host) = &def.host else { return vec![] };
 
     let mut args: Vec<String> = Vec::new();
@@ -189,7 +212,7 @@ fn build_ssh_args(profile_def: Option<&ProfileDefinition>) -> Vec<String> {
     // user@host or just host.
     let user_host = match &def.user {
         Some(user) => format!("{user}@{host}"),
-        None       => host.clone(),
+        None => host.clone(),
     };
     args.push(user_host);
 
@@ -235,7 +258,7 @@ fn resolve_cwd(
 fn builtin_cwd(profile_type: &ProfileType) -> Option<String> {
     match profile_type {
         ProfileType::Wsl => None,
-        _                => Some("%USERPROFILE%".to_string()),
+        _ => Some("%USERPROFILE%".to_string()),
     }
 }
 
@@ -253,7 +276,10 @@ fn resolve_env(
     let mut env: HashMap<String, String> = host_env.clone();
 
     // Layer 2: global default profile env (if defined in global settings).
-    if let Some(global_default) = global_settings.profiles.get(&global_settings.default_profile) {
+    if let Some(global_default) = global_settings
+        .profiles
+        .get(&global_settings.default_profile)
+    {
         if let Some(e) = &global_default.env {
             apply_layer(&mut env, e);
         }
@@ -290,8 +316,12 @@ fn resolve_env(
 fn apply_layer(env: &mut HashMap<String, String>, layer: &HashMap<String, Option<String>>) {
     for (k, v) in layer {
         match v {
-            Some(val) => { env.insert(k.clone(), val.clone()); }
-            None      => { env.remove(k); }
+            Some(val) => {
+                env.insert(k.clone(), val.clone());
+            }
+            None => {
+                env.remove(k);
+            }
         }
     }
 }
@@ -359,7 +389,10 @@ mod tests {
     }
 
     fn host_env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     fn resolve(
@@ -548,7 +581,14 @@ mod tests {
         );
         assert_eq!(
             spec.args,
-            vec!["-i", "~/.ssh/id_rsa", "-o", "IdentitiesOnly=yes", "admin@secure-box", "bash"]
+            vec![
+                "-i",
+                "~/.ssh/id_rsa",
+                "-o",
+                "IdentitiesOnly=yes",
+                "admin@secure-box",
+                "bash"
+            ]
         );
     }
 
@@ -624,7 +664,12 @@ mod tests {
             &HashMap::new(),
             |_| false,
         );
-        assert_eq!(result, Err(ResolveError::CustomMissingExecutable { name: "noexe".to_string() }));
+        assert_eq!(
+            result,
+            Err(ResolveError::CustomMissingExecutable {
+                name: "noexe".to_string()
+            })
+        );
     }
 
     // ── §25.1 Profile lookup fallback chain ───────────────────────────────────
@@ -785,7 +830,9 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(ResolveError::ProfileNotFound { name: "does-not-exist".to_string() })
+            Err(ResolveError::ProfileNotFound {
+                name: "does-not-exist".to_string()
+            })
         );
     }
 
@@ -925,13 +972,38 @@ mod tests {
 
         let spec = resolve_launch_spec(&session, &workspace, &global, &host, |_| false).unwrap();
 
-        assert_eq!(spec.env.get("A"), Some(&"host".to_string()),   "A should be from host");
-        assert_eq!(spec.env.get("B"), Some(&"global".to_string()), "B should be overridden by global profile");
-        assert!(!spec.env.contains_key("C"),                       "C should be removed by workspace defaults null");
-        assert!(!spec.env.contains_key("D"),                       "D should be removed by profile null");
-        assert!(!spec.env.contains_key("E"),                       "E should be removed by session null");
-        assert_eq!(spec.env.get("F"), Some(&"session".to_string()), "F should be from session");
-        assert_eq!(spec.env.get("TERM"), Some(&"xterm-256color".to_string()), "TERM auto-inserted for non-SSH");
+        assert_eq!(
+            spec.env.get("A"),
+            Some(&"host".to_string()),
+            "A should be from host"
+        );
+        assert_eq!(
+            spec.env.get("B"),
+            Some(&"global".to_string()),
+            "B should be overridden by global profile"
+        );
+        assert!(
+            !spec.env.contains_key("C"),
+            "C should be removed by workspace defaults null"
+        );
+        assert!(
+            !spec.env.contains_key("D"),
+            "D should be removed by profile null"
+        );
+        assert!(
+            !spec.env.contains_key("E"),
+            "E should be removed by session null"
+        );
+        assert_eq!(
+            spec.env.get("F"),
+            Some(&"session".to_string()),
+            "F should be from session"
+        );
+        assert_eq!(
+            spec.env.get("TERM"),
+            Some(&"xterm-256color".to_string()),
+            "TERM auto-inserted for non-SSH"
+        );
     }
 
     #[test]
@@ -967,7 +1039,10 @@ mod tests {
             &HashMap::new(),
             false,
         );
-        assert!(!spec.env.contains_key("TERM"), "SSH sessions must not get TERM");
+        assert!(
+            !spec.env.contains_key("TERM"),
+            "SSH sessions must not get TERM"
+        );
     }
 
     #[test]
@@ -982,9 +1057,20 @@ mod tests {
             }),
             ..Default::default()
         };
-        let spec = resolve_launch_spec(&session, &empty_workspace(), &GlobalSettings::default(), &host, |_| false).unwrap();
+        let spec = resolve_launch_spec(
+            &session,
+            &empty_workspace(),
+            &GlobalSettings::default(),
+            &host,
+            |_| false,
+        )
+        .unwrap();
         assert!(!spec.env.contains_key("SECRET"), "SECRET should be removed");
-        assert_eq!(spec.env.get("KEEP"), Some(&"yes".to_string()), "KEEP should remain");
+        assert_eq!(
+            spec.env.get("KEEP"),
+            Some(&"yes".to_string()),
+            "KEEP should remain"
+        );
     }
 
     // ── CWD resolution ────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ use wtd_ipc::message::{
 };
 use wtd_ipc::Envelope;
 use wtd_ui::host_client::UiIpcClient;
-use wtd_ui::input::{InputClassifier, KeyEvent, KeyName, Modifiers, key_event_to_bytes};
+use wtd_ui::input::{key_event_to_bytes, InputClassifier, KeyEvent, KeyName, Modifiers};
 use wtd_ui::prefix_state::{PrefixOutput, PrefixStateMachine};
 
 // ── Fixture ──────────────────────────────────────────────────────────────
@@ -263,7 +263,13 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -329,11 +335,7 @@ fn regular_typing_produces_send_to_session_bytes() {
     let event_up = make_key(KeyName::Up, Modifiers::NONE, None);
     match psm.process(&event_up) {
         PrefixOutput::SendToSession(bytes) => {
-            assert_eq!(
-                bytes,
-                vec![0x1B, b'[', b'A'],
-                "Up arrow must produce CSI A"
-            );
+            assert_eq!(bytes, vec![0x1B, b'[', b'A'], "Up arrow must produce CSI A");
         }
         other => panic!("expected SendToSession for Up, got: {:?}", other),
     }
@@ -354,11 +356,7 @@ fn ctrl_shift_t_dispatches_new_tab_action() {
     let mut psm = PrefixStateMachine::new(classifier);
 
     // Ctrl+Shift+T
-    let event = make_key(
-        KeyName::Char('T'),
-        Modifiers::CTRL | Modifiers::SHIFT,
-        None,
-    );
+    let event = make_key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
     let result = psm.process(&event);
 
     match result {
@@ -441,11 +439,7 @@ fn binding_keys_are_consumed_not_forwarded() {
     let mut psm = PrefixStateMachine::new(classifier);
 
     // Ctrl+Shift+T must dispatch, not produce SendToSession
-    let event = make_key(
-        KeyName::Char('T'),
-        Modifiers::CTRL | Modifiers::SHIFT,
-        None,
-    );
+    let event = make_key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
     let result = psm.process(&event);
     assert!(
         matches!(result, PrefixOutput::DispatchAction(_)),
@@ -522,9 +516,8 @@ fn prefix_key_enters_prefix_mode() {
 #[tokio::test]
 async fn typed_bytes_reach_conpty_session_via_ipc() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap(),
-    );
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -606,7 +599,10 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
         let event = make_key(key, Modifiers::NONE, Some(ch));
         match psm.process(&event) {
             PrefixOutput::SendToSession(bytes) => raw_bytes.extend_from_slice(&bytes),
-            other => panic!("regular typing must produce SendToSession, got: {:?}", other),
+            other => panic!(
+                "regular typing must produce SendToSession, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -672,11 +668,7 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
     // Verify that a single-stroke binding does NOT produce session output.
     // We check that Ctrl+Shift+T is classified as DispatchAction, meaning
     // it would NOT be sent to the session.
-    let ctrl_shift_t = make_key(
-        KeyName::Char('T'),
-        Modifiers::CTRL | Modifiers::SHIFT,
-        None,
-    );
+    let ctrl_shift_t = make_key(KeyName::Char('T'), Modifiers::CTRL | Modifiers::SHIFT, None);
     let result = psm.process(&ctrl_shift_t);
     assert!(
         matches!(result, PrefixOutput::DispatchAction(ref a) if action_name(a) == "new-tab"),

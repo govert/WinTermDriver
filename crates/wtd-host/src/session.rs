@@ -191,6 +191,20 @@ impl Session {
         Ok(())
     }
 
+    /// Resize the PTY and on-host screen buffer.
+    pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), SessionError> {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+
+        let pty = self.pty.as_ref().ok_or(SessionError::NotRunning)?;
+        let size = PtySize::new(cols, rows);
+        pty.resize(size)?;
+        self.screen.resize(cols, rows);
+        self.config.size = size;
+
+        Ok(())
+    }
+
     /// Drain pending output from the reader thread into the screen buffer.
     pub fn process_pending_output(&mut self) {
         if let Some(ref rx) = self.output_rx {

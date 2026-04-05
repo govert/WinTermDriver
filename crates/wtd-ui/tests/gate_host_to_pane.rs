@@ -106,8 +106,7 @@ fn destroy_test_window(hwnd: HWND) {
 
 // ── Base64 helpers ───────────────────────────────────────────────────────
 
-const B64_CHARS: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(input: &[u8]) -> String {
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
@@ -376,7 +375,13 @@ impl RequestHandler for GateHandler {
                     .map(|s| s.screen().visible_text())
                     .unwrap_or_default();
 
-                Some(Envelope::new(&envelope.id, &CaptureResult { text, ..Default::default() }))
+                Some(Envelope::new(
+                    &envelope.id,
+                    &CaptureResult {
+                        text,
+                        ..Default::default()
+                    },
+                ))
             }
 
             _ => None,
@@ -390,9 +395,8 @@ impl RequestHandler for GateHandler {
 #[tokio::test]
 async fn host_session_output_renders_in_pane_viewport() {
     let pipe_name = unique_pipe_name();
-    let server = std::sync::Arc::new(
-        IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap(),
-    );
+    let server =
+        std::sync::Arc::new(IpcServer::new(pipe_name.clone(), GateHandler::new()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
