@@ -6,6 +6,7 @@
 
 #![cfg(windows)]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use tokio::sync::watch;
 
 use wtd_core::GlobalSettings;
 use wtd_host::ipc_server::{read_frame, write_frame, IpcServer};
+use wtd_host::output_broadcaster::BroadcastEvent;
 use wtd_host::request_handler::HostRequestHandler;
 use wtd_ipc::message;
 use wtd_ipc::message::*;
@@ -130,8 +132,8 @@ tabs:
 
     // 2. Start IPC server with real HostRequestHandler.
     let pipe_name = unique_pipe_name();
-    let handler = HostRequestHandler::new(GlobalSettings::default());
-    let server = Arc::new(IpcServer::new(pipe_name.clone(), handler).unwrap());
+    let handler = Arc::new(HostRequestHandler::new(GlobalSettings::default()));
+    let server = Arc::new(IpcServer::with_arc_handler(pipe_name.clone(), handler.clone()).unwrap());
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let s = server.clone();
@@ -290,6 +292,19 @@ tabs:
 
     let close_resp = read_frame(&mut client).await.unwrap();
     assert_eq!(close_resp.msg_type, OkResponse::TYPE_NAME);
+
+    let mut prev_titles = HashMap::new();
+    let close_events = handler.drain_session_events(&mut prev_titles);
+    assert!(
+        close_events.iter().any(|event| {
+            matches!(
+                event,
+                BroadcastEvent::WorkspaceState { workspace, new_state }
+                    if workspace == "handler-test" && new_state == "closing"
+            )
+        }),
+        "closing a workspace should emit a WorkspaceStateChanged broadcast event"
+    );
 
     // Verify workspace is gone
     write_frame(&mut client, &Envelope::new("list-2", &ListInstances {}))

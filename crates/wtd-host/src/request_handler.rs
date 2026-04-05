@@ -31,6 +31,7 @@ struct HostState {
     workspaces: HashMap<String, WorkspaceInstance>,
     settings: GlobalSettings,
     next_instance_id: u64,
+    pending_broadcasts: Vec<BroadcastEvent>,
 }
 
 // ── HostRequestHandler ───────────────────────────────────────────────────
@@ -51,6 +52,7 @@ impl HostRequestHandler {
                 workspaces: HashMap::new(),
                 settings,
                 next_instance_id: 1,
+                pending_broadcasts: Vec::new(),
             }),
         }
     }
@@ -69,6 +71,7 @@ impl HostRequestHandler {
     ) -> Vec<BroadcastEvent> {
         let mut state = self.state.lock().unwrap();
         let mut events = Vec::new();
+        events.append(&mut state.pending_broadcasts);
 
         for inst in state.workspaces.values_mut() {
             for (session_id, session) in inst.sessions_mut().iter_mut() {
@@ -472,6 +475,12 @@ impl HostRequestHandler {
         match state.workspaces.remove(&close.workspace) {
             Some(mut inst) => {
                 inst.close();
+                state
+                    .pending_broadcasts
+                    .push(BroadcastEvent::WorkspaceState {
+                        workspace: close.workspace.clone(),
+                        new_state: "closing".to_string(),
+                    });
                 Some(Envelope::new(id, &OkResponse {}))
             }
             None => Some(error_envelope(

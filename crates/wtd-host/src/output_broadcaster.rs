@@ -2,8 +2,8 @@
 //!
 //! Periodically drains ConPTY output from each session's reader thread,
 //! feeds it to the session's ScreenBuffer, and broadcasts `SessionOutput`,
-//! `SessionStateChanged`, and `TitleChanged` messages to all connected UI
-//! clients via [`IpcServer::broadcast_to_ui`].
+//! `SessionStateChanged`, `TitleChanged`, and `WorkspaceStateChanged`
+//! messages to all connected UI clients via [`IpcServer::broadcast_to_ui`].
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
-use wtd_ipc::message::{SessionOutput, SessionStateChanged, TitleChanged};
+use wtd_ipc::message::{SessionOutput, SessionStateChanged, TitleChanged, WorkspaceStateChanged};
 use wtd_ipc::Envelope;
 
 use crate::ipc_server::IpcServer;
@@ -32,6 +32,11 @@ pub enum BroadcastEvent {
     },
     /// Session window title changed via VT escape sequence.
     TitleChange { session_id: String, title: String },
+    /// Workspace instance state transition.
+    WorkspaceState {
+        workspace: String,
+        new_state: String,
+    },
 }
 
 /// Run the output broadcaster loop.
@@ -90,6 +95,16 @@ pub async fn run(
                             &TitleChanged {
                                 session_id: session_id.clone(),
                                 title: title.clone(),
+                            },
+                        ),
+                        BroadcastEvent::WorkspaceState {
+                            workspace,
+                            new_state,
+                        } => Envelope::new(
+                            &id,
+                            &WorkspaceStateChanged {
+                                workspace: workspace.clone(),
+                                new_state: new_state.clone(),
                             },
                         ),
                     };

@@ -5,7 +5,7 @@
 //! - AttachWorkspace request returns state
 //! - SessionOutput push events are received and base64-decoded
 //! - SessionInput and PaneResize commands are sent correctly
-//! - SessionStateChanged and TitleChanged notifications are received
+//! - SessionStateChanged, TitleChanged, and WorkspaceStateChanged notifications are received
 //! - HostBridge provides sync access from the UI thread
 
 #![cfg(windows)]
@@ -556,6 +556,33 @@ async fn host_bridge_connect_and_receive_events() {
         assert_eq!(session_id, "session-1");
         assert_eq!(new_state, "exited");
         assert_eq!(exit_code, Some(42));
+    }
+
+    // Push WorkspaceStateChanged.
+    let push = Envelope::new(
+        "push-bridge-3",
+        &WorkspaceStateChanged {
+            workspace: "dev".into(),
+            new_state: "closing".into(),
+        },
+    );
+    server.broadcast_to_ui(&push).await.unwrap();
+
+    let workspace_event = wait_for_event(&bridge, Duration::from_secs(2), |e| {
+        matches!(e, HostEvent::WorkspaceStateChanged { .. })
+    });
+    assert!(
+        workspace_event.is_some(),
+        "should receive WorkspaceStateChanged"
+    );
+
+    if let Some(HostEvent::WorkspaceStateChanged {
+        workspace,
+        new_state,
+    }) = workspace_event
+    {
+        assert_eq!(workspace, "dev");
+        assert_eq!(new_state, "closing");
     }
 
     // Send disconnect.

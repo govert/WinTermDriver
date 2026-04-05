@@ -211,6 +211,13 @@ fn action_name(action: &wtd_core::workspace::ActionReference) -> &str {
     }
 }
 
+fn workspace_state_closes_ui(new_state: &str) -> bool {
+    matches!(
+        new_state.to_ascii_lowercase().as_str(),
+        "closing" | "closed" | "stopping" | "stopped" | "exited" | "terminating" | "terminated"
+    )
+}
+
 fn bound_action_name(classifier: &InputClassifier, event: &KeyEvent) -> Option<String> {
     match classifier.classify(event, false) {
         InputAction::SingleStrokeBinding(action) => {
@@ -614,6 +621,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         let mut needs_paint = false;
         let mut force_immediate_paint = false;
         let mut saw_visible_alt_screen_output = false;
+        let mut should_close_window = false;
 
         // ── Drain host events ────────────────────────────────────
         if let Some(ref bridge) = bridge {
@@ -840,6 +848,13 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         new_state,
                     } => {
                         tracing::info!(workspace = %workspace, new_state = %new_state, "workspace state changed");
+                        if workspace_name
+                            .as_deref()
+                            .is_none_or(|attached| attached == workspace)
+                            && workspace_state_closes_ui(&new_state)
+                        {
+                            should_close_window = true;
+                        }
                     }
                     HostEvent::Error { message } => {
                         tracing::error!(message = %message, "host error");
@@ -847,12 +862,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     HostEvent::Disconnected { reason } => {
                         tracing::warn!(reason = %reason, "disconnected from host");
                         connected = false;
+                        tracing::info!("closing UI window after host disconnect");
                         status_bar.set_session_status(SessionStatus::Failed { error: reason });
-                        force_immediate_paint = true;
-                        needs_paint = true;
+                        should_close_window = true;
                     }
                 }
             }
+        }
+
+        if should_close_window {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+            }
+            return Ok(());
         }
 
         // ── Handle resize ────────────────────────────────────────
@@ -1515,6 +1537,35 @@ mod tests {
             bound_action_name(&classifier, &event).as_deref(),
             Some("toggle-command-palette")
         );
+    }
+
+    #[test]
+    fn workspace_state_closes_ui_for_terminal_states() {
+        for state in [
+            "closing",
+            "closed",
+            "stopping",
+            "stopped",
+            "exited",
+            "terminating",
+            "terminated",
+            "CLOSING",
+        ] {
+            assert!(
+                workspace_state_closes_ui(state),
+                "expected terminal state '{state}' to close the UI"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_state_keeps_ui_open_for_non_terminal_states() {
+        for state in ["active", "running", "failed", "restarting", "created"] {
+            assert!(
+                !workspace_state_closes_ui(state),
+                "expected non-terminal state '{state}' to keep the UI open"
+            );
+        }
     }
 
     #[test]
