@@ -212,6 +212,19 @@ impl WorkspaceInstance {
                 .iter()
                 .map(|(id, s)| (id.clone(), s.screen().title.clone()))
                 .collect(),
+            session_sizes: self
+                .sessions
+                .iter()
+                .map(|(id, s)| {
+                    (
+                        id.clone(),
+                        SessionSizeSnapshot {
+                            cols: s.screen().cols().try_into().unwrap_or(u16::MAX),
+                            rows: s.screen().rows().try_into().unwrap_or(u16::MAX),
+                        },
+                    )
+                })
+                .collect(),
             session_screens: self
                 .sessions
                 .iter()
@@ -961,11 +974,20 @@ pub struct AttachSnapshot {
     pub session_states: HashMap<SessionId, SessionState>,
     /// Current terminal title per session (OSC 2).
     pub session_titles: HashMap<SessionId, String>,
+    /// Current visible terminal size per session.
+    pub session_sizes: HashMap<SessionId, SessionSizeSnapshot>,
     /// Base64-encoded VT snapshot of the current visible screen per session.
     ///
     /// The UI can feed these bytes directly into `ScreenBuffer::advance()` to
     /// seed pane content immediately on attach, before any new output arrives.
     pub session_screens: HashMap<SessionId, String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSizeSnapshot {
+    pub cols: u16,
+    pub rows: u16,
 }
 
 /// Snapshot of a single tab's metadata and layout.

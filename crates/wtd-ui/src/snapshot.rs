@@ -11,6 +11,7 @@ use wtd_pty::ScreenBuffer;
 pub struct PaneSession {
     pub session_id: String,
     pub pane_path: String,
+    pub session_size: Option<(u16, u16)>,
 }
 
 /// Snapshot of one tab after attach.
@@ -45,6 +46,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
         .collect::<Vec<_>>();
     let pane_states = state["paneStates"].as_object()?;
     let session_screens = state["sessionScreens"].as_object();
+    let session_sizes = state["sessionSizes"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
     for tab in tabs {
@@ -69,6 +71,13 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                 if let Some(ps) = pane_states.get(&host_pane_key) {
                     if ps["type"] == "attached" {
                         if let Some(session_id) = session_id_string(&ps["sessionId"]) {
+                            let session_size = session_sizes
+                                .and_then(|sizes| sizes.get(&session_id))
+                                .and_then(session_size_from_value);
+                            if let Some((session_cols, session_rows)) = session_size {
+                                screen = ScreenBuffer::new(session_cols, session_rows, 1000);
+                            }
+
                             if let Some(b64) = session_screens
                                 .and_then(|screens| screens.get(&session_id))
                                 .and_then(|v| v.as_str())
@@ -84,6 +93,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                 PaneSession {
                                     session_id,
                                     pane_path: format!("{workspace_name}/{tab_name}/{pane_name}",),
+                                    session_size,
                                 },
                             );
                         }
@@ -113,6 +123,12 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
         active_tab_index,
         tabs: rebuilt_tabs,
     })
+}
+
+fn session_size_from_value(v: &Value) -> Option<(u16, u16)> {
+    let cols = v.get("cols")?.as_u64()?.try_into().ok()?;
+    let rows = v.get("rows")?.as_u64()?.try_into().ok()?;
+    Some((cols, rows))
 }
 
 fn session_id_string(v: &Value) -> Option<String> {
@@ -252,6 +268,12 @@ mod tests {
                     "sessionId": "session-42"
                 }
             },
+            "sessionSizes": {
+                "session-42": {
+                    "cols": 132,
+                    "rows": 41
+                }
+            },
             "sessionScreens": {
                 "session-42": base64_encode(b"\x1b[32mSCREEN_SEED_MARKER\x1b[0m\r\n")
             }
@@ -260,12 +282,19 @@ mod tests {
         let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
         let tab = &rebuilt.tabs[0];
         let focused = tab.layout_tree.focus();
-        let visible = rebuilt.tabs[0]
+        let session = tab
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane should map to a session");
+        let screen = rebuilt.tabs[0]
             .screens
             .get(&focused)
-            .expect("focused pane should have a screen")
-            .visible_text();
+            .expect("focused pane should have a screen");
+        let visible = screen.visible_text();
 
+        assert_eq!(session.session_size, Some((132, 41)));
+        assert_eq!(screen.cols(), 132);
+        assert_eq!(screen.rows(), 41);
         assert!(
             visible.contains("SCREEN_SEED_MARKER"),
             "replayed snapshot should contain SCREEN_SEED_MARKER; got:\n{visible}"

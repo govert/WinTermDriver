@@ -187,6 +187,21 @@ fn sync_screen_buffers_to_sizes(tab: &mut SnapshotTab, sizes: &[(PaneId, u16, u1
     }
 }
 
+fn pane_sessions_match_sizes(tab: &SnapshotTab, sizes: &[(PaneId, u16, u16)]) -> bool {
+    for (pane_id, cols, rows) in sizes {
+        let Some(pane_session) = tab.pane_sessions.get(pane_id) else {
+            continue;
+        };
+        let Some((session_cols, session_rows)) = pane_session.session_size else {
+            return false;
+        };
+        if session_cols != *cols || session_rows != *rows {
+            return false;
+        }
+    }
+    true
+}
+
 fn action_name(action: &wtd_core::workspace::ActionReference) -> &str {
     match action {
         wtd_core::workspace::ActionReference::Simple(name) => name.as_str(),
@@ -566,6 +581,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut connected = false;
     let mut window_shown = bridge.is_none();
     let mut awaiting_startup_frame = bridge.is_some();
+    let mut startup_refresh_pending = bridge.is_some();
     let mut delayed_show_deadline = bridge
         .as_ref()
         .map(|_| Instant::now() + Duration::from_millis(400));
@@ -622,6 +638,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             tab_strip.set_active(active_tab_index);
                             tab_strip.layout(window_width);
 
+                            let mut startup_sizes_match = false;
                             if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
                                 let focused = active_tab.layout_tree.focus();
                                 if let Some(ps) = active_tab.pane_sessions.get(&focused) {
@@ -636,9 +653,16 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     content_cols,
                                     content_rows,
                                 );
+                                let pane_sizes = pane_sizes_for_layout(
+                                    &pane_layout,
+                                    &active_tab.layout_tree,
+                                    cell_w,
+                                    cell_h,
+                                );
+                                startup_sizes_match =
+                                    pane_sessions_match_sizes(active_tab, &pane_sizes);
+                                sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
                                 refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
-                            }
-                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                                 send_active_pane_sizes(
                                     Some(bridge),
                                     connected,
@@ -647,6 +671,15 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     cell_w,
                                     cell_h,
                                 );
+                            }
+                            if awaiting_startup_frame {
+                                if startup_sizes_match {
+                                    awaiting_startup_frame = false;
+                                    startup_refresh_pending = false;
+                                } else if startup_refresh_pending {
+                                    bridge.refresh_workspace();
+                                    startup_refresh_pending = false;
+                                }
                             }
                         }
                         needs_paint = true;
@@ -659,9 +692,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             if let Some(tab) = tabs.get_mut(tab_index) {
                                 if let Some(screen) = tab.screens.get_mut(&pane_id) {
                                     screen.advance(&data);
-                                    if tab_index == active_tab_index && awaiting_startup_frame {
-                                        awaiting_startup_frame = false;
-                                    }
                                     if tab_index == active_tab_index {
                                         refresh_mouse_modes(&mut mouse_modes, &tab.screens);
                                     }
@@ -845,6 +875,15 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     cell_w,
                     cell_h,
                 );
+                if awaiting_startup_frame {
+                    startup_refresh_pending = true;
+                    if let Some(ref bridge) = bridge {
+                        if connected {
+                            bridge.refresh_workspace();
+                            startup_refresh_pending = false;
+                        }
+                    }
+                }
 
                 // Notify host of pane resize (send for each pane).
                 needs_paint = true;
