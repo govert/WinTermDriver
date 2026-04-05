@@ -254,6 +254,39 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
     }
 }
 
+fn mouse_mode_name(screen: &wtd_pty::ScreenBuffer) -> &'static str {
+    match screen.mouse_mode() {
+        wtd_pty::MouseMode::None => "none",
+        wtd_pty::MouseMode::Normal => "normal",
+        wtd_pty::MouseMode::ButtonEvent => "button-event",
+        wtd_pty::MouseMode::AnyEvent => "any-event",
+    }
+}
+
+fn cursor_shape_name(screen: &wtd_pty::ScreenBuffer) -> &'static str {
+    match screen.cursor().shape {
+        wtd_pty::CursorShape::Block => "block",
+        wtd_pty::CursorShape::Underline => "underline",
+        wtd_pty::CursorShape::Bar => "bar",
+    }
+}
+
+fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
+    serde_json::json!({
+        "cols": u16::try_from(screen.cols()).unwrap_or(u16::MAX),
+        "rows": u16::try_from(screen.rows()).unwrap_or(u16::MAX),
+        "onAlternate": screen.on_alternate(),
+        "title": if screen.title.is_empty() { Value::Null } else { Value::String(screen.title.clone()) },
+        "mouseMode": mouse_mode_name(screen),
+        "sgrMouse": screen.sgr_mouse(),
+        "bracketedPaste": screen.bracketed_paste(),
+        "cursorRow": u16::try_from(screen.cursor().row).unwrap_or(u16::MAX),
+        "cursorCol": u16::try_from(screen.cursor().col).unwrap_or(u16::MAX),
+        "cursorVisible": screen.cursor().visible,
+        "cursorShape": cursor_shape_name(screen),
+    })
+}
+
 /// Load a workspace definition from disk by name (with optional explicit file).
 fn load_workspace_from_disk(
     name: &str,
@@ -883,6 +916,7 @@ impl HostRequestHandler {
                         };
 
                         let screen = session.screen();
+                        let metadata = screen_metadata(screen);
                         let ext = screen.capture_extended(
                             capture.lines,
                             capture.all.unwrap_or(false),
@@ -891,12 +925,30 @@ impl HostRequestHandler {
                             capture.max_lines,
                             capture.count.unwrap_or(false),
                         );
+                        let text = if capture.count.unwrap_or(false) {
+                            String::new()
+                        } else if capture.vt.unwrap_or(false) {
+                            String::from_utf8_lossy(&screen.to_vt_snapshot()).into_owned()
+                        } else {
+                            ext.text
+                        };
                         CaptureResult {
-                            text: ext.text,
+                            text,
                             lines: ext.lines,
                             total_lines: ext.total_lines,
                             anchor_found: ext.anchor_found,
                             cursor: Some(ext.cursor),
+                            cols: metadata["cols"].as_u64().unwrap_or(0) as u16,
+                            rows: metadata["rows"].as_u64().unwrap_or(0) as u16,
+                            on_alternate: metadata["onAlternate"].as_bool().unwrap_or(false),
+                            title: metadata["title"].as_str().map(str::to_owned),
+                            mouse_mode: metadata["mouseMode"].as_str().map(str::to_owned),
+                            sgr_mouse: metadata["sgrMouse"].as_bool().unwrap_or(false),
+                            bracketed_paste: metadata["bracketedPaste"].as_bool().unwrap_or(false),
+                            cursor_row: metadata["cursorRow"].as_u64().map(|v| v as u16),
+                            cursor_col: metadata["cursorCol"].as_u64().map(|v| v as u16),
+                            cursor_visible: metadata["cursorVisible"].as_bool(),
+                            cursor_shape: metadata["cursorShape"].as_str().map(str::to_owned),
                         }
                     }
                     None => CaptureResult {
@@ -905,6 +957,17 @@ impl HostRequestHandler {
                         total_lines: 0,
                         anchor_found: None,
                         cursor: None,
+                        cols: 0,
+                        rows: 0,
+                        on_alternate: false,
+                        title: None,
+                        mouse_mode: None,
+                        sgr_mouse: false,
+                        bracketed_paste: false,
+                        cursor_row: None,
+                        cursor_col: None,
+                        cursor_visible: None,
+                        cursor_shape: None,
                     },
                 }
             }
@@ -914,6 +977,17 @@ impl HostRequestHandler {
                 total_lines: 0,
                 anchor_found: None,
                 cursor: None,
+                cols: 0,
+                rows: 0,
+                on_alternate: false,
+                title: None,
+                mouse_mode: None,
+                sgr_mouse: false,
+                bracketed_paste: false,
+                cursor_row: None,
+                cursor_col: None,
+                cursor_visible: None,
+                cursor_shape: None,
             },
         };
 
@@ -971,21 +1045,37 @@ impl HostRequestHandler {
         };
 
         let pane_name = inst.pane_name(&pane_id).unwrap_or("?");
+        let mut data = serde_json::json!({
+            "paneName": pane_name,
+            "paneId": format!("{}", pane_id),
+            "workspace": inst.name(),
+        });
+
         let session_state = match inst.pane_state(&pane_id) {
-            Some(PaneState::Attached { session_id }) => inst
-                .session(session_id)
-                .map(|s| format!("{:?}", s.state()))
-                .unwrap_or_else(|| "unknown".into()),
+            Some(PaneState::Attached { session_id }) => {
+                if let Some(session) = inst.session(session_id) {
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert(
+                            "sessionId".to_string(),
+                            Value::String(session_id.to_string()),
+                        );
+                        if let Some(screen_obj) = screen_metadata(session.screen()).as_object() {
+                            for (key, value) in screen_obj {
+                                obj.insert(key.clone(), value.clone());
+                            }
+                        }
+                    }
+                    format!("{:?}", session.state())
+                } else {
+                    "unknown".into()
+                }
+            }
             Some(PaneState::Detached { error }) => format!("detached: {}", error),
             None => "none".into(),
         };
-
-        let data = serde_json::json!({
-            "paneName": pane_name,
-            "paneId": format!("{}", pane_id),
-            "sessionState": session_state,
-            "workspace": inst.name(),
-        });
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("sessionState".to_string(), Value::String(session_state));
+        }
 
         Some(Envelope::new(id, &InspectResult { data }))
     }

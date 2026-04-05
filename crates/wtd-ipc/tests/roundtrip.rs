@@ -157,6 +157,7 @@ fn keys_roundtrip() {
 fn capture_roundtrip() {
     roundtrip(Capture {
         target: "dev/editor".into(),
+        vt: None,
         lines: None,
         all: None,
         after: None,
@@ -170,6 +171,7 @@ fn capture_roundtrip() {
 fn capture_with_lines_roundtrip() {
     roundtrip(Capture {
         target: "dev/logs".into(),
+        vt: None,
         lines: Some(50),
         all: None,
         after: None,
@@ -183,6 +185,7 @@ fn capture_with_lines_roundtrip() {
 fn capture_with_anchor_roundtrip() {
     roundtrip(Capture {
         target: "dev/server".into(),
+        vt: None,
         lines: None,
         all: None,
         after: Some("=== BUILD START ===".into()),
@@ -196,6 +199,7 @@ fn capture_with_anchor_roundtrip() {
 fn capture_with_regex_anchor_roundtrip() {
     roundtrip(Capture {
         target: "dev/ci".into(),
+        vt: None,
         lines: None,
         all: None,
         after: None,
@@ -209,6 +213,7 @@ fn capture_with_regex_anchor_roundtrip() {
 fn capture_all_roundtrip() {
     roundtrip(Capture {
         target: "dev/editor".into(),
+        vt: None,
         lines: None,
         all: Some(true),
         after: None,
@@ -222,6 +227,7 @@ fn capture_all_roundtrip() {
 fn capture_count_mode_roundtrip() {
     roundtrip(Capture {
         target: "dev/editor".into(),
+        vt: None,
         lines: None,
         all: None,
         after: None,
@@ -232,11 +238,26 @@ fn capture_count_mode_roundtrip() {
 }
 
 #[test]
+fn capture_vt_roundtrip() {
+    roundtrip(Capture {
+        target: "dev/editor".into(),
+        vt: Some(true),
+        lines: None,
+        all: None,
+        after: None,
+        after_regex: None,
+        max_lines: None,
+        count: None,
+    });
+}
+
+#[test]
 fn capture_minimal_json_deserializes() {
     // {"target":"x"} must still deserialize with all optional fields → None.
     let json = r#"{"target":"x"}"#;
     let cap: Capture = serde_json::from_str(json).unwrap();
     assert_eq!(cap.target, "x");
+    assert!(cap.vt.is_none());
     assert!(cap.lines.is_none());
     assert!(cap.all.is_none());
     assert!(cap.after.is_none());
@@ -492,6 +513,17 @@ fn capture_result_roundtrip() {
         total_lines: 150,
         anchor_found: None,
         cursor: Some(147),
+        cols: 80,
+        rows: 24,
+        on_alternate: false,
+        title: Some("shell".into()),
+        mouse_mode: Some("none".into()),
+        sgr_mouse: false,
+        bracketed_paste: false,
+        cursor_row: Some(12),
+        cursor_col: Some(7),
+        cursor_visible: Some(true),
+        cursor_shape: Some("block".into()),
     });
 }
 
@@ -503,6 +535,17 @@ fn capture_result_with_anchor_roundtrip() {
         total_lines: 500,
         anchor_found: Some(true),
         cursor: Some(497),
+        cols: 80,
+        rows: 24,
+        on_alternate: true,
+        title: None,
+        mouse_mode: Some("any-event".into()),
+        sgr_mouse: true,
+        bracketed_paste: true,
+        cursor_row: Some(23),
+        cursor_col: Some(42),
+        cursor_visible: Some(false),
+        cursor_shape: Some("bar".into()),
     });
 }
 
@@ -514,6 +557,17 @@ fn capture_result_anchor_not_found_roundtrip() {
         total_lines: 42,
         anchor_found: Some(false),
         cursor: Some(41),
+        cols: 80,
+        rows: 24,
+        on_alternate: false,
+        title: None,
+        mouse_mode: Some("normal".into()),
+        sgr_mouse: false,
+        bracketed_paste: false,
+        cursor_row: Some(23),
+        cursor_col: Some(0),
+        cursor_visible: Some(true),
+        cursor_shape: Some("underline".into()),
     });
 }
 
@@ -525,6 +579,17 @@ fn capture_result_count_mode_roundtrip() {
         total_lines: 200,
         anchor_found: None,
         cursor: None,
+        cols: 0,
+        rows: 0,
+        on_alternate: false,
+        title: None,
+        mouse_mode: None,
+        sgr_mouse: false,
+        bracketed_paste: false,
+        cursor_row: None,
+        cursor_col: None,
+        cursor_visible: None,
+        cursor_shape: None,
     });
 }
 
@@ -538,6 +603,10 @@ fn capture_result_legacy_json_deserializes() {
     assert_eq!(result.total_lines, 0);
     assert!(result.anchor_found.is_none());
     assert!(result.cursor.is_none());
+    assert_eq!(result.cols, 0);
+    assert_eq!(result.rows, 0);
+    assert!(!result.on_alternate);
+    assert!(result.title.is_none());
 }
 
 #[test]

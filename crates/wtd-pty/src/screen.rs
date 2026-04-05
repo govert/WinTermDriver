@@ -690,6 +690,16 @@ impl ScreenBuffer {
     pub fn to_vt_snapshot(&self) -> Vec<u8> {
         let mut out = Vec::new();
 
+        if !self.title.is_empty() {
+            out.extend_from_slice(b"\x1b]2;");
+            out.extend_from_slice(self.title.as_bytes());
+            out.push(0x07);
+        }
+
+        if self.on_alternate {
+            out.extend_from_slice(b"\x1b[?1049h");
+        }
+
         // Clear screen and move to top-left.
         out.extend_from_slice(b"\x1b[2J\x1b[H");
 
@@ -763,6 +773,34 @@ impl ScreenBuffer {
         out.extend_from_slice(
             format!("\x1b[{};{}H", self.cursor.row + 1, self.cursor.col + 1).as_bytes(),
         );
+
+        let cursor_shape = match self.cursor.shape {
+            CursorShape::Block => 1,
+            CursorShape::Underline => 3,
+            CursorShape::Bar => 5,
+        };
+        out.extend_from_slice(format!("\x1b[{} q", cursor_shape).as_bytes());
+
+        if self.cursor.visible {
+            out.extend_from_slice(b"\x1b[?25h");
+        } else {
+            out.extend_from_slice(b"\x1b[?25l");
+        }
+
+        match self.mouse_mode {
+            MouseMode::None => {}
+            MouseMode::Normal => out.extend_from_slice(b"\x1b[?1000h"),
+            MouseMode::ButtonEvent => out.extend_from_slice(b"\x1b[?1002h"),
+            MouseMode::AnyEvent => out.extend_from_slice(b"\x1b[?1003h"),
+        }
+
+        if self.sgr_mouse {
+            out.extend_from_slice(b"\x1b[?1006h");
+        }
+
+        if self.bracketed_paste {
+            out.extend_from_slice(b"\x1b[?2004h");
+        }
 
         out
     }
@@ -2101,5 +2139,48 @@ mod tests {
         assert!(text.contains("line one"));
         assert!(text.contains("line two"));
         assert!(text.contains("line three"));
+    }
+
+    #[test]
+    fn vt_snapshot_round_trips_alternate_screen_and_input_modes() {
+        let mut orig = buf(80, 24);
+        feed(
+            &mut orig,
+            "\x1b]2;Alt Title\x07\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?25l\x1b[5 qALT-SNAPSHOT",
+        );
+
+        let snapshot = orig.to_vt_snapshot();
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+
+        assert!(
+            copy.on_alternate(),
+            "snapshot should restore alternate screen"
+        );
+        assert_eq!(
+            copy.mouse_mode(),
+            MouseMode::AnyEvent,
+            "snapshot should restore mouse tracking mode"
+        );
+        assert!(copy.sgr_mouse(), "snapshot should restore SGR mouse mode");
+        assert!(
+            copy.bracketed_paste(),
+            "snapshot should restore bracketed paste mode"
+        );
+        assert!(
+            !copy.cursor().visible,
+            "snapshot should restore cursor visibility"
+        );
+        assert_eq!(
+            copy.cursor().shape,
+            CursorShape::Bar,
+            "snapshot should restore cursor shape"
+        );
+        assert_eq!(copy.title, "Alt Title");
+        assert!(
+            copy.visible_text().contains("ALT-SNAPSHOT"),
+            "snapshot should restore alternate-screen text; got:\n{}",
+            copy.visible_text()
+        );
     }
 }

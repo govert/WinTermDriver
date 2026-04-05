@@ -155,6 +155,9 @@ pub enum Command {
     Capture {
         /// Target path (e.g. workspace/pane).
         target: String,
+        /// Return a replayable VT snapshot of the visible screen state.
+        #[arg(long, conflicts_with_all = ["lines", "all", "after", "after_regex", "max_lines", "count"])]
+        vt: bool,
         /// Return last N lines (scrollback + visible, counted from bottom).
         #[arg(long)]
         lines: Option<u32>,
@@ -565,6 +568,7 @@ mod tests {
         let cli = parse(&["capture", "dev/server"]).unwrap();
         if let Command::Capture {
             target,
+            vt,
             lines,
             all,
             after,
@@ -574,6 +578,7 @@ mod tests {
         } = &cli.command
         {
             assert_eq!(target, "dev/server");
+            assert!(!vt);
             assert!(lines.is_none());
             assert!(!all);
             assert!(after.is_none());
@@ -604,6 +609,7 @@ mod tests {
         .unwrap();
         if let Command::Capture {
             target,
+            vt,
             lines,
             all,
             after,
@@ -613,6 +619,7 @@ mod tests {
         } = &cli.command
         {
             assert_eq!(target, "dev/server");
+            assert!(!vt);
             assert_eq!(*lines, Some(50));
             assert!(*all);
             assert_eq!(after.as_deref(), Some("START"));
@@ -627,6 +634,33 @@ mod tests {
     #[test]
     fn capture_missing_target() {
         assert!(parse(&["capture"]).is_err());
+    }
+
+    #[test]
+    fn capture_vt_mode() {
+        let cli = parse(&["capture", "dev/server", "--vt"]).unwrap();
+        if let Command::Capture {
+            target,
+            vt,
+            lines,
+            all,
+            after,
+            after_regex,
+            max_lines,
+            count,
+        } = &cli.command
+        {
+            assert_eq!(target, "dev/server");
+            assert!(*vt);
+            assert!(lines.is_none());
+            assert!(!all);
+            assert!(after.is_none());
+            assert!(after_regex.is_none());
+            assert!(max_lines.is_none());
+            assert!(!count);
+        } else {
+            panic!("expected Capture command");
+        }
     }
 
     #[test]

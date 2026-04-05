@@ -111,6 +111,9 @@ wtd send dev/server "Get-Process | Select-Object -First 5"
 # Read back what's on screen
 wtd capture dev/server
 
+# Read back a replayable VT snapshot of the visible screen
+wtd capture dev/server --vt
+
 # List all panes
 wtd list panes dev
 
@@ -283,7 +286,7 @@ wtd <command> [options]
 | `wtd list sessions <workspace>` | List sessions in a workspace |
 | `wtd send <target> <text> [--no-newline]` | Send text to a pane (appends newline by default) |
 | `wtd keys <target> <key>...` | Send key sequences (e.g. `Enter`, `Ctrl+C`, `F1`) |
-| `wtd capture <target>` | Capture visible screen content as text |
+| `wtd capture <target> [--vt]` | Capture visible screen content as text, or a replayable VT snapshot with `--vt` |
 | `wtd scrollback <target> --tail <n>` | Capture last N scrollback lines |
 | `wtd follow <target> [--raw]` | Stream output until Ctrl+C |
 | `wtd inspect <target>` | Show full pane/session metadata |
@@ -318,6 +321,8 @@ Processes communicate over a per-user Windows named pipe (`\\.\pipe\wtd-{SID}`),
 - **Workspace definitions** are human-editable YAML files that describe windows, tabs, panes, profiles, and keybindings. They are version-controllable and deterministically recreatable.
 - **Semantic naming** lets you address panes by role (`dev/server`, `ops/prod-logs`) rather than positional IDs.
 - **Controller CLI** (`wtd`) can send text, send keys, capture output, and invoke actions on any named pane — without interrupting interactive use.
+- `wtd inspect --json` exposes live viewport state including `onAlternate`, mouse mode, cursor shape/visibility, title, and current cell size so external drivers can reason about full-screen TUIs deterministically.
+- `wtd capture --vt` returns a replayable VT snapshot of the current visible screen, including alternate-screen and input-mode state, so a driver or helper pane can mirror a live TUI without waiting for fresh output.
 - **Prefix chords** provide tmux-like keyboard navigation (`Ctrl+B,%` to split, `Ctrl+B,o` to cycle focus).
 
 ## Global Settings

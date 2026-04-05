@@ -344,6 +344,9 @@ impl_payload!(PaneInput, "PaneInput");
 pub struct Capture {
     /// Required: target pane path.
     pub target: String,
+    /// Return a replayable VT snapshot of the current visible screen state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vt: Option<bool>,
     /// Return last N lines (scrollback + visible, counted from bottom).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<u32>,
@@ -619,6 +622,39 @@ pub struct CaptureResult {
     /// Absolute line index where the capture started (0 = oldest scrollback).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<u32>,
+    /// Visible terminal width in cells.
+    #[serde(default)]
+    pub cols: u16,
+    /// Visible terminal height in cells.
+    #[serde(default)]
+    pub rows: u16,
+    /// Whether the active visible buffer is the alternate screen.
+    #[serde(default)]
+    pub on_alternate: bool,
+    /// Current session title from OSC 0/2.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Current mouse tracking mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mouse_mode: Option<String>,
+    /// Whether SGR mouse mode (1006) is active.
+    #[serde(default)]
+    pub sgr_mouse: bool,
+    /// Whether bracketed paste mode (2004) is active.
+    #[serde(default)]
+    pub bracketed_paste: bool,
+    /// Cursor row within the visible screen (0-based).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_row: Option<u16>,
+    /// Cursor column within the visible screen (0-based).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_col: Option<u16>,
+    /// Whether the cursor is visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_visible: Option<bool>,
+    /// Current cursor shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_shape: Option<String>,
 }
 impl_payload!(CaptureResult, "CaptureResult");
 

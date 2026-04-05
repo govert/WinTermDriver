@@ -201,6 +201,7 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
         }
         Command::Capture {
             target,
+            vt,
             lines,
             all,
             after,
@@ -211,6 +212,7 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &id,
             &Capture {
                 target: target.clone(),
+                vt: if *vt { Some(true) } else { None },
                 lines: *lines,
                 all: if *all { Some(true) } else { None },
                 after: after.clone(),

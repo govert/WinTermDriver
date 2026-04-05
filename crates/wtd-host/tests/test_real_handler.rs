@@ -268,6 +268,11 @@ tabs:
     let inspect: InspectResult = inspect_resp.extract_payload().unwrap();
     assert_eq!(inspect.data["paneName"], "shell");
     assert_eq!(inspect.data["workspace"], "handler-test");
+    assert_eq!(inspect.data["cols"], 80);
+    assert_eq!(inspect.data["rows"], 24);
+    assert_eq!(inspect.data["onAlternate"], false);
+    assert_eq!(inspect.data["mouseMode"], "none");
+    assert_eq!(inspect.data["cursorShape"], "block");
 
     // 10. Test CloseWorkspace
     write_frame(
