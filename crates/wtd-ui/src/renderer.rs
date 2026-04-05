@@ -88,8 +88,11 @@ const ANSI_PALETTE: [(u8, u8, u8); 16] = [
 const DEFAULT_FG: (u8, u8, u8) = (204, 204, 204);
 const DEFAULT_BG: (u8, u8, u8) = (26, 26, 38);
 const CURSOR_COLOR: (u8, u8, u8) = (204, 204, 204);
-const TEXT_MEASURING_MODE: DWRITE_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_CLASSIC;
-const TEXT_DRAW_OPTIONS: D2D1_DRAW_TEXT_OPTIONS = D2D1_DRAW_TEXT_OPTIONS_CLIP;
+// Keep device-pixel-snapped pane viewports, but preserve the original
+// DirectWrite cell advance behavior. GDI_CLASSIC + CLIP regressed dense box
+// drawing on fixed-grid TUI surfaces like the FrankenTUI showcase.
+const TEXT_MEASURING_MODE: DWRITE_MEASURING_MODE = DWRITE_MEASURING_MODE_NATURAL;
+const TEXT_DRAW_OPTIONS: D2D1_DRAW_TEXT_OPTIONS = D2D1_DRAW_TEXT_OPTIONS_NONE;
 
 // ── Public types ─────────────────────────────────────────────────────────────
 

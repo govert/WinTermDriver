@@ -342,9 +342,14 @@ fn run_workspace_capture(
     let rebuilt = rebuild_from_snapshot(&attached.state, content_cols, content_rows)
         .ok_or_else(|| anyhow!("failed to rebuild layout from attach snapshot"))?;
 
+    let active_tab = rebuilt
+        .tabs
+        .get(rebuilt.active_tab_index)
+        .ok_or_else(|| anyhow!("attach snapshot did not contain the active tab"))?;
+
     let mut pane_layout = PaneLayout::new(cell_w, cell_h);
     pane_layout.update(
-        &rebuilt.layout_tree,
+        &active_tab.layout_tree,
         0.0,
         tab_strip.height(),
         content_cols,
@@ -352,7 +357,10 @@ fn run_workspace_capture(
     );
 
     status_bar.set_workspace_name(rebuilt.workspace_name.clone());
-    if let Some(focused) = rebuilt.pane_sessions.get(&rebuilt.layout_tree.focus()) {
+    if let Some(focused) = active_tab
+        .pane_sessions
+        .get(&active_tab.layout_tree.focus())
+    {
         status_bar.set_pane_path(focused.pane_path.clone());
     } else {
         status_bar.set_pane_path(format!(
@@ -371,8 +379,8 @@ fn run_workspace_capture(
             rt,
             &tab_strip,
             &pane_layout,
-            &rebuilt.layout_tree,
-            &rebuilt.screens,
+            &active_tab.layout_tree,
+            &active_tab.screens,
             &status_bar,
             &palette,
             w,
