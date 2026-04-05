@@ -88,6 +88,8 @@ const ANSI_PALETTE: [(u8, u8, u8); 16] = [
 const DEFAULT_FG: (u8, u8, u8) = (204, 204, 204);
 const DEFAULT_BG: (u8, u8, u8) = (26, 26, 38);
 const CURSOR_COLOR: (u8, u8, u8) = (204, 204, 204);
+const TEXT_MEASURING_MODE: DWRITE_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_CLASSIC;
+const TEXT_DRAW_OPTIONS: D2D1_DRAW_TEXT_OPTIONS = D2D1_DRAW_TEXT_OPTIONS_CLIP;
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -289,6 +291,14 @@ impl TerminalRenderer {
             )?
         };
 
+        unsafe {
+            for tf in [&tf_regular, &tf_bold, &tf_italic, &tf_bold_italic] {
+                tf.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+                tf.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
+                tf.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR)?;
+            }
+        }
+
         let (cell_width, cell_height) = Self::measure_cell(&dw_factory, &tf_regular)?;
 
         Ok(Self {
@@ -332,6 +342,9 @@ impl TerminalRenderer {
     pub fn begin_draw(&self) {
         unsafe {
             self.rt.BeginDraw();
+            self.rt.SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+            self.rt
+                .SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
     }
 
@@ -398,6 +411,7 @@ impl TerminalRenderer {
         height: f32,
         selection: Option<&TextSelection>,
     ) -> Result<()> {
+        let (x, y, width, height) = snap_viewport(x, y, width, height);
         let clip = D2D_RECT_F {
             left: x,
             top: y,
@@ -431,6 +445,7 @@ impl TerminalRenderer {
         width: f32,
         height: f32,
     ) -> Result<()> {
+        let (x, y, width, height) = snap_viewport(x, y, width, height);
         let clip = D2D_RECT_F {
             left: x,
             top: y,
@@ -516,8 +531,8 @@ impl TerminalRenderer {
                 &self.tf_regular,
                 &msg_rect,
                 &msg_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
+                TEXT_DRAW_OPTIONS,
+                TEXT_MEASURING_MODE,
             );
 
             // Draw restart hint (centered horizontally, below message).
@@ -542,8 +557,8 @@ impl TerminalRenderer {
                 &self.tf_regular,
                 &hint_rect,
                 &hint_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
+                TEXT_DRAW_OPTIONS,
+                TEXT_MEASURING_MODE,
             );
         }
         Ok(())
@@ -723,8 +738,8 @@ impl TerminalRenderer {
                 tf,
                 &rect,
                 &brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
+                TEXT_DRAW_OPTIONS,
+                TEXT_MEASURING_MODE,
             );
 
             // Draw underline
@@ -876,8 +891,8 @@ impl TerminalRenderer {
                 tf,
                 &rect,
                 &brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
+                TEXT_DRAW_OPTIONS,
+                TEXT_MEASURING_MODE,
             );
 
             if cell.attrs.is_set(CellAttrs::UNDERLINE) {
@@ -1023,6 +1038,14 @@ impl TerminalRenderer {
     }
 }
 
+fn snap_viewport(x: f32, y: f32, width: f32, height: f32) -> (f32, f32, f32, f32) {
+    let left = x.round();
+    let top = y.round();
+    let right = (x + width).round().max(left + 1.0);
+    let bottom = (y + height).round().max(top + 1.0);
+    (left, top, right - left, bottom - top)
+}
+
 // ── Failed pane message helpers ──────────────────────────────────────────────
 
 /// Format a message for a pane whose session exited with a given exit code.
@@ -1043,6 +1066,18 @@ pub const RESTART_HINT: &str = "Press Enter to restart  \u{00B7}  Ctrl+B, r";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snap_viewport_aligns_fractional_offsets_to_device_pixels() {
+        let (x, y, width, height) = snap_viewport(10.4, 20.6, 99.2, 40.2);
+        assert_eq!((x, y, width, height), (10.0, 21.0, 100.0, 40.0));
+    }
+
+    #[test]
+    fn snap_viewport_preserves_minimum_visible_extent() {
+        let (x, y, width, height) = snap_viewport(5.49, 7.49, 0.1, 0.1);
+        assert_eq!((x, y, width, height), (5.0, 7.0, 1.0, 1.0));
+    }
 
     #[test]
     fn color_to_rgb_default_fg() {
