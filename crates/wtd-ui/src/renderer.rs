@@ -566,6 +566,21 @@ impl TerminalRenderer {
         let visible_cols = ((width / self.cell_width).ceil() as usize).min(cols);
 
         unsafe {
+            // Make pane rendering self-contained. This clears stale cell
+            // backgrounds when a TUI repaints with default-colored cells or
+            // when viewport dimensions shift during resize.
+            let bg_brush = self.rt.CreateSolidColorBrush(
+                &rgb_to_d2d(DEFAULT_BG.0, DEFAULT_BG.1, DEFAULT_BG.2),
+                None,
+            )?;
+            let bg_rect = D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            };
+            self.rt.FillRectangle(&bg_rect, &bg_brush);
+
             for row in 0..visible_rows {
                 let py = y + row as f32 * self.cell_height;
                 self.paint_row_backgrounds_at(screen, row, visible_cols, x, py)?;

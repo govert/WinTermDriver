@@ -73,6 +73,21 @@ fn destroy_test_window(hwnd: HWND) {
     }
 }
 
+fn read_window_pixel(hwnd: HWND, x: i32, y: i32) -> (u8, u8, u8) {
+    unsafe {
+        let hdc = GetDC(hwnd);
+        assert!(!hdc.0.is_null(), "GetDC must succeed");
+        let color = GetPixel(hdc, x, y);
+        let _ = ReleaseDC(hwnd, hdc);
+        assert_ne!(color.0, CLR_INVALID, "GetPixel must succeed");
+        let raw = color.0;
+        let r = (raw & 0x0000_00ff) as u8;
+        let g = ((raw & 0x0000_ff00) >> 8) as u8;
+        let b = ((raw & 0x00ff_0000) >> 16) as u8;
+        (r, g, b)
+    }
+}
+
 // ── Color mapping tests ──────────────────────────────────────────────────────
 
 #[test]
@@ -525,6 +540,50 @@ fn paint_pane_viewport_alternate_screen() {
 
     // Verify we're on alternate screen
     assert!(screen.on_alternate());
+
+    destroy_test_window(hwnd);
+}
+
+#[test]
+fn paint_pane_viewport_clears_stale_background_without_global_clear() {
+    let mut red_screen = ScreenBuffer::new(8, 2, 0);
+    red_screen.advance(b"\x1b[?1049h\x1b[41m        \r\n        \x1b[0m");
+
+    let mut default_screen = ScreenBuffer::new(8, 2, 0);
+    default_screen.advance(b"\x1b[?1049hZ");
+
+    let hwnd = create_test_window("viewport_self_clear");
+    let config = RendererConfig {
+        software_rendering: true,
+        ..RendererConfig::default()
+    };
+    let renderer = TerminalRenderer::new(hwnd, &config).unwrap();
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = UpdateWindow(hwnd);
+    }
+    let (cw, ch) = renderer.cell_size();
+    let width = cw * 8.0;
+    let height = ch * 2.0;
+
+    renderer.begin_draw();
+    renderer
+        .paint_pane_viewport(&red_screen, 0.0, 0.0, width, height, None)
+        .expect("red viewport should paint");
+    renderer.end_draw().unwrap();
+
+    renderer.begin_draw();
+    renderer
+        .paint_pane_viewport(&default_screen, 0.0, 0.0, width, height, None)
+        .expect("default viewport should repaint without global clear");
+    renderer.end_draw().unwrap();
+
+    let sample = read_window_pixel(hwnd, (cw * 6.0) as i32, (ch * 1.0) as i32);
+    assert_eq!(
+        sample,
+        color_to_rgb(&Color::Default, false),
+        "viewport repaint should restore default background instead of leaving stale red fill"
+    );
 
     destroy_test_window(hwnd);
 }
