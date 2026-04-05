@@ -152,6 +152,7 @@ fn inverse_swaps_fg_and_bg() {
     attrs.set(CellAttrs::INVERSE);
     let cell = Cell {
         character: 'X',
+        text: "X".to_string(),
         fg: Color::Rgb(100, 200, 50),
         bg: Color::Rgb(10, 20, 30),
         attrs,
@@ -169,6 +170,7 @@ fn dim_halves_foreground() {
     attrs.set(CellAttrs::DIM);
     let cell = Cell {
         character: 'D',
+        text: "D".to_string(),
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Default,
         attrs,
@@ -186,6 +188,7 @@ fn dim_plus_inverse() {
     attrs.set(CellAttrs::INVERSE);
     let cell = Cell {
         character: 'X',
+        text: "X".to_string(),
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Rgb(80, 40, 20),
         attrs,

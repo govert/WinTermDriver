@@ -120,6 +120,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         SessionOutput       => SessionOutput,
         SessionStateChanged => SessionStateChanged,
         TitleChanged        => TitleChanged,
+        ProgressChanged     => ProgressChanged,
         LayoutChanged       => LayoutChanged,
         WorkspaceStateChanged => WorkspaceStateChanged,
     }
@@ -181,6 +182,7 @@ pub enum TypedMessage {
     SessionOutput(SessionOutput),
     SessionStateChanged(SessionStateChanged),
     TitleChanged(TitleChanged),
+    ProgressChanged(ProgressChanged),
     LayoutChanged(LayoutChanged),
     WorkspaceStateChanged(WorkspaceStateChanged),
 }
@@ -634,6 +636,9 @@ pub struct CaptureResult {
     /// Current session title from OSC 0/2.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Current session/tab progress from OSC 9;4.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ProgressInfo>,
     /// Current mouse tracking mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mouse_mode: Option<String>,
@@ -736,6 +741,34 @@ pub struct TitleChanged {
     pub title: String,
 }
 impl_payload!(TitleChanged, "TitleChanged");
+
+/// WT-style progress state for a terminal tab/session (OSC 9;4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProgressState {
+    Normal,
+    Error,
+    Indeterminate,
+    Warning,
+}
+
+/// Terminal progress indicator payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressInfo {
+    pub state: ProgressState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<u8>,
+}
+
+/// §13.13 — Session progress changed (from OSC 9;4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressChanged {
+    pub session_id: String,
+    pub progress: Option<ProgressInfo>,
+}
+impl_payload!(ProgressChanged, "ProgressChanged");
 
 /// §13.13 — Tab layout tree changed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

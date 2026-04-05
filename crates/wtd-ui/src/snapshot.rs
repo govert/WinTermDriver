@@ -4,6 +4,7 @@ use serde_json::Value;
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
 use wtd_core::workspace::PaneNode;
+use wtd_ipc::message::ProgressInfo;
 use wtd_pty::ScreenBuffer;
 
 /// Session mapping: pane ID -> session ID/path pair.
@@ -12,6 +13,7 @@ pub struct PaneSession {
     pub session_id: String,
     pub pane_path: String,
     pub session_size: Option<(u16, u16)>,
+    pub progress: Option<ProgressInfo>,
 }
 
 /// Snapshot of one tab after attach.
@@ -47,6 +49,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let pane_states = state["paneStates"].as_object()?;
     let session_screens = state["sessionScreens"].as_object();
     let session_sizes = state["sessionSizes"].as_object();
+    let session_progress = state["sessionProgress"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
     for tab in tabs {
@@ -91,6 +94,11 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                             pane_sessions.insert(
                                 ui_pane_id.clone(),
                                 PaneSession {
+                                    progress: session_progress
+                                        .and_then(|progress_map| progress_map.get(&session_id))
+                                        .and_then(|value| {
+                                            serde_json::from_value::<ProgressInfo>(value.clone()).ok()
+                                        }),
                                     session_id,
                                     pane_path: format!("{workspace_name}/{tab_name}/{pane_name}",),
                                     session_size,

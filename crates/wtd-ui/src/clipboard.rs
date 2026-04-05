@@ -41,7 +41,7 @@ pub fn extract_selection_text(screen: &ScreenBuffer, selection: &TextSelection) 
             }
             if let Some(cell) = screen.cell(row, col) {
                 if !cell.wide_continuation {
-                    line.push(cell.character);
+                    line.push_str(&cell.text);
                 }
             }
         }

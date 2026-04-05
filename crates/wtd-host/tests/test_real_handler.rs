@@ -252,7 +252,30 @@ tabs:
     assert_eq!(panes.panes[0].name, "shell");
     assert_eq!(panes.panes[0].tab, "main");
 
-    // 9. Test Inspect
+    // 9. Test Capture with canonical workspace/tab/pane addressing.
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "cap-canonical-1",
+            &Capture {
+                target: "handler-test/main/shell".to_string(),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    let canonical_capture_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(canonical_capture_resp.msg_type, CaptureResult::TYPE_NAME);
+    let canonical_capture: CaptureResult = canonical_capture_resp.extract_payload().unwrap();
+    assert!(
+        canonical_capture.text.contains(marker),
+        "canonical capture should resolve the pane path, got:\n{}",
+        canonical_capture.text
+    );
+
+    // 10. Test Inspect
     write_frame(
         &mut client,
         &Envelope::new(
@@ -276,7 +299,25 @@ tabs:
     assert_eq!(inspect.data["mouseMode"], "none");
     assert_eq!(inspect.data["cursorShape"], "block");
 
-    // 10. Test CloseWorkspace
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "insp-canonical-1",
+            &Inspect {
+                target: "handler-test/main/shell".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    let inspect_canonical_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(inspect_canonical_resp.msg_type, InspectResult::TYPE_NAME);
+    let inspect_canonical: InspectResult = inspect_canonical_resp.extract_payload().unwrap();
+    assert_eq!(inspect_canonical.data["paneName"], "shell");
+    assert_eq!(inspect_canonical.data["workspace"], "handler-test");
+
+    // 11. Test CloseWorkspace
     write_frame(
         &mut client,
         &Envelope::new(
@@ -294,7 +335,8 @@ tabs:
     assert_eq!(close_resp.msg_type, OkResponse::TYPE_NAME);
 
     let mut prev_titles = HashMap::new();
-    let close_events = handler.drain_session_events(&mut prev_titles);
+    let mut prev_progress = HashMap::new();
+    let close_events = handler.drain_session_events(&mut prev_titles, &mut prev_progress);
     assert!(
         close_events.iter().any(|event| {
             matches!(

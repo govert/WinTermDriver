@@ -7,6 +7,8 @@
 use std::collections::VecDeque;
 
 use regex::Regex;
+use unicode_display_width::width as unicode_display_width;
+use unicode_segmentation::UnicodeSegmentation;
 use vte::{Params, Perform};
 
 // ── Color ────────────────────────────────────────────────────────────────────
@@ -60,6 +62,8 @@ impl CellAttrs {
 pub struct Cell {
     /// Displayed character; `' '` for empty cells.
     pub character: char,
+    /// Full grapheme rendered in this lead cell.
+    pub text: String,
     /// Foreground color.
     pub fg: Color,
     /// Background color.
@@ -76,6 +80,7 @@ impl Cell {
     fn blank() -> Self {
         Cell {
             character: ' ',
+            text: " ".to_string(),
             fg: Color::Default,
             bg: Color::Default,
             attrs: CellAttrs::default(),
@@ -99,6 +104,19 @@ pub enum MouseMode {
     ButtonEvent,
     /// Any-event tracking (DECSET 1003): report all motion even without buttons.
     AnyEvent,
+}
+
+/// Progress indicator requested by the application via OSC 9;4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalProgress {
+    /// Normal progress (WT state 1).
+    Normal(u8),
+    /// Error progress (WT state 2).
+    Error(u8),
+    /// Indeterminate progress (WT state 3).
+    Indeterminate,
+    /// Warning progress (WT state 4).
+    Warning(u8),
 }
 
 // ── CaptureExtendedResult ─────────────────────────────────────────────────────
@@ -337,7 +355,7 @@ pub fn cells_to_string(cells: &[Cell]) -> String {
     let mut s = String::with_capacity(cells.len());
     for cell in cells {
         if !cell.wide_continuation {
-            s.push(cell.character);
+            s.push_str(&cell.text);
         }
     }
     s
@@ -432,6 +450,9 @@ pub struct ScreenBuffer {
     /// Window title from OSC sequences.
     pub title: String,
 
+    /// Progress indicator state from OSC 9;4.
+    progress: Option<TerminalProgress>,
+
     /// Mouse tracking mode (DECSET 1000/1002/1003).
     mouse_mode: MouseMode,
     /// SGR extended mouse format (DECSET 1006).
@@ -446,6 +467,8 @@ pub struct ScreenBuffer {
     /// Pending character for wide-char continuation tracking.
     /// After printing a wide char we advance cursor by 2.
     _wide_pending: bool,
+    /// Buffered print text so grapheme clusters can be committed atomically.
+    pending_print: String,
 }
 
 impl ScreenBuffer {
@@ -470,11 +493,13 @@ impl ScreenBuffer {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             title: String::new(),
+            progress: None,
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
             bracketed_paste: false,
             parser: vte::Parser::new(),
             _wide_pending: false,
+            pending_print: String::new(),
         }
     }
 
@@ -487,6 +512,7 @@ impl ScreenBuffer {
             parser.advance(self, b);
         }
         self.parser = parser;
+        self.flush_pending_print(true);
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────
@@ -499,6 +525,11 @@ impl ScreenBuffer {
     }
     pub fn on_alternate(&self) -> bool {
         self.on_alternate
+    }
+
+    /// Current progress indicator requested by the application, if any.
+    pub fn progress(&self) -> Option<TerminalProgress> {
+        self.progress
     }
 
     /// Current cursor state.
@@ -537,7 +568,7 @@ impl ScreenBuffer {
             for c in 0..self.cols {
                 let cell = g.cell(r, c);
                 if !cell.wide_continuation {
-                    out.push(cell.character);
+                    out.push_str(&cell.text);
                 }
             }
             out.push('\n');
@@ -555,7 +586,7 @@ impl ScreenBuffer {
         for c in 0..self.cols {
             let cell = g.cell(row, c);
             if !cell.wide_continuation {
-                s.push(cell.character);
+                s.push_str(&cell.text);
             }
         }
         Some(s)
@@ -696,6 +727,21 @@ impl ScreenBuffer {
             out.push(0x07);
         }
 
+        if let Some(progress) = self.progress {
+            match progress {
+                TerminalProgress::Normal(value) => {
+                    out.extend_from_slice(format!("\x1b]9;4;1;{value}\x07").as_bytes());
+                }
+                TerminalProgress::Error(value) => {
+                    out.extend_from_slice(format!("\x1b]9;4;2;{value}\x07").as_bytes());
+                }
+                TerminalProgress::Indeterminate => out.extend_from_slice(b"\x1b]9;4;3\x07"),
+                TerminalProgress::Warning(value) => {
+                    out.extend_from_slice(format!("\x1b]9;4;4;{value}\x07").as_bytes());
+                }
+            }
+        }
+
         if self.on_alternate {
             out.extend_from_slice(b"\x1b[?1049h");
         }
@@ -752,14 +798,7 @@ impl ScreenBuffer {
                     if rc.wide_continuation {
                         continue;
                     }
-                    let ch = if rc.character == '\0' {
-                        ' '
-                    } else {
-                        rc.character
-                    };
-                    let mut buf = [0u8; 4];
-                    let s = ch.encode_utf8(&mut buf);
-                    out.extend_from_slice(s.as_bytes());
+                    out.extend_from_slice(rc.text.as_bytes());
                 }
 
                 col = run_end;
@@ -838,9 +877,13 @@ impl ScreenBuffer {
         }
     }
 
-    /// Write a character at cursor position and advance cursor.
-    fn print_char(&mut self, c: char) {
-        let is_wide = unicode_width(c) == 2;
+    /// Write a grapheme at cursor position and advance cursor.
+    fn print_grapheme(&mut self, grapheme: &str) {
+        let char_width = grapheme_width(grapheme);
+        if char_width == 0 {
+            return;
+        }
+        let is_wide = char_width == 2;
 
         // If we'd overflow column, wrap.
         if self.cursor.col >= self.cols {
@@ -883,7 +926,8 @@ impl ScreenBuffer {
         {
             let grid = self.active_grid_mut();
             let cell = grid.cell_mut(row, col);
-            cell.character = c;
+            cell.character = grapheme.chars().next().unwrap_or(' ');
+            cell.text = grapheme.to_string();
             cell.fg = fg;
             cell.bg = bg;
             cell.attrs = attrs;
@@ -903,6 +947,32 @@ impl ScreenBuffer {
         } else {
             self.cursor.col += 1;
         }
+    }
+
+    fn flush_pending_print(&mut self, final_flush: bool) {
+        if self.pending_print.is_empty() {
+            return;
+        }
+
+        let graphemes: Vec<&str> = self.pending_print.graphemes(true).collect();
+        if graphemes.is_empty() {
+            self.pending_print.clear();
+            return;
+        }
+
+        let retain = if final_flush { 0 } else { 1 };
+        if graphemes.len() <= retain {
+            return;
+        }
+
+        let flush_count = graphemes.len() - retain;
+        let flush_bytes = graphemes.iter().take(flush_count).map(|g| g.len()).sum();
+        let flushed = self.pending_print[..flush_bytes].to_string();
+        let remainder = self.pending_print[flush_bytes..].to_string();
+        for grapheme in flushed.graphemes(true) {
+            self.print_grapheme(grapheme);
+        }
+        self.pending_print = remainder;
     }
 
     /// Apply SGR (Select Graphic Rendition) parameters.
@@ -1090,45 +1160,70 @@ impl ScreenBuffer {
 
 // ── unicode width helper ──────────────────────────────────────────────────────
 
-fn unicode_width(c: char) -> usize {
-    // Fast path for common ASCII.
-    if (c as u32) < 0x300 {
-        return 1;
+fn is_zero_width_codepoint(c: char) -> bool {
+    if c.is_ascii() {
+        return !matches!(c, '\t' | '\n' | '\r' | ' '..='~');
     }
-    // CJK Unified Ideographs, Fullwidth Forms, etc. — very conservative subset.
-    match c as u32 {
-        0x1100..=0x115F |  // Hangul Jamo
-        0x2329..=0x232A |  // Angle brackets
-        0x2E80..=0x303E |  // CJK Radicals
-        0x3040..=0x33FF |  // Hiragana/Katakana/CJK
-        0x3400..=0x4DBF |  // CJK Extension A
-        0x4E00..=0x9FFF |  // CJK Unified
-        0xA000..=0xA4CF |  // Yi
-        0xA960..=0xA97F |  // Hangul Jamo Extended-A
-        0xAC00..=0xD7FF |  // Hangul Syllables
-        0xF900..=0xFAFF |  // CJK Compatibility
-        0xFE10..=0xFE19 |  // Vertical forms
-        0xFE30..=0xFE6F |  // CJK Compatibility Forms
-        0xFF00..=0xFF60 |  // Fullwidth
-        0xFFE0..=0xFFE6 |  // Fullwidth signs
-        0x1B000..=0x1B0FF | // Kana Supplement
-        0x1F004..=0x1F0CF | // Mahjong/Playing cards (emoji)
-        0x1F300..=0x1F9FF | // Misc symbols/emoji
-        0x20000..=0x2FFFD | // CJK Ext B-F + compat
-        0x30000..=0x3FFFD   // CJK Ext G+
-        => 2,
-        _ => 1,
+
+    let u = c as u32;
+    matches!(u, 0x0000..=0x001F | 0x007F..=0x009F)
+        || matches!(u, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF)
+        || matches!(u, 0xFE20..=0xFE2F)
+        || matches!(u, 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
+        || matches!(
+            u,
+            0x00AD | 0x034F | 0x180E | 0x200B | 0x200C | 0x200D | 0x200E | 0x200F | 0x2060 | 0xFEFF
+        )
+        || matches!(u, 0x202A..=0x202E | 0x2066..=0x2069 | 0x206A..=0x206F)
+}
+
+fn grapheme_width(grapheme: &str) -> usize {
+    if grapheme.is_ascii() {
+        return grapheme
+            .bytes()
+            .map(|b| match b {
+                b'\t' | b'\n' | b'\r' => 1,
+                0x20..=0x7E => 1,
+                _ => 0,
+            })
+            .sum();
     }
+
+    if grapheme.chars().all(is_zero_width_codepoint) {
+        return 0;
+    }
+
+    if grapheme.contains('\u{FE0F}') {
+        let stripped: String = grapheme.chars().filter(|&c| c != '\u{FE0F}').collect();
+        if stripped.is_empty() {
+            return 0;
+        }
+        return unicode_display_width(&stripped) as usize;
+    }
+
+    unicode_display_width(grapheme) as usize
+}
+
+fn progress_with_value(
+    raw: Option<&&[u8]>,
+    ctor: impl FnOnce(u8) -> TerminalProgress,
+) -> Option<TerminalProgress> {
+    let raw = raw?;
+    let text = std::str::from_utf8(raw).ok()?;
+    let value = text.parse::<u16>().ok()?.min(100) as u8;
+    Some(ctor(value))
 }
 
 // ── Perform impl ──────────────────────────────────────────────────────────────
 
 impl Perform for ScreenBuffer {
     fn print(&mut self, c: char) {
-        self.print_char(c);
+        self.pending_print.push(c);
+        self.flush_pending_print(false);
     }
 
     fn execute(&mut self, byte: u8) {
+        self.flush_pending_print(true);
         match byte {
             // BEL — ignore
             0x07 => {}
@@ -1182,6 +1277,7 @@ impl Perform for ScreenBuffer {
     }
 
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
+        self.flush_pending_print(true);
         // Collect flat params as Vec<u16> for easy indexed access.
         let p: Vec<u16> = params.iter().map(|sub| sub[0]).collect();
         let p1 = |i: usize, def: u16| -> usize { *p.get(i).unwrap_or(&def).max(&1) as usize };
@@ -1439,6 +1535,7 @@ impl Perform for ScreenBuffer {
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
+        self.flush_pending_print(true);
         match (intermediates, byte) {
             // DECSC — save cursor
             ([], b'7') => self.save_cursor(),
@@ -1457,6 +1554,7 @@ impl Perform for ScreenBuffer {
                 self.reset_sgr();
                 self.scroll_top = 0;
                 self.scroll_bottom = self.rows.saturating_sub(1);
+                self.progress = None;
                 self.mouse_mode = MouseMode::None;
                 self.sgr_mouse = false;
                 self.bracketed_paste = false;
@@ -1466,20 +1564,41 @@ impl Perform for ScreenBuffer {
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        // OSC 0 or OSC 2: set window title
+        self.flush_pending_print(true);
         if let Some(&code_bytes) = params.first() {
             let code_str = std::str::from_utf8(code_bytes).unwrap_or("");
             if (code_str == "0" || code_str == "2") && params.len() >= 2 {
                 if let Ok(title) = std::str::from_utf8(params[1]) {
                     self.title = title.to_owned();
                 }
+                return;
+            }
+            if code_str == "9"
+                && params.len() >= 3
+                && std::str::from_utf8(params[1]).unwrap_or("") == "4"
+            {
+                let next_progress = match std::str::from_utf8(params[2]).unwrap_or("") {
+                    "0" => None,
+                    "1" => progress_with_value(params.get(3), TerminalProgress::Normal),
+                    "2" => progress_with_value(params.get(3), TerminalProgress::Error),
+                    "3" => Some(TerminalProgress::Indeterminate),
+                    "4" => progress_with_value(params.get(3), TerminalProgress::Warning),
+                    _ => self.progress,
+                };
+                self.progress = next_progress;
             }
         }
     }
 
-    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {}
-    fn put(&mut self, _byte: u8) {}
-    fn unhook(&mut self) {}
+    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {
+        self.flush_pending_print(true);
+    }
+    fn put(&mut self, _byte: u8) {
+        self.flush_pending_print(true);
+    }
+    fn unhook(&mut self) {
+        self.flush_pending_print(true);
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1743,6 +1862,28 @@ mod tests {
         assert_eq!(b.title, "Second");
     }
 
+    #[test]
+    fn progress_osc_9_4_normal() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]9;4;1;42\x07");
+        assert_eq!(b.progress(), Some(TerminalProgress::Normal(42)));
+    }
+
+    #[test]
+    fn progress_osc_9_4_indeterminate() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]9;4;3\x07");
+        assert_eq!(b.progress(), Some(TerminalProgress::Indeterminate));
+    }
+
+    #[test]
+    fn progress_osc_9_4_clear() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]9;4;4;75\x07");
+        feed(&mut b, "\x1b]9;4;0\x07");
+        assert_eq!(b.progress(), None);
+    }
+
     // ── Wide characters ───────────────────────────────────────────────────────
 
     #[test]
@@ -1769,6 +1910,46 @@ mod tests {
         assert!(b.cell(0, 2).unwrap().wide_continuation);
         assert_eq!(b.cell(0, 3).unwrap().character, 'B');
         assert_eq!(b.cursor().col, 4);
+    }
+
+    #[test]
+    fn variation_selector_is_zero_width() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\u{fe0f}A");
+        assert_eq!(b.cell(0, 0).unwrap().character, 'A');
+        assert_eq!(b.cursor().col, 1);
+    }
+
+    #[test]
+    fn sparkles_emoji_is_double_width() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\u{2728}A");
+        assert_eq!(b.cell(0, 0).unwrap().character, '\u{2728}');
+        assert_eq!(b.cell(0, 0).unwrap().text, "\u{2728}");
+        assert!(b.cell(0, 1).unwrap().wide_continuation);
+        assert_eq!(b.cell(0, 2).unwrap().character, 'A');
+        assert_eq!(b.cursor().col, 3);
+    }
+
+    #[test]
+    fn combining_sequence_stays_in_one_cell() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "e\u{0301}A");
+        assert_eq!(b.cell(0, 0).unwrap().text, "e\u{0301}");
+        assert!(!b.cell(0, 0).unwrap().wide);
+        assert_eq!(b.cell(0, 1).unwrap().character, 'A');
+        assert_eq!(b.cursor().col, 2);
+    }
+
+    #[test]
+    fn zwj_cluster_stays_in_one_wide_cell() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\u{1f469}\u{200d}\u{1f4bb}A");
+        assert_eq!(b.cell(0, 0).unwrap().text, "\u{1f469}\u{200d}\u{1f4bb}");
+        assert!(b.cell(0, 0).unwrap().wide);
+        assert!(b.cell(0, 1).unwrap().wide_continuation);
+        assert_eq!(b.cell(0, 2).unwrap().character, 'A');
+        assert_eq!(b.cursor().col, 3);
     }
 
     // ── Erase operations ──────────────────────────────────────────────────────
@@ -2098,6 +2279,18 @@ mod tests {
         let cell = copy.cell(0, 0).unwrap();
         assert!(cell.attrs.is_set(CellAttrs::BOLD));
         assert_eq!(cell.fg, Color::Ansi(1)); // red
+    }
+
+    #[test]
+    fn vt_snapshot_round_trips_progress() {
+        let mut orig = buf(80, 24);
+        feed(&mut orig, "\x1b]9;4;4;64\x07");
+
+        let snapshot = orig.to_vt_snapshot();
+        let mut copy = buf(80, 24);
+        copy.advance(&snapshot);
+
+        assert_eq!(copy.progress(), Some(TerminalProgress::Warning(64)));
     }
 
     #[test]

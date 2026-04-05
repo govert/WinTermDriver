@@ -204,6 +204,10 @@ pub fn resolve_cell_colors(cell: &Cell) -> ((u8, u8, u8), (u8, u8, u8)) {
     (fg, bg)
 }
 
+fn cell_display_cols(cell: &Cell) -> usize {
+    if cell.wide { 2 } else { 1 }
+}
+
 // ── TerminalRenderer ─────────────────────────────────────────────────────────
 
 impl TerminalRenderer {
@@ -696,7 +700,7 @@ impl TerminalRenderer {
                 col += 1;
                 continue;
             }
-            if cell.character == ' ' && cell.attrs == CellAttrs::default() {
+            if cell.text == " " && cell.attrs == CellAttrs::default() {
                 col += 1;
                 continue;
             }
@@ -705,7 +709,9 @@ impl TerminalRenderer {
             let tf = self.text_format_for_attrs(&cell.attrs);
             let run_start = col;
             let mut run_text = String::new();
-            run_text.push(cell.character);
+            let mut run_cols = 0usize;
+            run_text.push_str(&cell.text);
+            run_cols += cell_display_cols(cell);
 
             col += 1;
             // Extend the run while color and font match.
@@ -718,7 +724,8 @@ impl TerminalRenderer {
                     let (next_fg, _) = resolve_cell_colors(next);
                     let next_tf_matches = self.attrs_same_format(&cell.attrs, &next.attrs);
                     if next_fg == fg_rgb && next_tf_matches {
-                        run_text.push(next.character);
+                        run_text.push_str(&next.text);
+                        run_cols += cell_display_cols(next);
                         col += 1;
                         continue;
                     }
@@ -733,7 +740,7 @@ impl TerminalRenderer {
             let rect = D2D_RECT_F {
                 left: run_start as f32 * self.cell_width,
                 top: y,
-                right: (run_start + run_text.chars().count()) as f32 * self.cell_width,
+                right: (run_start + run_cols) as f32 * self.cell_width,
                 bottom: y + self.cell_height,
             };
             self.rt.DrawText(
@@ -753,7 +760,7 @@ impl TerminalRenderer {
                     y: underline_y,
                 };
                 let p1 = D2D_POINT_2F {
-                    x: (run_start + run_text.chars().count()) as f32 * self.cell_width,
+                    x: (run_start + run_cols) as f32 * self.cell_width,
                     y: underline_y,
                 };
                 self.rt.DrawLine(p0, p1, &brush, 1.0, None);
@@ -767,7 +774,7 @@ impl TerminalRenderer {
                     y: strike_y,
                 };
                 let p1 = D2D_POINT_2F {
-                    x: (run_start + run_text.chars().count()) as f32 * self.cell_width,
+                    x: (run_start + run_cols) as f32 * self.cell_width,
                     y: strike_y,
                 };
                 self.rt.DrawLine(p0, p1, &brush, 1.0, None);
@@ -849,7 +856,7 @@ impl TerminalRenderer {
                 col += 1;
                 continue;
             }
-            if cell.character == ' ' && cell.attrs == CellAttrs::default() {
+            if cell.text == " " && cell.attrs == CellAttrs::default() {
                 col += 1;
                 continue;
             }
@@ -858,7 +865,9 @@ impl TerminalRenderer {
             let tf = self.text_format_for_attrs(&cell.attrs);
             let run_start = col;
             let mut run_text = String::new();
-            run_text.push(cell.character);
+            let mut run_cols = 0usize;
+            run_text.push_str(&cell.text);
+            run_cols += cell_display_cols(cell);
 
             col += 1;
             while col < cols {
@@ -870,7 +879,8 @@ impl TerminalRenderer {
                     let (next_fg, _) = resolve_cell_colors(next);
                     let next_tf_matches = self.attrs_same_format(&cell.attrs, &next.attrs);
                     if next_fg == fg_rgb && next_tf_matches {
-                        run_text.push(next.character);
+                        run_text.push_str(&next.text);
+                        run_cols += cell_display_cols(next);
                         col += 1;
                         continue;
                     }
@@ -882,11 +892,10 @@ impl TerminalRenderer {
             let brush = self
                 .rt
                 .CreateSolidColorBrush(&rgb_to_d2d(fg_rgb.0, fg_rgb.1, fg_rgb.2), None)?;
-            let run_len = run_text.chars().count();
             let rect = D2D_RECT_F {
                 left: x_origin + run_start as f32 * self.cell_width,
                 top: y,
-                right: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                right: x_origin + (run_start + run_cols) as f32 * self.cell_width,
                 bottom: y + self.cell_height,
             };
             self.rt.DrawText(
@@ -905,7 +914,7 @@ impl TerminalRenderer {
                     y: underline_y,
                 };
                 let p1 = D2D_POINT_2F {
-                    x: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                    x: x_origin + (run_start + run_cols) as f32 * self.cell_width,
                     y: underline_y,
                 };
                 self.rt.DrawLine(p0, p1, &brush, 1.0, None);
@@ -918,7 +927,7 @@ impl TerminalRenderer {
                     y: strike_y,
                 };
                 let p1 = D2D_POINT_2F {
-                    x: x_origin + (run_start + run_len) as f32 * self.cell_width,
+                    x: x_origin + (run_start + run_cols) as f32 * self.cell_width,
                     y: strike_y,
                 };
                 self.rt.DrawLine(p0, p1, &brush, 1.0, None);
@@ -1145,6 +1154,7 @@ mod tests {
     fn resolve_colors_normal_cell() {
         let cell = Cell {
             character: 'A',
+            text: "A".to_string(),
             fg: Color::Ansi(1),
             bg: Color::Default,
             attrs: CellAttrs::default(),
@@ -1162,6 +1172,7 @@ mod tests {
         attrs.set(CellAttrs::INVERSE);
         let cell = Cell {
             character: 'A',
+            text: "A".to_string(),
             fg: Color::Ansi(1),
             bg: Color::Ansi(2),
             attrs,
@@ -1180,6 +1191,7 @@ mod tests {
         attrs.set(CellAttrs::DIM);
         let cell = Cell {
             character: 'A',
+            text: "A".to_string(),
             fg: Color::Rgb(200, 100, 50),
             bg: Color::Default,
             attrs,

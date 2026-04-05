@@ -103,6 +103,18 @@ fn oversize_message_rejected_on_encode() {
             total_lines: 0,
             anchor_found: None,
             cursor: None,
+            cols: 0,
+            rows: 0,
+            on_alternate: false,
+            title: None,
+            progress: None,
+            mouse_mode: None,
+            sgr_mouse: false,
+            bracketed_paste: false,
+            cursor_row: None,
+            cursor_col: None,
+            cursor_visible: None,
+            cursor_shape: None,
         },
     );
 

@@ -8,6 +8,7 @@ use windows::core::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use wtd_ipc::message::{ProgressInfo, ProgressState};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ const MIN_TAB_WIDTH: f32 = 80.0;
 const MAX_TAB_WIDTH: f32 = 200.0;
 const DRAG_THRESHOLD: f32 = 5.0;
 const ACTIVE_INDICATOR_HEIGHT: f32 = 2.0;
+const TAB_PROGRESS_SIZE: f32 = 11.0;
+const TAB_PROGRESS_GAP: f32 = 8.0;
 
 // ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +49,7 @@ const ADD_HOVER_COLOR: (u8, u8, u8) = (230, 230, 230);
 pub struct Tab {
     pub id: u64,
     pub name: String,
+    pub progress: Option<ProgressInfo>,
 }
 
 /// Action resulting from user interaction with the tab strip.
@@ -210,8 +214,19 @@ impl TabStrip {
     pub fn add_tab(&mut self, name: String) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.tabs.push(Tab { id, name });
+        self.tabs.push(Tab {
+            id,
+            name,
+            progress: None,
+        });
         id
+    }
+
+    /// Set the progress indicator for a tab by index.
+    pub fn set_progress(&mut self, index: usize, progress: Option<ProgressInfo>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.progress = progress;
+        }
     }
 
     /// Set the active tab by index. No-op if out of bounds.
@@ -298,7 +313,14 @@ impl TabStrip {
         let text_widths: Vec<f32> = self
             .tabs
             .iter()
-            .map(|t| self.measure_text(&t.name))
+            .map(|t| {
+                let indicator_width = if t.progress.is_some() {
+                    TAB_PROGRESS_SIZE + TAB_PROGRESS_GAP
+                } else {
+                    0.0
+                };
+                self.measure_text(&t.name) + indicator_width
+            })
             .collect();
 
         // Compute tab widths (text + padding + close button)
@@ -637,9 +659,25 @@ impl TabStrip {
         };
 
         let tab = &self.tabs[index];
+        let progress_offset = if tab.progress.is_some() {
+            TAB_PROGRESS_SIZE + TAB_PROGRESS_GAP
+        } else {
+            0.0
+        };
+
+        if let Some(progress) = tab.progress.as_ref() {
+            self.paint_progress_indicator(
+                rt,
+                zone.rect.x + TAB_PADDING_H + offset_x,
+                11.5,
+                progress,
+                is_active,
+            )?;
+        }
+
         let utf16: Vec<u16> = tab.name.encode_utf16().collect();
         let text_rect = D2D_RECT_F {
-            left: zone.rect.x + TAB_PADDING_H + offset_x,
+            left: zone.rect.x + TAB_PADDING_H + offset_x + progress_offset,
             top: 2.0,
             right: zone.rect.x + zone.rect.width - TAB_CLOSE_SIZE - TAB_CLOSE_MARGIN + offset_x,
             bottom: TAB_STRIP_HEIGHT,
@@ -692,6 +730,37 @@ impl TabStrip {
             None,
         );
 
+        Ok(())
+    }
+
+    unsafe fn paint_progress_indicator(
+        &self,
+        rt: &ID2D1RenderTarget,
+        x: f32,
+        y: f32,
+        progress: &ProgressInfo,
+        is_active: bool,
+    ) -> Result<()> {
+        let color = progress_color(progress, is_active);
+        let brush = make_brush(rt, color)?;
+        let muted = make_brush(rt, (72, 72, 88))?;
+        let radius = TAB_PROGRESS_SIZE / 2.0;
+        let center = D2D_POINT_2F {
+            x: x + radius,
+            y: y + radius,
+        };
+
+        draw_ring_segments(rt, &muted, center, radius, 16, 16)?;
+        match progress.state {
+            ProgressState::Indeterminate => draw_ring_segments(rt, &brush, center, radius, 4, 16)?,
+            ProgressState::Normal | ProgressState::Error | ProgressState::Warning => {
+                let value = progress.value.unwrap_or(0).min(100);
+                let lit = ((value as usize * 16) + 99) / 100;
+                if lit > 0 {
+                    draw_ring_segments(rt, &brush, center, radius, lit, 16)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -831,6 +900,49 @@ fn make_brush(rt: &ID2D1RenderTarget, color: (u8, u8, u8)) -> Result<ID2D1SolidC
     unsafe { rt.CreateSolidColorBrush(&c, None) }
 }
 
+fn progress_color(progress: &ProgressInfo, is_active: bool) -> (u8, u8, u8) {
+    let active_bump = if is_active { 20 } else { 0 };
+    match progress.state {
+        ProgressState::Normal => (100 + active_bump, 200 + active_bump, 120 + active_bump / 2),
+        ProgressState::Error => (220, 96 + active_bump / 2, 96 + active_bump / 2),
+        ProgressState::Indeterminate => (120 + active_bump, 180 + active_bump / 2, 220),
+        ProgressState::Warning => (220, 176 + active_bump / 3, 92),
+    }
+}
+
+unsafe fn draw_ring_segments(
+    rt: &ID2D1RenderTarget,
+    brush: &ID2D1SolidColorBrush,
+    center: D2D_POINT_2F,
+    radius: f32,
+    lit_segments: usize,
+    total_segments: usize,
+) -> Result<()> {
+    if total_segments == 0 {
+        return Ok(());
+    }
+
+    let lit_segments = lit_segments.min(total_segments);
+    let start_angle = -std::f32::consts::FRAC_PI_2;
+    let segment_sweep = (std::f32::consts::TAU / total_segments as f32) * 0.72;
+    let segment_step = std::f32::consts::TAU / total_segments as f32;
+    for index in 0..lit_segments {
+        let angle = start_angle + segment_step * index as f32;
+        let inner = radius - 1.4;
+        let outer = radius + 1.4;
+        let p1 = D2D_POINT_2F {
+            x: center.x + inner * angle.cos(),
+            y: center.y + inner * angle.sin(),
+        };
+        let p2 = D2D_POINT_2F {
+            x: center.x + outer * (angle + segment_sweep).cos(),
+            y: center.y + outer * (angle + segment_sweep).sin(),
+        };
+        rt.DrawLine(p1, p2, brush, 1.8, None);
+    }
+    Ok(())
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -962,6 +1074,26 @@ mod tests {
     fn window_title_no_tabs() {
         let strip = make_strip();
         assert_eq!(strip.window_title("Workspace"), "Workspace");
+    }
+
+    #[test]
+    fn set_progress_updates_tab_state() {
+        let mut strip = make_strip();
+        strip.add_tab("main".into());
+        strip.set_progress(
+            0,
+            Some(ProgressInfo {
+                state: ProgressState::Warning,
+                value: Some(64),
+            }),
+        );
+        assert_eq!(
+            strip.tabs()[0].progress,
+            Some(ProgressInfo {
+                state: ProgressState::Warning,
+                value: Some(64),
+            })
+        );
     }
 
     #[test]

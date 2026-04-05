@@ -517,6 +517,10 @@ fn capture_result_roundtrip() {
         rows: 24,
         on_alternate: false,
         title: Some("shell".into()),
+        progress: Some(ProgressInfo {
+            state: ProgressState::Normal,
+            value: Some(35),
+        }),
         mouse_mode: Some("none".into()),
         sgr_mouse: false,
         bracketed_paste: false,
@@ -539,6 +543,10 @@ fn capture_result_with_anchor_roundtrip() {
         rows: 24,
         on_alternate: true,
         title: None,
+        progress: Some(ProgressInfo {
+            state: ProgressState::Indeterminate,
+            value: None,
+        }),
         mouse_mode: Some("any-event".into()),
         sgr_mouse: true,
         bracketed_paste: true,
@@ -561,6 +569,10 @@ fn capture_result_anchor_not_found_roundtrip() {
         rows: 24,
         on_alternate: false,
         title: None,
+        progress: Some(ProgressInfo {
+            state: ProgressState::Warning,
+            value: Some(64),
+        }),
         mouse_mode: Some("normal".into()),
         sgr_mouse: false,
         bracketed_paste: false,
@@ -583,6 +595,7 @@ fn capture_result_count_mode_roundtrip() {
         rows: 0,
         on_alternate: false,
         title: None,
+        progress: None,
         mouse_mode: None,
         sgr_mouse: false,
         bracketed_paste: false,
@@ -684,6 +697,17 @@ fn title_changed_roundtrip() {
     roundtrip(TitleChanged {
         session_id: "sess-1".into(),
         title: "vim - main.rs".into(),
+    });
+}
+
+#[test]
+fn progress_changed_roundtrip() {
+    roundtrip(ProgressChanged {
+        session_id: "sess-1".into(),
+        progress: Some(ProgressInfo {
+            state: ProgressState::Warning,
+            value: Some(64),
+        }),
     });
 }
 

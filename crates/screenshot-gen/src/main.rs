@@ -35,6 +35,17 @@ const DOC_WINDOW_HEIGHT: i32 = 700;
 const LIVE_WINDOW_WIDTH: i32 = 1600;
 const LIVE_WINDOW_HEIGHT: i32 = 1000;
 
+fn sync_tab_progresses(tab_strip: &mut TabStrip, tabs: &[wtd_ui::snapshot::SnapshotTab]) {
+    for (index, tab) in tabs.iter().enumerate() {
+        let focused = tab.layout_tree.focus();
+        let progress = tab
+            .pane_sessions
+            .get(&focused)
+            .and_then(|pane_session| pane_session.progress.clone());
+        tab_strip.set_progress(index, progress);
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     match parse_args()? {
         CaptureMode::Docs { output_dir } => run_docs_capture(&output_dir),
@@ -341,6 +352,7 @@ fn run_workspace_capture(
 
     let rebuilt = rebuild_from_snapshot(&attached.state, content_cols, content_rows)
         .ok_or_else(|| anyhow!("failed to rebuild layout from attach snapshot"))?;
+    sync_tab_progresses(&mut tab_strip, &rebuilt.tabs);
 
     let active_tab = rebuilt
         .tabs

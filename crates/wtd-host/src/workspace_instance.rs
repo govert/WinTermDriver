@@ -16,6 +16,7 @@ use wtd_core::workspace::{
 use wtd_core::{resolve_launch_spec, ResolveError};
 use wtd_pty::PtySize;
 
+use crate::output_broadcaster::progress_info_from_screen;
 use crate::session::{Session, SessionConfig, SessionState};
 
 #[cfg(windows)]
@@ -211,6 +212,21 @@ impl WorkspaceInstance {
                 .sessions
                 .iter()
                 .map(|(id, s)| (id.clone(), s.screen().title.clone()))
+                .collect(),
+            session_progress: self
+                .sessions
+                .iter()
+                .filter_map(|(id, s)| {
+                    progress_info_from_screen(s.screen().progress()).map(|progress| {
+                        (
+                            id.clone(),
+                            SessionProgressSnapshot {
+                                state: progress.state,
+                                value: progress.value,
+                            },
+                        )
+                    })
+                })
                 .collect(),
             session_sizes: self
                 .sessions
@@ -974,6 +990,8 @@ pub struct AttachSnapshot {
     pub session_states: HashMap<SessionId, SessionState>,
     /// Current terminal title per session (OSC 2).
     pub session_titles: HashMap<SessionId, String>,
+    /// Current terminal progress per session (OSC 9;4).
+    pub session_progress: HashMap<SessionId, SessionProgressSnapshot>,
     /// Current visible terminal size per session.
     pub session_sizes: HashMap<SessionId, SessionSizeSnapshot>,
     /// Base64-encoded VT snapshot of the current visible screen per session.
@@ -988,6 +1006,14 @@ pub struct AttachSnapshot {
 pub struct SessionSizeSnapshot {
     pub cols: u16,
     pub rows: u16,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionProgressSnapshot {
+    pub state: wtd_ipc::message::ProgressState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<u8>,
 }
 
 /// Snapshot of a single tab's metadata and layout.

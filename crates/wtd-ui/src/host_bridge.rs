@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use serde_json::Value;
 use wtd_ipc::message::{
-    self, AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload,
+    self, AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload, ProgressInfo,
 };
 use wtd_ipc::{parse_envelope, Envelope, TypedMessage};
 
@@ -32,6 +32,11 @@ pub enum HostEvent {
     },
     /// A session's title changed (from VT escape sequence).
     TitleChanged { session_id: String, title: String },
+    /// A session's progress changed (from OSC 9;4).
+    ProgressChanged {
+        session_id: String,
+        progress: Option<ProgressInfo>,
+    },
     /// The layout tree for a tab changed.
     LayoutChanged {
         workspace: String,
@@ -374,6 +379,10 @@ fn envelope_to_event(envelope: &Envelope) -> Option<HostEvent> {
         TypedMessage::TitleChanged(tc) => Some(HostEvent::TitleChanged {
             session_id: tc.session_id,
             title: tc.title,
+        }),
+        TypedMessage::ProgressChanged(pc) => Some(HostEvent::ProgressChanged {
+            session_id: pc.session_id,
+            progress: pc.progress,
         }),
         TypedMessage::LayoutChanged(lc) => Some(HostEvent::LayoutChanged {
             workspace: lc.workspace,

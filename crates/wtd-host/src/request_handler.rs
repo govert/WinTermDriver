@@ -21,6 +21,7 @@ use wtd_ipc::Envelope;
 use crate::action::{v1_registry, ActionDispatcher};
 use crate::ipc_server::{ClientId, RequestHandler};
 use crate::output_broadcaster::BroadcastEvent;
+use crate::output_broadcaster::progress_info_from_screen;
 use crate::target_resolver::{resolve_by_id, resolve_target};
 use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
@@ -68,6 +69,7 @@ impl HostRequestHandler {
     pub fn drain_session_events(
         &self,
         prev_titles: &mut HashMap<String, String>,
+        prev_progress: &mut HashMap<String, Option<wtd_ipc::message::ProgressInfo>>,
     ) -> Vec<BroadcastEvent> {
         let mut state = self.state.lock().unwrap();
         let mut events = Vec::new();
@@ -97,6 +99,16 @@ impl HostRequestHandler {
                     events.push(BroadcastEvent::TitleChange {
                         session_id: sid.clone(),
                         title: new_title,
+                    });
+                }
+
+                let new_progress = progress_info_from_screen(session.screen().progress());
+                let progress_changed = prev_progress.get(&sid) != Some(&new_progress);
+                if progress_changed {
+                    prev_progress.insert(sid.clone(), new_progress.clone());
+                    events.push(BroadcastEvent::ProgressChange {
+                        session_id: sid.clone(),
+                        progress: new_progress,
                     });
                 }
 
@@ -161,12 +173,8 @@ fn find_pane<'a>(
     workspaces: &'a HashMap<String, WorkspaceInstance>,
     target: &str,
 ) -> Option<(&'a WorkspaceInstance, PaneId)> {
-    for inst in workspaces.values() {
-        if let Some(pane_id) = inst.find_pane_by_name(target) {
-            return Some((inst, pane_id));
-        }
-    }
-    None
+    let (workspace_name, pane_id) = resolve_invoke_action_target(workspaces, target)?;
+    workspaces.get(&workspace_name).map(|inst| (inst, pane_id))
 }
 
 fn resolve_pane_for_resize<'a>(
@@ -242,13 +250,7 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
             (start..total)
                 .filter_map(|idx| {
                     screen.scrollback_row(idx).map(|cells| {
-                        cells
-                            .iter()
-                            .filter(|c| !c.wide_continuation)
-                            .map(|c| c.character)
-                            .collect::<String>()
-                            .trim_end()
-                            .to_string()
+                        wtd_pty::cells_to_string(cells).trim_end().to_string()
                     })
                 })
                 .collect()
@@ -280,6 +282,7 @@ fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
         "rows": u16::try_from(screen.rows()).unwrap_or(u16::MAX),
         "onAlternate": screen.on_alternate(),
         "title": if screen.title.is_empty() { Value::Null } else { Value::String(screen.title.clone()) },
+        "progress": progress_info_from_screen(screen.progress()),
         "mouseMode": mouse_mode_name(screen),
         "sgrMouse": screen.sgr_mouse(),
         "bracketedPaste": screen.bracketed_paste(),
@@ -951,6 +954,9 @@ impl HostRequestHandler {
                             rows: metadata["rows"].as_u64().unwrap_or(0) as u16,
                             on_alternate: metadata["onAlternate"].as_bool().unwrap_or(false),
                             title: metadata["title"].as_str().map(str::to_owned),
+                            progress: metadata
+                                .get("progress")
+                                .and_then(|v| serde_json::from_value(v.clone()).ok()),
                             mouse_mode: metadata["mouseMode"].as_str().map(str::to_owned),
                             sgr_mouse: metadata["sgrMouse"].as_bool().unwrap_or(false),
                             bracketed_paste: metadata["bracketedPaste"].as_bool().unwrap_or(false),
@@ -970,6 +976,7 @@ impl HostRequestHandler {
                         rows: 0,
                         on_alternate: false,
                         title: None,
+                        progress: None,
                         mouse_mode: None,
                         sgr_mouse: false,
                         bracketed_paste: false,
@@ -990,6 +997,7 @@ impl HostRequestHandler {
                 rows: 0,
                 on_alternate: false,
                 title: None,
+                progress: None,
                 mouse_mode: None,
                 sgr_mouse: false,
                 bracketed_paste: false,
@@ -1367,18 +1375,25 @@ impl HostRequestHandler {
 
     fn handle_focus_pane(&self, id: &str, focus: &FocusPane) -> Option<Envelope> {
         let mut state = self.state.lock().unwrap();
-        // Try to find the pane by name and set focus
-        for inst in state.workspaces.values_mut() {
-            if let Some(pane_id) = inst.find_pane_by_name(&focus.pane_id) {
-                // Set focus in the tab's layout tree
-                for tab in inst.tabs_mut() {
-                    if tab.layout().panes().contains(&pane_id) {
-                        let _ = tab.layout_mut().set_focus(pane_id);
-                        return Some(Envelope::new(id, &OkResponse {}));
-                    }
+        let Some((workspace_name, pane_id)) =
+            resolve_invoke_action_target(&state.workspaces, &focus.pane_id)
+        else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::TargetNotFound,
+                &format!("pane '{}' not found", focus.pane_id),
+            ));
+        };
+
+        if let Some(inst) = state.workspaces.get_mut(&workspace_name) {
+            for tab in inst.tabs_mut() {
+                if tab.layout().panes().contains(&pane_id) {
+                    let _ = tab.layout_mut().set_focus(pane_id);
+                    return Some(Envelope::new(id, &OkResponse {}));
                 }
             }
         }
+
         Some(error_envelope(
             id,
             ErrorCode::TargetNotFound,
@@ -1388,12 +1403,21 @@ impl HostRequestHandler {
 
     fn handle_rename_pane(&self, id: &str, rename: &RenamePane) -> Option<Envelope> {
         let mut state = self.state.lock().unwrap();
-        for inst in state.workspaces.values_mut() {
-            if let Some(pane_id) = inst.find_pane_by_name(&rename.pane_id) {
-                inst.rename_pane(&pane_id, rename.new_name.clone());
-                return Some(Envelope::new(id, &OkResponse {}));
-            }
+        let Some((workspace_name, pane_id)) =
+            resolve_invoke_action_target(&state.workspaces, &rename.pane_id)
+        else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::TargetNotFound,
+                &format!("pane '{}' not found", rename.pane_id),
+            ));
+        };
+
+        if let Some(inst) = state.workspaces.get_mut(&workspace_name) {
+            inst.rename_pane(&pane_id, rename.new_name.clone());
+            return Some(Envelope::new(id, &OkResponse {}));
         }
+
         Some(error_envelope(
             id,
             ErrorCode::TargetNotFound,

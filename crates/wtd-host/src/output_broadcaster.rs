@@ -11,7 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
-use wtd_ipc::message::{SessionOutput, SessionStateChanged, TitleChanged, WorkspaceStateChanged};
+use wtd_ipc::message::{
+    ProgressChanged, ProgressInfo, ProgressState, SessionOutput, SessionStateChanged,
+    TitleChanged, WorkspaceStateChanged,
+};
 use wtd_ipc::Envelope;
 
 use crate::ipc_server::IpcServer;
@@ -32,6 +35,11 @@ pub enum BroadcastEvent {
     },
     /// Session window title changed via VT escape sequence.
     TitleChange { session_id: String, title: String },
+    /// Session progress changed via OSC 9;4.
+    ProgressChange {
+        session_id: String,
+        progress: Option<ProgressInfo>,
+    },
     /// Workspace instance state transition.
     WorkspaceState {
         workspace: String,
@@ -52,6 +60,7 @@ pub async fn run(
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
     let mut prev_titles: HashMap<String, String> = HashMap::new();
+    let mut prev_progress: HashMap<String, Option<ProgressInfo>> = HashMap::new();
     let event_counter = AtomicU64::new(1);
 
     loop {
@@ -59,7 +68,7 @@ pub async fn run(
             biased;
             _ = shutdown_rx.changed() => break,
             _ = interval.tick() => {
-                let events = handler.drain_session_events(&mut prev_titles);
+                let events = handler.drain_session_events(&mut prev_titles, &mut prev_progress);
                 for event in events {
                     let id = format!(
                         "evt-{}",
@@ -97,6 +106,16 @@ pub async fn run(
                                 title: title.clone(),
                             },
                         ),
+                        BroadcastEvent::ProgressChange {
+                            session_id,
+                            progress,
+                        } => Envelope::new(
+                            &id,
+                            &ProgressChanged {
+                                session_id: session_id.clone(),
+                                progress: progress.clone(),
+                            },
+                        ),
                         BroadcastEvent::WorkspaceState {
                             workspace,
                             new_state,
@@ -113,6 +132,29 @@ pub async fn run(
             }
         }
     }
+}
+
+pub(crate) fn progress_info_from_screen(
+    progress: Option<wtd_pty::TerminalProgress>,
+) -> Option<ProgressInfo> {
+    progress.map(|progress| match progress {
+        wtd_pty::TerminalProgress::Normal(value) => ProgressInfo {
+            state: ProgressState::Normal,
+            value: Some(value),
+        },
+        wtd_pty::TerminalProgress::Error(value) => ProgressInfo {
+            state: ProgressState::Error,
+            value: Some(value),
+        },
+        wtd_pty::TerminalProgress::Indeterminate => ProgressInfo {
+            state: ProgressState::Indeterminate,
+            value: None,
+        },
+        wtd_pty::TerminalProgress::Warning(value) => ProgressInfo {
+            state: ProgressState::Warning,
+            value: Some(value),
+        },
+    })
 }
 
 // ── Base64 encode ────────────────────────────────────────────────────────

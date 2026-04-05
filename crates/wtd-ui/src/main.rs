@@ -12,6 +12,7 @@ use wtd_core::layout::LayoutTree;
 use wtd_core::logging::init_stderr_logging;
 use wtd_core::workspace::PaneNode;
 use wtd_core::LogLevel;
+use wtd_ipc::message::ProgressInfo;
 use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
@@ -131,11 +132,17 @@ fn pane_cell_size_for_rect(rect: &PixelRect, cell_w: f32, cell_h: f32) -> (u16, 
     )
 }
 
+fn pane_host_target<'a>(tab: &'a SnapshotTab, pane_id: &PaneId) -> Option<&'a str> {
+    tab.pane_sessions
+        .get(pane_id)
+        .map(|pane_session| pane_session.pane_path.as_str())
+}
+
 fn send_active_pane_sizes(
     bridge: Option<&HostBridge>,
     connected: bool,
     pane_layout: &PaneLayout,
-    layout_tree: &wtd_core::layout::LayoutTree,
+    tab: &SnapshotTab,
     cell_w: f32,
     cell_h: f32,
 ) {
@@ -146,10 +153,13 @@ fn send_active_pane_sizes(
         return;
     };
 
-    for pane_id in layout_tree.panes() {
+    for pane_id in tab.layout_tree.panes() {
         if let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) {
+            let Some(target) = pane_host_target(tab, &pane_id) else {
+                continue;
+            };
             let (cols, rows) = pane_cell_size_for_rect(&rect, cell_w, cell_h);
-            bridge.send_resize(format!("{}", pane_id.0), cols, rows);
+            bridge.send_resize(target.to_string(), cols, rows);
         }
     }
 }
@@ -203,6 +213,19 @@ fn pane_sessions_match_sizes(tab: &SnapshotTab, sizes: &[(PaneId, u16, u16)]) ->
     true
 }
 
+fn tab_progress(tab: &SnapshotTab) -> Option<ProgressInfo> {
+    let focused = tab.layout_tree.focus();
+    tab.pane_sessions
+        .get(&focused)
+        .and_then(|pane_session| pane_session.progress.clone())
+}
+
+fn sync_tab_progresses(tab_strip: &mut TabStrip, tabs: &[SnapshotTab]) {
+    for (index, tab) in tabs.iter().enumerate() {
+        tab_strip.set_progress(index, tab_progress(tab));
+    }
+}
+
 fn action_name(action: &wtd_core::workspace::ActionReference) -> &str {
     match action {
         wtd_core::workspace::ActionReference::Simple(name) => name.as_str(),
@@ -232,11 +255,14 @@ fn bound_action_name(classifier: &InputClassifier, event: &KeyEvent) -> Option<S
     }
 }
 
-fn send_ui_action(bridge: &HostBridge, layout_tree: &LayoutTree, action_name: &str) {
-    let focused = layout_tree.focus();
+fn send_ui_action(bridge: &HostBridge, tab: &SnapshotTab, action_name: &str) {
+    let focused = tab.layout_tree.focus();
+    let target = pane_host_target(tab, &focused)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("{}", focused.0));
     bridge.send_action(
         action_name.to_string(),
-        Some(format!("{}", focused.0)),
+        Some(target),
         serde_json::Value::Null,
     );
     bridge.refresh_workspace();
@@ -469,7 +495,7 @@ fn dispatch_action(
         _ => {
             if let Some(bridge) = bridge {
                 if connected {
-                    send_ui_action(bridge, &active_tab.layout_tree, name);
+                    send_ui_action(bridge, active_tab, name);
                 }
             }
             false
@@ -649,6 +675,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 tab_strip.add_tab(name);
                             }
                             tab_strip.set_active(active_tab_index);
+                            sync_tab_progresses(&mut tab_strip, &tabs);
                             tab_strip.layout(window_width);
 
                             let mut startup_sizes_match = false;
@@ -680,7 +707,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     Some(bridge),
                                     connected,
                                     &pane_layout,
-                                    &active_tab.layout_tree,
+                                    active_tab,
                                     cell_w,
                                     cell_h,
                                 );
@@ -769,6 +796,23 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
+                    HostEvent::ProgressChanged {
+                        session_id,
+                        progress,
+                    } => {
+                        tracing::debug!(session_id = %session_id, "session progress changed");
+                        if let Some((tab_index, pane_id)) = find_pane_for_session(&tabs, &session_id)
+                        {
+                            if let Some(tab) = tabs.get_mut(tab_index) {
+                                if let Some(pane_session) = tab.pane_sessions.get_mut(&pane_id) {
+                                    pane_session.progress = progress;
+                                }
+                            }
+                            sync_tab_progresses(&mut tab_strip, &tabs);
+                        }
+                        force_immediate_paint = true;
+                        needs_paint = true;
+                    }
                     HostEvent::LayoutChanged { tab, layout, .. } => {
                         if tabs.is_empty() {
                             continue;
@@ -822,7 +866,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     Some(bridge),
                                     connected,
                                     &pane_layout,
-                                    &active_tab.layout_tree,
+                                    active_tab,
                                     cell_w,
                                     cell_h,
                                 );
@@ -835,6 +879,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 }
                             }
                         }
+
+                        sync_tab_progresses(&mut tab_strip, &tabs);
 
                         if connected {
                             bridge.refresh_workspace();
@@ -914,7 +960,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     bridge.as_ref(),
                     connected,
                     &pane_layout,
-                    &tabs[active_tab_index].layout_tree,
+                    &tabs[active_tab_index],
                     cell_w,
                     cell_h,
                 );
@@ -1110,6 +1156,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 status_bar.set_pane_path(format!("{}", pane_id.0));
                             }
                         }
+                        sync_tab_progresses(&mut tab_strip, &tabs);
                     }
                     MouseOutput::SelectionChanged(_pane_id, _selection) => {
                         // Selection state is tracked inside MouseHandler.
@@ -1143,7 +1190,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 bridge.as_ref(),
                                 connected,
                                 &pane_layout,
-                                &active_tab.layout_tree,
+                                active_tab,
                                 cell_w,
                                 cell_h,
                             );
@@ -1153,6 +1200,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
                             let _ = active_tab.layout_tree.set_focus(pane_id);
                         }
+                        sync_tab_progresses(&mut tab_strip, &tabs);
                     }
                     MouseOutput::SendToSession(pane_id, bytes) => {
                         if let Some(ref bridge) = bridge {
@@ -1351,6 +1399,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         }
 
         if window_shown && paint_scheduler.should_paint_now(Instant::now()) {
+            sync_tab_progresses(&mut tab_strip, &tabs);
             let active_tab = if tabs.is_empty() {
                 continue;
             } else {

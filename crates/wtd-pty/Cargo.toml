@@ -11,6 +11,9 @@ tokio = { workspace = true }
 wtd-core = { workspace = true }
 vte = { workspace = true }
 regex = { workspace = true }
+unicode-display-width = "0.3"
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
