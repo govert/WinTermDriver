@@ -22,6 +22,7 @@ $probeLogPath = Join-Path $outputRoot "probe.log"
 $summaryPath = Join-Path $outputRoot "summary.txt"
 $wtdExe = Join-Path $repoRoot "target\debug\wtd.exe"
 $wtdUiExe = Join-Path $repoRoot "target\debug\wtd-ui.exe"
+$probeExe = Join-Path $repoRoot "target\release\examples\crossterm_probe.exe"
 $script:CaptureSummaries = New-Object 'System.Collections.Generic.List[string]'
 
 function Require-Path {
@@ -131,6 +132,8 @@ if (-not $NoBuild) {
     cargo build -p wtd-ui --example crossterm_probe --release
 }
 
+Require-Path $probeExe "crossterm_probe.exe"
+
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $workspaceFile) | Out-Null
 New-Item -ItemType Directory -Force -Path $capturesRoot | Out-Null
 
@@ -144,16 +147,9 @@ $yamlLines = @(
     "profiles:",
     "  probe:",
     "    type: custom",
-    "    executable: 'cargo'",
+    "    executable: '$probeExe'",
     "    cwd: '$repoRoot'",
     "    args:",
-    "      - run",
-    "      - -p",
-    "      - wtd-ui",
-    "      - --example",
-    "      - crossterm_probe",
-    "      - --release",
-    "      - --",
     "      - --tick-ms",
     "      - '$TickMs'",
     "      - --log",
