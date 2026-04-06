@@ -132,6 +132,16 @@ fn pane_cell_size_for_rect(rect: &PixelRect, cell_w: f32, cell_h: f32) -> (u16, 
     )
 }
 
+fn pane_cell_size_for_viewport(
+    rect: &PixelRect,
+    cell_w: f32,
+    cell_h: f32,
+    insets: PaneViewportInsets,
+) -> (u16, u16) {
+    let content_rect = pane_content_rect(*rect, cell_w, cell_h, insets);
+    pane_cell_size_for_rect(&content_rect, cell_w, cell_h)
+}
+
 fn pane_host_target<'a>(tab: &'a SnapshotTab, pane_id: &PaneId) -> Option<&'a str> {
     tab.pane_sessions
         .get(pane_id)
@@ -145,6 +155,7 @@ fn send_active_pane_sizes(
     tab: &SnapshotTab,
     cell_w: f32,
     cell_h: f32,
+    pane_viewport_insets: PaneViewportInsets,
 ) {
     if !connected {
         return;
@@ -158,7 +169,8 @@ fn send_active_pane_sizes(
             let Some(target) = pane_host_target(tab, &pane_id) else {
                 continue;
             };
-            let (cols, rows) = pane_cell_size_for_rect(&rect, cell_w, cell_h);
+            let (cols, rows) =
+                pane_cell_size_for_viewport(&rect, cell_w, cell_h, pane_viewport_insets);
             bridge.send_resize(target.to_string(), cols, rows);
         }
     }
@@ -169,6 +181,7 @@ fn pane_sizes_for_layout(
     layout_tree: &LayoutTree,
     cell_w: f32,
     cell_h: f32,
+    pane_viewport_insets: PaneViewportInsets,
 ) -> Vec<(PaneId, u16, u16)> {
     let mut sizes = Vec::new();
     for pane_id in layout_tree.panes() {
@@ -176,7 +189,8 @@ fn pane_sizes_for_layout(
             continue;
         };
 
-        let (cols, rows) = pane_cell_size_for_rect(&rect, cell_w, cell_h);
+        let (cols, rows) =
+            pane_cell_size_for_viewport(&rect, cell_w, cell_h, pane_viewport_insets);
         sizes.push((pane_id, cols, rows));
     }
     sizes
@@ -617,6 +631,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut awaiting_startup_frame = bridge.is_some();
     let mut startup_refresh_pending = bridge.is_some();
     let mut paint_scheduler = PaintScheduler::new();
+    let mut startup_present_deadline = None;
     let mut delayed_show_deadline = bridge
         .as_ref()
         .map(|_| Instant::now() + Duration::from_millis(400));
@@ -656,7 +671,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     HostEvent::Connected { state } => {
                         connected = true;
                         tracing::info!("attached to workspace");
-                        delayed_show_deadline = Some(Instant::now() + Duration::from_millis(250));
+                        delayed_show_deadline = Some(Instant::now() + Duration::from_millis(120));
+                        startup_present_deadline = None;
                         if let Some(SnapshotRebuild {
                             workspace_name,
                             tab_names,
@@ -667,7 +683,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             active_tab_index =
                                 rebuilt_active.min(rebuilt_tabs.len().saturating_sub(1));
                             tabs = rebuilt_tabs;
-                            status_bar.set_workspace_name(workspace_name);
+                            status_bar.set_workspace_name(workspace_name.clone());
                             status_bar.set_session_status(SessionStatus::Running);
 
                             tab_strip = TabStrip::new(renderer.dw_factory())?;
@@ -677,6 +693,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             tab_strip.set_active(active_tab_index);
                             sync_tab_progresses(&mut tab_strip, &tabs);
                             tab_strip.layout(window_width);
+                            let win_title = tab_strip.window_title(&workspace_name);
+                            window::set_window_title(hwnd, &win_title);
 
                             let mut startup_sizes_match = false;
                             if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
@@ -698,6 +716,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &active_tab.layout_tree,
                                     cell_w,
                                     cell_h,
+                                    pane_viewport_insets,
                                 );
                                 startup_sizes_match =
                                     pane_sessions_match_sizes(active_tab, &pane_sizes);
@@ -710,12 +729,14 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     active_tab,
                                     cell_w,
                                     cell_h,
+                                    pane_viewport_insets,
                                 );
                             }
                             if awaiting_startup_frame {
                                 if startup_sizes_match {
                                     awaiting_startup_frame = false;
                                     startup_refresh_pending = false;
+                                    startup_present_deadline = None;
                                 } else if startup_refresh_pending {
                                     bridge.refresh_workspace();
                                     startup_refresh_pending = false;
@@ -859,6 +880,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &active_tab.layout_tree,
                                     cell_w,
                                     cell_h,
+                                    pane_viewport_insets,
                                 );
                                 sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
                                 refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
@@ -869,6 +891,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     active_tab,
                                     cell_w,
                                     cell_h,
+                                    pane_viewport_insets,
                                 );
 
                                 let focused = active_tab.layout_tree.focus();
@@ -953,6 +976,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         &active_tab.layout_tree,
                         cell_w,
                         cell_h,
+                        pane_viewport_insets,
                     );
                     sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
                 }
@@ -963,6 +987,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     &tabs[active_tab_index],
                     cell_w,
                     cell_h,
+                    pane_viewport_insets,
                 );
                 if awaiting_startup_frame {
                     startup_refresh_pending = true;
@@ -1193,6 +1218,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 active_tab,
                                 cell_w,
                                 cell_h,
+                                pane_viewport_insets,
                             );
                         }
                     }
@@ -1324,6 +1350,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             &active_tab.layout_tree,
                                             cell_w,
                                             cell_h,
+                                            pane_viewport_insets,
                                         );
                                         let focused = active_tab.layout_tree.focus();
                                         let pane_path = active_tab
@@ -1392,13 +1419,81 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 || delayed_show_deadline.is_some_and(|deadline| Instant::now() >= deadline);
             if should_show {
                 window::show_terminal_window(hwnd);
-                window::request_repaint(hwnd);
+                if awaiting_startup_frame {
+                    startup_present_deadline =
+                        Some(Instant::now() + Duration::from_millis(700));
+                } else {
+                    startup_present_deadline = None;
+                }
+                if let Some((w, h)) = window::client_size(hwnd) {
+                    if w > 0 && h > 0 {
+                        let _ = renderer.resize(w, h);
+                        window_width = w as f32;
+                        window_height = h as f32;
+                        tab_strip.layout(window_width);
+                        status_bar.layout(window_width);
+
+                        let (content_cols, content_rows) = content_dims(
+                            window_width,
+                            window_height,
+                            &tab_strip,
+                            &status_bar,
+                            cell_w,
+                            cell_h,
+                        );
+                        pane_layout.update(
+                            &tabs[active_tab_index].layout_tree,
+                            0.0,
+                            tab_strip.height(),
+                            content_cols,
+                            content_rows,
+                        );
+                        if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
+                            let pane_sizes = pane_sizes_for_layout(
+                                &pane_layout,
+                                &active_tab.layout_tree,
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                            );
+                            sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
+                            refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
+                        }
+                        send_active_pane_sizes(
+                            bridge.as_ref(),
+                            connected,
+                            &pane_layout,
+                            &tabs[active_tab_index],
+                            cell_w,
+                            cell_h,
+                            pane_viewport_insets,
+                        );
+                        if awaiting_startup_frame {
+                            startup_refresh_pending = true;
+                            if let Some(ref bridge) = bridge {
+                                if connected {
+                                    bridge.refresh_workspace();
+                                    startup_refresh_pending = false;
+                                }
+                            }
+                        } else {
+                            startup_present_deadline = None;
+                        }
+                    }
+                }
                 window_shown = true;
                 paint_scheduler.request_immediate();
             }
         }
 
-        if window_shown && paint_scheduler.should_paint_now(Instant::now()) {
+        let startup_paint_ready = !awaiting_startup_frame
+            || startup_present_deadline
+                .is_some_and(|deadline| Instant::now() >= deadline);
+        if startup_paint_ready {
+            startup_present_deadline = None;
+        }
+
+        if window_shown && startup_paint_ready && paint_scheduler.should_paint_now(Instant::now()) {
             sync_tab_progresses(&mut tab_strip, &tabs);
             let active_tab = if tabs.is_empty() {
                 continue;
