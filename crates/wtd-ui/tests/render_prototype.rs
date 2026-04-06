@@ -4,7 +4,7 @@
 //! -> DirectWrite -> window) works end-to-end without crashing, and that color
 //! mapping and attribute resolution are correct.
 
-use wtd_pty::{Cell, CellAttrs, Color, ScreenBuffer};
+use wtd_pty::{Cell, CellAttrs, Color, CompactText, ScreenBuffer};
 use wtd_ui::renderer::{
     color_to_rgb, exited_pane_message, failed_pane_message, resolve_cell_colors, RendererConfig,
     TerminalRenderer, TextSelection, RESTART_HINT,
@@ -151,13 +151,10 @@ fn inverse_swaps_fg_and_bg() {
     let mut attrs = CellAttrs::default();
     attrs.set(CellAttrs::INVERSE);
     let cell = Cell {
-        character: 'X',
-        text: "X".to_string(),
+        text: CompactText::new("X"),
         fg: Color::Rgb(100, 200, 50),
         bg: Color::Rgb(10, 20, 30),
         attrs,
-        wide: false,
-        wide_continuation: false,
     };
     let (fg, bg) = resolve_cell_colors(&cell);
     assert_eq!(fg, (10, 20, 30), "Inverse should swap: fg becomes old bg");
@@ -169,13 +166,10 @@ fn dim_halves_foreground() {
     let mut attrs = CellAttrs::default();
     attrs.set(CellAttrs::DIM);
     let cell = Cell {
-        character: 'D',
-        text: "D".to_string(),
+        text: CompactText::new("D"),
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Default,
         attrs,
-        wide: false,
-        wide_continuation: false,
     };
     let (fg, _) = resolve_cell_colors(&cell);
     assert_eq!(fg, (100, 50, 25), "Dim should halve each fg component");
@@ -187,13 +181,10 @@ fn dim_plus_inverse() {
     attrs.set(CellAttrs::DIM);
     attrs.set(CellAttrs::INVERSE);
     let cell = Cell {
-        character: 'X',
-        text: "X".to_string(),
+        text: CompactText::new("X"),
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Rgb(80, 40, 20),
         attrs,
-        wide: false,
-        wide_continuation: false,
     };
     let (fg, bg) = resolve_cell_colors(&cell);
     // Inverse first: fg=(80,40,20), bg=(200,100,50)
@@ -210,11 +201,11 @@ fn screen_buffer_parses_colored_text() {
     screen.advance(b"\x1b[31mHello\x1b[0m World");
 
     let cell_h = screen.cell(0, 0).unwrap();
-    assert_eq!(cell_h.character, 'H');
+    assert_eq!(cell_h.first_char(), 'H');
     assert_eq!(cell_h.fg, Color::Ansi(1));
 
     let cell_w = screen.cell(0, 6).unwrap();
-    assert_eq!(cell_w.character, 'W');
+    assert_eq!(cell_w.first_char(), 'W');
     assert_eq!(cell_w.fg, Color::Default);
 }
 

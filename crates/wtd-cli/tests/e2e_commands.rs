@@ -162,8 +162,8 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
                     screen.scrollback_row(idx).map(|cells| {
                         cells
                             .iter()
-                            .filter(|c| !c.wide_continuation)
-                            .map(|c| c.character)
+                            .filter(|c| !c.attrs.is_wide_continuation())
+                            .map(|c| c.first_char())
                             .collect::<String>()
                             .trim_end()
                             .to_string()

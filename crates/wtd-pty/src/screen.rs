@@ -43,6 +43,11 @@ impl CellAttrs {
     pub const INVERSE: u16 = 1 << 5;
     pub const HIDDEN: u16 = 1 << 6;
     pub const STRIKETHROUGH: u16 = 1 << 7;
+    pub const WIDE: u16 = 1 << 8;
+    pub const WIDE_CONTINUATION: u16 = 1 << 9;
+
+    /// Mask covering only the SGR attribute bits (0–7), excluding wide flags.
+    const SGR_MASK: u16 = 0xFF;
 
     pub fn is_set(self, flag: u16) -> bool {
         self.0 & flag != 0
@@ -53,40 +58,159 @@ impl CellAttrs {
     pub fn clear(&mut self, flag: u16) {
         self.0 &= !flag;
     }
+
+    pub fn is_wide(self) -> bool {
+        self.0 & Self::WIDE != 0
+    }
+    pub fn is_wide_continuation(self) -> bool {
+        self.0 & Self::WIDE_CONTINUATION != 0
+    }
+    pub fn set_wide(&mut self) {
+        self.0 |= Self::WIDE;
+    }
+    pub fn set_wide_continuation(&mut self) {
+        self.0 |= Self::WIDE_CONTINUATION;
+    }
+    pub fn clear_wide(&mut self) {
+        self.0 &= !Self::WIDE;
+    }
+    pub fn clear_wide_continuation(&mut self) {
+        self.0 &= !Self::WIDE_CONTINUATION;
+    }
+
+    /// Compare only the SGR attribute bits, ignoring wide-char flags.
+    /// Used for style-run detection in snapshots and rendering.
+    pub fn sgr_eq(self, other: Self) -> bool {
+        (self.0 & Self::SGR_MASK) == (other.0 & Self::SGR_MASK)
+    }
+}
+
+// ── CompactText ─────────────────────────────────────────────────────────────
+
+/// Inline small-string for terminal cell text (8 bytes, `Copy`).
+///
+/// Stores up to 7 bytes of UTF-8 inline.  Byte 0 is the length; bytes 1–7
+/// hold the UTF-8 payload.  For the rare grapheme cluster exceeding 7 bytes
+/// (complex ZWJ emoji), only the first codepoint is stored.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct CompactText {
+    data: [u8; 8],
+}
+
+impl CompactText {
+    /// Maximum number of inline UTF-8 bytes.
+    const MAX_INLINE: usize = 7;
+
+    /// Create a CompactText from a string slice.
+    pub fn new(s: &str) -> Self {
+        let mut data = [0u8; 8];
+        if s.len() <= Self::MAX_INLINE {
+            data[0] = s.len() as u8;
+            data[1..1 + s.len()].copy_from_slice(s.as_bytes());
+        } else {
+            // Fallback: store first codepoint only.
+            if let Some(ch) = s.chars().next() {
+                let mut buf = [0u8; 4];
+                let encoded = ch.encode_utf8(&mut buf);
+                data[0] = encoded.len() as u8;
+                data[1..1 + encoded.len()].copy_from_slice(encoded.as_bytes());
+            }
+            // else: empty string (len stays 0)
+        }
+        CompactText { data }
+    }
+
+    /// A space character, the default cell content.
+    #[inline]
+    pub const fn space() -> Self {
+        CompactText {
+            data: [1, b' ', 0, 0, 0, 0, 0, 0],
+        }
+    }
+
+    /// Return the stored text as a `&str`.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        let len = self.data[0] as usize;
+        // SAFETY: We only store valid UTF-8 via `new()` or `space()`.
+        unsafe { std::str::from_utf8_unchecked(&self.data[1..1 + len]) }
+    }
+
+    /// The number of stored bytes.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.data[0] as usize
+    }
+
+    /// Whether the stored text is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.data[0] == 0
+    }
+}
+
+impl PartialEq<&str> for CompactText {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl Default for CompactText {
+    fn default() -> Self {
+        Self::space()
+    }
+}
+
+impl std::fmt::Debug for CompactText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.as_str())
+    }
+}
+
+impl std::fmt::Display for CompactText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 // ── Cell ─────────────────────────────────────────────────────────────────────
 
 /// A single terminal cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// 18 bytes (+ padding): `CompactText`(8) + `Color`(4) × 2 + `CellAttrs`(2).
+/// Wide-character flags are packed into `attrs`.  This struct is `Copy`,
+/// enabling bulk `memcpy` for scroll and clear operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
-    /// Displayed character; `' '` for empty cells.
-    pub character: char,
-    /// Full grapheme rendered in this lead cell.
-    pub text: String,
+    /// Full grapheme rendered in this cell (inline small-string).
+    pub text: CompactText,
     /// Foreground color.
     pub fg: Color,
     /// Background color.
     pub bg: Color,
-    /// Visual attributes.
+    /// Visual attributes (includes wide-character flags).
     pub attrs: CellAttrs,
-    /// True if this is the left half of a wide (CJK) character.
-    pub wide: bool,
-    /// True if this is the right-half placeholder of a wide character.
-    pub wide_continuation: bool,
 }
 
+// Cell is derived Copy — if the derive fails, the struct has a non-Copy field.
+
 impl Cell {
-    fn blank() -> Self {
+    /// A blank (space) cell with default colors and no attributes.
+    pub fn blank() -> Self {
         Cell {
-            character: ' ',
-            text: " ".to_string(),
+            text: CompactText::space(),
             fg: Color::Default,
             bg: Color::Default,
             attrs: CellAttrs::default(),
-            wide: false,
-            wide_continuation: false,
         }
+    }
+
+    /// The first Unicode codepoint of this cell's text.
+    ///
+    /// Convenience accessor for tests and diagnostics; equivalent to
+    /// `self.text.as_str().chars().next().unwrap_or(' ')`.
+    pub fn first_char(&self) -> char {
+        self.text.as_str().chars().next().unwrap_or(' ')
     }
 }
 
@@ -195,78 +319,58 @@ impl Grid {
             return;
         }
         let n = n.min(bottom + 1 - top);
-        // Rows [top..top+n] leave; rows [top+n..=bottom] shift up; blank fills at bottom.
-        for _ in 0..n {
-            for r in top..bottom {
-                for c in 0..self.cols {
-                    let src = (r + 1) * self.cols + c;
-                    let dst = r * self.cols + c;
-                    self.cells[dst] = self.cells[src].clone();
-                }
-            }
-            for c in 0..self.cols {
-                self.cells[bottom * self.cols + c] = Cell::blank();
-            }
-        }
+        let cols = self.cols;
+        // Shift rows [top+n..=bottom] up to [top..=bottom-n], blank the vacated rows.
+        let src_start = (top + n) * cols;
+        let src_end = (bottom + 1) * cols;
+        let dst_start = top * cols;
+        self.cells.copy_within(src_start..src_end, dst_start);
+        let blank_start = (bottom + 1 - n) * cols;
+        self.cells[blank_start..(bottom + 1) * cols].fill(Cell::blank());
     }
 
     /// Scroll the region [top, bottom] (inclusive, 0-based rows) down by n.
     fn scroll_region_down(&mut self, top: usize, bottom: usize, n: usize) {
         let n = n.min(bottom + 1 - top);
-        for _ in 0..n {
-            for r in (top..bottom).rev() {
-                for c in 0..self.cols {
-                    let src = r * self.cols + c;
-                    let dst = (r + 1) * self.cols + c;
-                    self.cells[dst] = self.cells[src].clone();
-                }
-            }
-            for c in 0..self.cols {
-                self.cells[top * self.cols + c] = Cell::blank();
-            }
-        }
+        let cols = self.cols;
+        // Shift rows [top..=bottom-n] down to [top+n..=bottom], blank the vacated rows.
+        let src_start = top * cols;
+        let src_end = (bottom + 1 - n) * cols;
+        let dst_start = (top + n) * cols;
+        self.cells.copy_within(src_start..src_end, dst_start);
+        self.cells[src_start..(top + n) * cols].fill(Cell::blank());
     }
 
     /// Clear from (row, col) to end of screen.
     fn clear_from(&mut self, row: usize, col: usize) {
         let start = row * self.cols + col;
-        for cell in &mut self.cells[start..] {
-            *cell = Cell::blank();
-        }
+        self.cells[start..].fill(Cell::blank());
     }
 
     /// Clear from start of screen to (row, col) inclusive.
     fn clear_to(&mut self, row: usize, col: usize) {
         let end = row * self.cols + col + 1;
-        for cell in &mut self.cells[..end] {
-            *cell = Cell::blank();
-        }
+        self.cells[..end].fill(Cell::blank());
     }
 
     /// Clear an entire row.
     fn clear_row(&mut self, row: usize) {
         let start = row * self.cols;
-        for cell in &mut self.cells[start..start + self.cols] {
-            *cell = Cell::blank();
-        }
+        self.cells[start..start + self.cols].fill(Cell::blank());
     }
 
     /// Clear from column to end of row.
     fn clear_row_from(&mut self, row: usize, col: usize) {
         let start = row * self.cols + col;
         let end = (row + 1) * self.cols;
-        for cell in &mut self.cells[start..end] {
-            *cell = Cell::blank();
-        }
+        self.cells[start..end].fill(Cell::blank());
     }
 
     /// Clear from start of row to column (inclusive).
     fn clear_row_to(&mut self, row: usize, col: usize) {
         let start = row * self.cols;
         let end = row * self.cols + col + 1;
-        for cell in &mut self.cells[start..end] {
-            *cell = Cell::blank();
-        }
+        self.cells[start..end].fill(Cell::blank());
     }
 
     fn row_slice(&self, row: usize) -> &[Cell] {
@@ -279,9 +383,10 @@ impl Grid {
         let copy_rows = self.rows.min(new_rows);
         let copy_cols = self.cols.min(new_cols);
         for r in 0..copy_rows {
-            for c in 0..copy_cols {
-                new_cells[r * new_cols + c] = self.cells[r * self.cols + c].clone();
-            }
+            let src_start = r * self.cols;
+            let dst_start = r * new_cols;
+            new_cells[dst_start..dst_start + copy_cols]
+                .copy_from_slice(&self.cells[src_start..src_start + copy_cols]);
         }
         self.cols = new_cols;
         self.rows = new_rows;
@@ -295,70 +400,53 @@ impl Grid {
 ///
 /// Always starts with `\x1b[0m` (reset) to avoid leaking attributes across runs.
 fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
-    let mut params: Vec<&'static str> = vec!["0"]; // reset
+    use std::io::Write;
+    // Pre-allocate for a typical SGR sequence (e.g. "\x1b[0;1;38;2;r;g;bm").
+    let mut out = Vec::with_capacity(32);
+    out.extend_from_slice(b"\x1b[0");
 
-    if attrs.is_set(CellAttrs::BOLD) {
-        params.push("1");
-    }
-    if attrs.is_set(CellAttrs::DIM) {
-        params.push("2");
-    }
-    if attrs.is_set(CellAttrs::ITALIC) {
-        params.push("3");
-    }
-    if attrs.is_set(CellAttrs::UNDERLINE) {
-        params.push("4");
-    }
-    if attrs.is_set(CellAttrs::BLINK) {
-        params.push("5");
-    }
-    if attrs.is_set(CellAttrs::INVERSE) {
-        params.push("7");
-    }
-    if attrs.is_set(CellAttrs::HIDDEN) {
-        params.push("8");
-    }
-    if attrs.is_set(CellAttrs::STRIKETHROUGH) {
-        params.push("9");
-    }
-
-    // Build dynamic param strings for colors (cannot be &'static str).
-    let mut dynamic: Vec<String> = Vec::new();
+    if attrs.is_set(CellAttrs::BOLD) { out.extend_from_slice(b";1"); }
+    if attrs.is_set(CellAttrs::DIM) { out.extend_from_slice(b";2"); }
+    if attrs.is_set(CellAttrs::ITALIC) { out.extend_from_slice(b";3"); }
+    if attrs.is_set(CellAttrs::UNDERLINE) { out.extend_from_slice(b";4"); }
+    if attrs.is_set(CellAttrs::BLINK) { out.extend_from_slice(b";5"); }
+    if attrs.is_set(CellAttrs::INVERSE) { out.extend_from_slice(b";7"); }
+    if attrs.is_set(CellAttrs::HIDDEN) { out.extend_from_slice(b";8"); }
+    if attrs.is_set(CellAttrs::STRIKETHROUGH) { out.extend_from_slice(b";9"); }
 
     match fg {
         Color::Default => {}
-        Color::Ansi(n) => dynamic.push(format!("3{}", n)),
-        Color::AnsiBright(n) => dynamic.push(format!("9{}", n)),
-        Color::Indexed(n) => dynamic.push(format!("38;5;{}", n)),
-        Color::Rgb(r, g, b) => dynamic.push(format!("38;2;{};{};{}", r, g, b)),
+        Color::Ansi(n) => { let _ = write!(out, ";3{}", n); }
+        Color::AnsiBright(n) => { let _ = write!(out, ";9{}", n); }
+        Color::Indexed(n) => { let _ = write!(out, ";38;5;{}", n); }
+        Color::Rgb(r, g, b) => { let _ = write!(out, ";38;2;{};{};{}", r, g, b); }
     }
-
     match bg {
         Color::Default => {}
-        Color::Ansi(n) => dynamic.push(format!("4{}", n)),
-        Color::AnsiBright(n) => dynamic.push(format!("10{}", n)),
-        Color::Indexed(n) => dynamic.push(format!("48;5;{}", n)),
-        Color::Rgb(r, g, b) => dynamic.push(format!("48;2;{};{};{}", r, g, b)),
+        Color::Ansi(n) => { let _ = write!(out, ";4{}", n); }
+        Color::AnsiBright(n) => { let _ = write!(out, ";10{}", n); }
+        Color::Indexed(n) => { let _ = write!(out, ";48;5;{}", n); }
+        Color::Rgb(r, g, b) => { let _ = write!(out, ";48;2;{};{};{}", r, g, b); }
     }
 
-    let all_params: Vec<&str> = params
-        .iter()
-        .copied()
-        .chain(dynamic.iter().map(|s| s.as_str()))
-        .collect();
-
-    format!("\x1b[{}m", all_params.join(";")).into_bytes()
+    out.push(b'm');
+    out
 }
 
 /// Extract plain text from a cell slice, skipping wide-char continuation cells.
 pub fn cells_to_string(cells: &[Cell]) -> String {
     let mut s = String::with_capacity(cells.len());
+    cells_to_string_buf(cells, &mut s);
+    s
+}
+
+/// Append plain text from a cell slice into `buf`, skipping wide-char continuation.
+fn cells_to_string_buf(cells: &[Cell], buf: &mut String) {
     for cell in cells {
-        if !cell.wide_continuation {
-            s.push_str(&cell.text);
+        if !cell.attrs.is_wide_continuation() {
+            buf.push_str(cell.text.as_str());
         }
     }
-    s
 }
 
 /// Compute the default capture start line based on `lines`/`all` flags.
@@ -567,8 +655,8 @@ impl ScreenBuffer {
         for r in 0..self.rows {
             for c in 0..self.cols {
                 let cell = g.cell(r, c);
-                if !cell.wide_continuation {
-                    out.push_str(&cell.text);
+                if !cell.attrs.is_wide_continuation() {
+                    out.push_str(cell.text.as_str());
                 }
             }
             out.push('\n');
@@ -585,8 +673,8 @@ impl ScreenBuffer {
         let mut s = String::with_capacity(self.cols);
         for c in 0..self.cols {
             let cell = g.cell(row, c);
-            if !cell.wide_continuation {
-                s.push_str(&cell.text);
+            if !cell.attrs.is_wide_continuation() {
+                s.push_str(cell.text.as_str());
             }
         }
         Some(s)
@@ -638,17 +726,19 @@ impl ScreenBuffer {
         // ── Anchor search (newest-first) ──────────────────────────────────
         let anchor_start: Option<usize> = if after.is_some() || after_regex.is_some() {
             let mut found_at: Option<usize> = None;
+            let mut line_buf = String::with_capacity(self.cols);
             for i in (0..total).rev() {
-                let line_text = if i < sb_len {
-                    cells_to_string(&self.scrollback[i])
+                line_buf.clear();
+                if i < sb_len {
+                    cells_to_string_buf(&self.scrollback[i], &mut line_buf);
                 } else {
-                    cells_to_string(active_grid.row_slice(i - sb_len))
-                };
+                    cells_to_string_buf(active_grid.row_slice(i - sb_len), &mut line_buf);
+                }
 
                 let matched = if let Some(pattern) = after {
-                    line_text.contains(pattern)
+                    line_buf.contains(pattern)
                 } else if let Some(re) = after_regex {
-                    re.is_match(&line_text)
+                    re.is_match(&line_buf)
                 } else {
                     false
                 };
@@ -763,7 +853,7 @@ impl ScreenBuffer {
 
                 // Skip wide-char continuation cells (the character was already
                 // emitted with the left-half cell).
-                if cell.wide_continuation {
+                if cell.attrs.is_wide_continuation() {
                     col += 1;
                     continue;
                 }
@@ -779,8 +869,8 @@ impl ScreenBuffer {
                     let nc = g.cell(row, run_end);
                     if nc.fg == run_fg
                         && nc.bg == run_bg
-                        && nc.attrs == run_attrs
-                        && !nc.wide_continuation
+                        && nc.attrs.sgr_eq(run_attrs)
+                        && !nc.attrs.is_wide_continuation()
                     {
                         run_end += 1;
                     } else {
@@ -795,10 +885,10 @@ impl ScreenBuffer {
                 // Emit each character in the run.
                 for c in run_start..run_end {
                     let rc = g.cell(row, c);
-                    if rc.wide_continuation {
+                    if rc.attrs.is_wide_continuation() {
                         continue;
                     }
-                    out.extend_from_slice(rc.text.as_bytes());
+                    out.extend_from_slice(rc.text.as_str().as_bytes());
                 }
 
                 col = run_end;
@@ -926,13 +1016,16 @@ impl ScreenBuffer {
         {
             let grid = self.active_grid_mut();
             let cell = grid.cell_mut(row, col);
-            cell.character = grapheme.chars().next().unwrap_or(' ');
-            cell.text = grapheme.to_string();
+            cell.text = CompactText::new(grapheme);
             cell.fg = fg;
             cell.bg = bg;
             cell.attrs = attrs;
-            cell.wide = is_wide;
-            cell.wide_continuation = false;
+            if is_wide {
+                cell.attrs.set_wide();
+            } else {
+                cell.attrs.clear_wide();
+            }
+            cell.attrs.clear_wide_continuation();
         }
 
         if is_wide {
@@ -941,7 +1034,7 @@ impl ScreenBuffer {
                 let grid = self.active_grid_mut();
                 let cont = grid.cell_mut(row, col + 1);
                 *cont = Cell::blank();
-                cont.wide_continuation = true;
+                cont.attrs.set_wide_continuation();
             }
             self.cursor.col += 2;
         } else {
@@ -954,44 +1047,41 @@ impl ScreenBuffer {
             return;
         }
 
-        let graphemes: Vec<&str> = self.pending_print.graphemes(true).collect();
+        // Take ownership to avoid double-borrowing self.
+        let taken = std::mem::take(&mut self.pending_print);
+        let graphemes: Vec<&str> = taken.graphemes(true).collect();
         if graphemes.is_empty() {
-            self.pending_print.clear();
             return;
         }
 
         let retain = if final_flush { 0 } else { 1 };
         if graphemes.len() <= retain {
+            // Nothing to flush; put it back.
+            self.pending_print = taken;
             return;
         }
 
         let flush_count = graphemes.len() - retain;
-        let flush_bytes = graphemes.iter().take(flush_count).map(|g| g.len()).sum();
-        let flushed = self.pending_print[..flush_bytes].to_string();
-        let remainder = self.pending_print[flush_bytes..].to_string();
-        for grapheme in flushed.graphemes(true) {
-            self.print_grapheme(grapheme);
+        for &g in &graphemes[..flush_count] {
+            self.print_grapheme(g);
         }
-        self.pending_print = remainder;
+
+        // Only allocate the remainder if we retained a trailing grapheme.
+        if retain > 0 {
+            self.pending_print = graphemes[flush_count..].concat();
+        }
+        // else: pending_print stays empty (from mem::take)
     }
 
     /// Apply SGR (Select Graphic Rendition) parameters.
     fn apply_sgr(&mut self, params: &Params) {
-        let iter = params.iter();
-        // Flatten sub-params: collect top-level params and their sub-params.
-        // We build a flat Vec<Vec<u16>> where each inner vec is a param+subparams.
-        let mut flat: Vec<Vec<u16>> = Vec::new();
-        for p in params.iter() {
-            let sub: Vec<u16> = p.iter().copied().collect();
-            flat.push(sub);
-        }
+        // Borrow sub-param slices directly from Params instead of copying.
+        let flat: Vec<&[u16]> = params.iter().collect();
         // If params is empty, reset.
         if flat.is_empty() {
             self.reset_sgr();
             return;
         }
-
-        let _ = iter;
 
         let mut i = 0;
         while i < flat.len() {
@@ -1194,11 +1284,24 @@ fn grapheme_width(grapheme: &str) -> usize {
     }
 
     if grapheme.contains('\u{FE0F}') {
-        let stripped: String = grapheme.chars().filter(|&c| c != '\u{FE0F}').collect();
-        if stripped.is_empty() {
+        // Build a stack buffer with FE0F stripped, avoiding a heap allocation.
+        let mut buf = [0u8; 32];
+        let mut len = 0usize;
+        for ch in grapheme.chars() {
+            if ch == '\u{FE0F}' {
+                continue;
+            }
+            let encoded = ch.encode_utf8(&mut buf[len..]);
+            len += encoded.len();
+            if len >= buf.len() {
+                break;
+            }
+        }
+        if len == 0 {
             return 0;
         }
-        return unicode_display_width(&stripped) as usize;
+        let stripped = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+        return unicode_display_width(stripped) as usize;
     }
 
     unicode_display_width(grapheme) as usize
@@ -1389,14 +1492,12 @@ impl Perform for ScreenBuffer {
                 let col = self.cursor.col;
                 let end = self.cols;
                 let g = self.active_grid_mut();
-                for c in col..end {
-                    if c + n < end {
-                        let src = row * g.cols + c + n;
-                        g.cells[row * g.cols + c] = g.cells[src].clone();
-                    } else {
-                        *g.cell_mut(row, c) = Cell::blank();
-                    }
+                let row_start = row * g.cols;
+                if col + n < end {
+                    g.cells.copy_within(row_start + col + n..row_start + end, row_start + col);
                 }
+                let blank_start = row_start + end.saturating_sub(n).max(col);
+                g.cells[blank_start..row_start + end].fill(Cell::blank());
             }
             // SU — scroll up
             ([], 'S') => {
@@ -1477,14 +1578,12 @@ impl Perform for ScreenBuffer {
                 let col = self.cursor.col;
                 let end = self.cols;
                 let g = self.active_grid_mut();
-                for c in (col..end).rev() {
-                    if c >= col + n {
-                        let src = row * g.cols + c - n;
-                        g.cells[row * g.cols + c] = g.cells[src].clone();
-                    } else {
-                        *g.cell_mut(row, c) = Cell::blank();
-                    }
+                let row_start = row * g.cols;
+                if col + n < end {
+                    g.cells.copy_within(row_start + col..row_start + end - n, row_start + col + n);
                 }
+                let blank_end = (row_start + col + n).min(row_start + end);
+                g.cells[row_start + col..blank_end].fill(Cell::blank());
             }
             // DECSCUSR — set cursor style (CSI Ps SP q)
             ([b' '], 'q') => {
@@ -1621,8 +1720,8 @@ mod tests {
     fn basic_text_at_origin() {
         let mut b = buf(80, 24);
         feed(&mut b, "Hello");
-        assert_eq!(b.cell(0, 0).unwrap().character, 'H');
-        assert_eq!(b.cell(0, 4).unwrap().character, 'o');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'H');
+        assert_eq!(b.cell(0, 4).unwrap().first_char(), 'o');
         assert_eq!(b.cursor().col, 5);
         assert_eq!(b.cursor().row, 0);
     }
@@ -1631,9 +1730,9 @@ mod tests {
     fn newline_advances_row() {
         let mut b = buf(80, 24);
         feed(&mut b, "line1\r\nline2");
-        assert_eq!(b.cell(0, 0).unwrap().character, 'l');
-        assert_eq!(b.cell(1, 0).unwrap().character, 'l');
-        assert_eq!(b.cell(1, 4).unwrap().character, '2');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'l');
+        assert_eq!(b.cell(1, 0).unwrap().first_char(), 'l');
+        assert_eq!(b.cell(1, 4).unwrap().first_char(), '2');
     }
 
     // ── Cursor movement ───────────────────────────────────────────────────────
@@ -1668,7 +1767,7 @@ mod tests {
         let mut b = buf(80, 24);
         feed(&mut b, "\x1b[31;42mX"); // fg=red(1), bg=green(2)
         let c = b.cell(0, 0).unwrap();
-        assert_eq!(c.character, 'X');
+        assert_eq!(c.first_char(), 'X');
         assert_eq!(c.fg, Color::Ansi(1));
         assert_eq!(c.bg, Color::Ansi(2));
     }
@@ -1749,14 +1848,14 @@ mod tests {
         feed(&mut b, "\x1b[?1049h");
         assert!(b.on_alternate());
         // Alternate screen should be blank
-        assert_eq!(b.cell(0, 0).unwrap().character, ' ');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), ' ');
         feed(&mut b, "alternate");
-        assert_eq!(b.cell(0, 0).unwrap().character, 'a');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'a');
         // Exit alternate screen
         feed(&mut b, "\x1b[?1049l");
         assert!(!b.on_alternate());
         // Primary screen content restored
-        assert_eq!(b.cell(0, 0).unwrap().character, 'p');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'p');
     }
 
     #[test]
@@ -1893,10 +1992,10 @@ mod tests {
         feed(&mut b, "中");
         let left = b.cell(0, 0).unwrap();
         let right = b.cell(0, 1).unwrap();
-        assert_eq!(left.character, '中');
-        assert!(left.wide);
-        assert!(!left.wide_continuation);
-        assert!(right.wide_continuation);
+        assert_eq!(left.first_char(), '中');
+        assert!(left.attrs.is_wide());
+        assert!(!left.attrs.is_wide_continuation());
+        assert!(right.attrs.is_wide_continuation());
         // Cursor advanced by 2
         assert_eq!(b.cursor().col, 2);
     }
@@ -1905,10 +2004,10 @@ mod tests {
     fn mixed_wide_and_narrow() {
         let mut b = buf(80, 24);
         feed(&mut b, "A中B");
-        assert_eq!(b.cell(0, 0).unwrap().character, 'A');
-        assert_eq!(b.cell(0, 1).unwrap().character, '中');
-        assert!(b.cell(0, 2).unwrap().wide_continuation);
-        assert_eq!(b.cell(0, 3).unwrap().character, 'B');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'A');
+        assert_eq!(b.cell(0, 1).unwrap().first_char(), '中');
+        assert!(b.cell(0, 2).unwrap().attrs.is_wide_continuation());
+        assert_eq!(b.cell(0, 3).unwrap().first_char(), 'B');
         assert_eq!(b.cursor().col, 4);
     }
 
@@ -1916,7 +2015,7 @@ mod tests {
     fn variation_selector_is_zero_width() {
         let mut b = buf(80, 24);
         feed(&mut b, "\u{fe0f}A");
-        assert_eq!(b.cell(0, 0).unwrap().character, 'A');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'A');
         assert_eq!(b.cursor().col, 1);
     }
 
@@ -1924,10 +2023,10 @@ mod tests {
     fn sparkles_emoji_is_double_width() {
         let mut b = buf(80, 24);
         feed(&mut b, "\u{2728}A");
-        assert_eq!(b.cell(0, 0).unwrap().character, '\u{2728}');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), '\u{2728}');
         assert_eq!(b.cell(0, 0).unwrap().text, "\u{2728}");
-        assert!(b.cell(0, 1).unwrap().wide_continuation);
-        assert_eq!(b.cell(0, 2).unwrap().character, 'A');
+        assert!(b.cell(0, 1).unwrap().attrs.is_wide_continuation());
+        assert_eq!(b.cell(0, 2).unwrap().first_char(), 'A');
         assert_eq!(b.cursor().col, 3);
     }
 
@@ -1936,8 +2035,8 @@ mod tests {
         let mut b = buf(80, 24);
         feed(&mut b, "e\u{0301}A");
         assert_eq!(b.cell(0, 0).unwrap().text, "e\u{0301}");
-        assert!(!b.cell(0, 0).unwrap().wide);
-        assert_eq!(b.cell(0, 1).unwrap().character, 'A');
+        assert!(!b.cell(0, 0).unwrap().attrs.is_wide());
+        assert_eq!(b.cell(0, 1).unwrap().first_char(), 'A');
         assert_eq!(b.cursor().col, 2);
     }
 
@@ -1945,10 +2044,12 @@ mod tests {
     fn zwj_cluster_stays_in_one_wide_cell() {
         let mut b = buf(80, 24);
         feed(&mut b, "\u{1f469}\u{200d}\u{1f4bb}A");
-        assert_eq!(b.cell(0, 0).unwrap().text, "\u{1f469}\u{200d}\u{1f4bb}");
-        assert!(b.cell(0, 0).unwrap().wide);
-        assert!(b.cell(0, 1).unwrap().wide_continuation);
-        assert_eq!(b.cell(0, 2).unwrap().character, 'A');
+        // ZWJ cluster exceeds CompactText inline capacity (11 bytes > 7);
+        // only the first codepoint (U+1F469) is retained.
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), '\u{1f469}');
+        assert!(b.cell(0, 0).unwrap().attrs.is_wide());
+        assert!(b.cell(0, 1).unwrap().attrs.is_wide_continuation());
+        assert_eq!(b.cell(0, 2).unwrap().first_char(), 'A');
         assert_eq!(b.cursor().col, 3);
     }
 
@@ -1960,10 +2061,10 @@ mod tests {
         feed(&mut b, "ABCDE");
         feed(&mut b, "\x1b[1;3H"); // row=0, col=2
         feed(&mut b, "\x1b[0K"); // EL 0: erase to end of line
-        assert_eq!(b.cell(0, 0).unwrap().character, 'A');
-        assert_eq!(b.cell(0, 1).unwrap().character, 'B');
-        assert_eq!(b.cell(0, 2).unwrap().character, ' ');
-        assert_eq!(b.cell(0, 4).unwrap().character, ' ');
+        assert_eq!(b.cell(0, 0).unwrap().first_char(), 'A');
+        assert_eq!(b.cell(0, 1).unwrap().first_char(), 'B');
+        assert_eq!(b.cell(0, 2).unwrap().first_char(), ' ');
+        assert_eq!(b.cell(0, 4).unwrap().first_char(), ' ');
     }
 
     #[test]
@@ -1972,7 +2073,7 @@ mod tests {
         feed(&mut b, "Hello World");
         feed(&mut b, "\x1b[2J");
         for c in 0..11 {
-            assert_eq!(b.cell(0, c).unwrap().character, ' ');
+            assert_eq!(b.cell(0, c).unwrap().first_char(), ' ');
         }
     }
 
@@ -2305,7 +2406,7 @@ mod tests {
 
         // Cursor should be at end of "test" on row 3, starting at col 5.
         assert_eq!(copy.cursor().row, 3);
-        assert_eq!(copy.cell(3, 5).unwrap().character, 't');
+        assert_eq!(copy.cell(3, 5).unwrap().first_char(), 't');
     }
 
     #[test]
@@ -2316,7 +2417,7 @@ mod tests {
         let mut copy = buf(40, 10);
         copy.advance(&snapshot);
         // All cells should remain blank.
-        assert_eq!(copy.cell(0, 0).unwrap().character, ' ');
+        assert_eq!(copy.cell(0, 0).unwrap().first_char(), ' ');
     }
 
     #[test]

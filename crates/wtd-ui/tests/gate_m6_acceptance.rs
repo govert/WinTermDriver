@@ -693,8 +693,8 @@ impl RequestHandler for M6Handler {
                                 screen.scrollback_row(idx).map(|cells| {
                                     cells
                                         .iter()
-                                        .filter(|c| !c.wide_continuation)
-                                        .map(|c| c.character)
+                                        .filter(|c| !c.attrs.is_wide_continuation())
+                                        .map(|c| c.first_char())
                                         .collect::<String>()
                                         .trim_end()
                                         .to_string()
@@ -1209,7 +1209,7 @@ fn criterion_36_3_manual_interaction() {
     );
     let first_scrollback = scroll_screen
         .scrollback_row(0)
-        .map(|cells| cells.iter().map(|c| c.character).collect::<String>())
+        .map(|cells| cells.iter().map(|c| c.first_char()).collect::<String>())
         .unwrap_or_default();
     assert!(
         first_scrollback.contains("Line"),

@@ -40,8 +40,8 @@ pub fn extract_selection_text(screen: &ScreenBuffer, selection: &TextSelection) 
                 break;
             }
             if let Some(cell) = screen.cell(row, col) {
-                if !cell.wide_continuation {
-                    line.push_str(&cell.text);
+                if !cell.attrs.is_wide_continuation() {
+                    line.push_str(cell.text.as_str());
                 }
             }
         }

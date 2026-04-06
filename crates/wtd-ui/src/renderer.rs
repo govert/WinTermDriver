@@ -13,6 +13,9 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use wtd_pty::{Cell, CellAttrs, Color, Cursor, CursorShape, ScreenBuffer};
 
+#[cfg(test)]
+use wtd_pty::CompactText;
+
 // ── Selection ────────────────────────────────────────────────────────────────
 
 /// A text selection range in screen coordinates (row, col).
@@ -205,7 +208,7 @@ pub fn resolve_cell_colors(cell: &Cell) -> ((u8, u8, u8), (u8, u8, u8)) {
 }
 
 fn cell_display_cols(cell: &Cell) -> usize {
-    if cell.wide { 2 } else { 1 }
+    if cell.attrs.is_wide() { 2 } else { 1 }
 }
 
 // ── TerminalRenderer ─────────────────────────────────────────────────────────
@@ -378,8 +381,8 @@ impl TerminalRenderer {
         unsafe {
             for row in 0..rows {
                 let y = y_offset + row as f32 * self.cell_height;
-                self.paint_row_backgrounds(screen, row, cols, y)?;
-                self.paint_row_text(screen, row, cols, y)?;
+                self.paint_row_backgrounds(screen, row, cols, 0.0, y)?;
+                self.paint_row_text(screen, row, cols, 0.0, y)?;
             }
             let cursor = screen.cursor();
             if cursor.visible && cursor.row < rows && cursor.col < cols {
@@ -605,8 +608,8 @@ impl TerminalRenderer {
 
             for row in 0..visible_rows {
                 let py = y + row as f32 * self.cell_height;
-                self.paint_row_backgrounds_at(screen, row, visible_cols, x, py)?;
-                self.paint_row_text_at(screen, row, visible_cols, x, py)?;
+                self.paint_row_backgrounds(screen, row, visible_cols, x, py)?;
+                self.paint_row_text(screen, row, visible_cols, x, py)?;
             }
 
             // Selection highlight.
@@ -627,164 +630,6 @@ impl TerminalRenderer {
 
     /// Paint non-default cell backgrounds for a single row.
     unsafe fn paint_row_backgrounds(
-        &self,
-        screen: &ScreenBuffer,
-        row: usize,
-        cols: usize,
-        y: f32,
-    ) -> Result<()> {
-        let mut col = 0;
-        while col < cols {
-            let cell = match screen.cell(row, col) {
-                Some(c) => c,
-                None => {
-                    col += 1;
-                    continue;
-                }
-            };
-            let (_, bg_rgb) = resolve_cell_colors(cell);
-            if bg_rgb == DEFAULT_BG {
-                col += 1;
-                continue;
-            }
-
-            // Extend run while the background color is the same.
-            let run_start = col;
-            col += 1;
-            while col < cols {
-                if let Some(next) = screen.cell(row, col) {
-                    let (_, next_bg) = resolve_cell_colors(next);
-                    if next_bg == bg_rgb {
-                        col += 1;
-                        continue;
-                    }
-                }
-                break;
-            }
-
-            let brush = self
-                .rt
-                .CreateSolidColorBrush(&rgb_to_d2d(bg_rgb.0, bg_rgb.1, bg_rgb.2), None)?;
-            let rect = D2D_RECT_F {
-                left: run_start as f32 * self.cell_width,
-                top: y,
-                right: col as f32 * self.cell_width,
-                bottom: y + self.cell_height,
-            };
-            self.rt.FillRectangle(&rect, &brush);
-        }
-        Ok(())
-    }
-
-    /// Paint text for a single row using run-based batching.
-    ///
-    /// Adjacent cells with the same foreground color and font style are
-    /// batched into a single `DrawText` call for performance.
-    unsafe fn paint_row_text(
-        &self,
-        screen: &ScreenBuffer,
-        row: usize,
-        cols: usize,
-        y: f32,
-    ) -> Result<()> {
-        let mut col = 0;
-        while col < cols {
-            let cell = match screen.cell(row, col) {
-                Some(c) => c,
-                None => {
-                    col += 1;
-                    continue;
-                }
-            };
-            if cell.wide_continuation {
-                col += 1;
-                continue;
-            }
-            if cell.text == " " && cell.attrs == CellAttrs::default() {
-                col += 1;
-                continue;
-            }
-
-            let (fg_rgb, _) = resolve_cell_colors(cell);
-            let tf = self.text_format_for_attrs(&cell.attrs);
-            let run_start = col;
-            let mut run_text = String::new();
-            let mut run_cols = 0usize;
-            run_text.push_str(&cell.text);
-            run_cols += cell_display_cols(cell);
-
-            col += 1;
-            // Extend the run while color and font match.
-            while col < cols {
-                if let Some(next) = screen.cell(row, col) {
-                    if next.wide_continuation {
-                        col += 1;
-                        continue;
-                    }
-                    let (next_fg, _) = resolve_cell_colors(next);
-                    let next_tf_matches = self.attrs_same_format(&cell.attrs, &next.attrs);
-                    if next_fg == fg_rgb && next_tf_matches {
-                        run_text.push_str(&next.text);
-                        run_cols += cell_display_cols(next);
-                        col += 1;
-                        continue;
-                    }
-                }
-                break;
-            }
-
-            let utf16: Vec<u16> = run_text.encode_utf16().collect();
-            let brush = self
-                .rt
-                .CreateSolidColorBrush(&rgb_to_d2d(fg_rgb.0, fg_rgb.1, fg_rgb.2), None)?;
-            let rect = D2D_RECT_F {
-                left: run_start as f32 * self.cell_width,
-                top: y,
-                right: (run_start + run_cols) as f32 * self.cell_width,
-                bottom: y + self.cell_height,
-            };
-            self.rt.DrawText(
-                &utf16,
-                tf,
-                &rect,
-                &brush,
-                TEXT_DRAW_OPTIONS,
-                TEXT_MEASURING_MODE,
-            );
-
-            // Draw underline
-            if cell.attrs.is_set(CellAttrs::UNDERLINE) {
-                let underline_y = y + self.cell_height - 2.0;
-                let p0 = D2D_POINT_2F {
-                    x: run_start as f32 * self.cell_width,
-                    y: underline_y,
-                };
-                let p1 = D2D_POINT_2F {
-                    x: (run_start + run_cols) as f32 * self.cell_width,
-                    y: underline_y,
-                };
-                self.rt.DrawLine(p0, p1, &brush, 1.0, None);
-            }
-
-            // Draw strikethrough
-            if cell.attrs.is_set(CellAttrs::STRIKETHROUGH) {
-                let strike_y = y + self.cell_height / 2.0;
-                let p0 = D2D_POINT_2F {
-                    x: run_start as f32 * self.cell_width,
-                    y: strike_y,
-                };
-                let p1 = D2D_POINT_2F {
-                    x: (run_start + run_cols) as f32 * self.cell_width,
-                    y: strike_y,
-                };
-                self.rt.DrawLine(p0, p1, &brush, 1.0, None);
-            }
-        }
-        Ok(())
-    }
-
-    /// Paint non-default cell backgrounds for a single row at an x,y origin.
-    unsafe fn paint_row_backgrounds_at(
         &self,
         screen: &ScreenBuffer,
         row: usize,
@@ -834,8 +679,11 @@ impl TerminalRenderer {
         Ok(())
     }
 
-    /// Paint text for a single row at an x,y origin, with run-based batching.
-    unsafe fn paint_row_text_at(
+    /// Paint text for a single row using run-based batching.
+    ///
+    /// Adjacent cells with the same foreground color and font style are
+    /// batched into a single `DrawText` call for performance.
+    unsafe fn paint_row_text(
         &self,
         screen: &ScreenBuffer,
         row: usize,
@@ -852,11 +700,11 @@ impl TerminalRenderer {
                     continue;
                 }
             };
-            if cell.wide_continuation {
+            if cell.attrs.is_wide_continuation() {
                 col += 1;
                 continue;
             }
-            if cell.text == " " && cell.attrs == CellAttrs::default() {
+            if cell.text.as_str() == " " && cell.attrs == CellAttrs::default() {
                 col += 1;
                 continue;
             }
@@ -866,20 +714,21 @@ impl TerminalRenderer {
             let run_start = col;
             let mut run_text = String::new();
             let mut run_cols = 0usize;
-            run_text.push_str(&cell.text);
+            run_text.push_str(cell.text.as_str());
             run_cols += cell_display_cols(cell);
 
             col += 1;
+            // Extend the run while color and font match.
             while col < cols {
                 if let Some(next) = screen.cell(row, col) {
-                    if next.wide_continuation {
+                    if next.attrs.is_wide_continuation() {
                         col += 1;
                         continue;
                     }
                     let (next_fg, _) = resolve_cell_colors(next);
                     let next_tf_matches = self.attrs_same_format(&cell.attrs, &next.attrs);
                     if next_fg == fg_rgb && next_tf_matches {
-                        run_text.push_str(&next.text);
+                        run_text.push_str(next.text.as_str());
                         run_cols += cell_display_cols(next);
                         col += 1;
                         continue;
@@ -1153,13 +1002,10 @@ mod tests {
     #[test]
     fn resolve_colors_normal_cell() {
         let cell = Cell {
-            character: 'A',
-            text: "A".to_string(),
+            text: CompactText::new("A"),
             fg: Color::Ansi(1),
             bg: Color::Default,
             attrs: CellAttrs::default(),
-            wide: false,
-            wide_continuation: false,
         };
         let (fg, bg) = resolve_cell_colors(&cell);
         assert_eq!(fg, (170, 0, 0));
@@ -1171,13 +1017,10 @@ mod tests {
         let mut attrs = CellAttrs::default();
         attrs.set(CellAttrs::INVERSE);
         let cell = Cell {
-            character: 'A',
-            text: "A".to_string(),
+            text: CompactText::new("A"),
             fg: Color::Ansi(1),
             bg: Color::Ansi(2),
             attrs,
-            wide: false,
-            wide_continuation: false,
         };
         let (fg, bg) = resolve_cell_colors(&cell);
         // Swapped
@@ -1190,13 +1033,10 @@ mod tests {
         let mut attrs = CellAttrs::default();
         attrs.set(CellAttrs::DIM);
         let cell = Cell {
-            character: 'A',
-            text: "A".to_string(),
+            text: CompactText::new("A"),
             fg: Color::Rgb(200, 100, 50),
             bg: Color::Default,
             attrs,
-            wide: false,
-            wide_continuation: false,
         };
         let (fg, _bg) = resolve_cell_colors(&cell);
         assert_eq!(fg, (100, 50, 25));

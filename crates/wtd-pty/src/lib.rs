@@ -15,6 +15,6 @@ pub use error::PtyError;
 pub use job::JobObject;
 pub use pty::{PtySession, PtySize};
 pub use screen::{
-    cells_to_string, CaptureExtendedResult, Cell, CellAttrs, Color, Cursor, CursorShape, MouseMode,
-    ScreenBuffer, TerminalProgress,
+    cells_to_string, CaptureExtendedResult, Cell, CellAttrs, Color, CompactText, Cursor,
+    CursorShape, MouseMode, ScreenBuffer, TerminalProgress,
 };
