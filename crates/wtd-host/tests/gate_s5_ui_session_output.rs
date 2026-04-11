@@ -219,9 +219,11 @@ async fn ui_client_receives_live_session_output() {
         &Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "s5ui-out".to_string(),
+                name: Some("s5ui-out".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -340,9 +342,11 @@ async fn ui_client_receives_session_state_changed_on_exit() {
         &Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "s5ui-exit".to_string(),
+                name: Some("s5ui-exit".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -459,9 +463,11 @@ async fn session_output_arrives_within_expected_latency() {
         &Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "s5ui-lat".to_string(),
+                name: Some("s5ui-lat".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -582,9 +588,11 @@ async fn multiple_ui_clients_receive_broadcasts() {
         &Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "s5ui-multi".to_string(),
+                name: Some("s5ui-multi".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

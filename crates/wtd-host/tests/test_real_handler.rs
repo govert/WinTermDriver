@@ -148,9 +148,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "handler-test".to_string(),
+                name: Some("handler-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -410,9 +412,11 @@ tabs:
         &Envelope::new(
             "open-keys",
             &OpenWorkspace {
-                name: "handler-keys".to_string(),
+                name: Some("handler-keys".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -520,9 +524,11 @@ async fn real_handler_open_nonexistent_workspace() {
         &Envelope::new(
             "open-bad",
             &OpenWorkspace {
-                name: "nonexistent-workspace-abc123".to_string(),
+                name: Some("nonexistent-workspace-abc123".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

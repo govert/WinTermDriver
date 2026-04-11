@@ -310,9 +310,11 @@ async fn ipc_open_send_capture_round_trip() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "gate-test".to_string(),
+                name: Some("gate-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

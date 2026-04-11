@@ -12,6 +12,9 @@ use wtd_core::global_settings::GlobalSettings;
 use wtd_core::ids::{PaneId, SessionId, WorkspaceInstanceId};
 use wtd_core::layout::Rect;
 use wtd_core::target::TargetPath;
+use wtd_core::workspace::{
+    PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
+};
 use wtd_core::{find_workspace, list_workspaces, load_workspace_definition};
 
 use wtd_ipc::message;
@@ -20,8 +23,8 @@ use wtd_ipc::Envelope;
 
 use crate::action::{v1_registry, ActionDispatcher};
 use crate::ipc_server::{ClientId, RequestHandler};
-use crate::output_broadcaster::BroadcastEvent;
 use crate::output_broadcaster::progress_info_from_screen;
+use crate::output_broadcaster::BroadcastEvent;
 use crate::target_resolver::{resolve_by_id, resolve_target};
 use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
@@ -249,9 +252,9 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
             let start = total.saturating_sub(tail as usize);
             (start..total)
                 .filter_map(|idx| {
-                    screen.scrollback_row(idx).map(|cells| {
-                        wtd_pty::cells_to_string(cells).trim_end().to_string()
-                    })
+                    screen
+                        .scrollback_row(idx)
+                        .map(|cells| wtd_pty::cells_to_string(cells).trim_end().to_string())
                 })
                 .collect()
         }
@@ -276,6 +279,28 @@ fn cursor_shape_name(screen: &wtd_pty::ScreenBuffer) -> &'static str {
     }
 }
 
+const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+
+fn encode_send_input(text: &str, newline: bool, bracketed_paste_active: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 16);
+
+    if bracketed_paste_active && text.len() > 1 {
+        out.extend_from_slice(BRACKETED_PASTE_START);
+        out.extend_from_slice(text.as_bytes());
+        out.extend_from_slice(BRACKETED_PASTE_END);
+    } else {
+        out.extend_from_slice(text.as_bytes());
+    }
+
+    if newline {
+        // Match an actual Enter keypress rather than sending CRLF.
+        out.push(b'\r');
+    }
+
+    out
+}
+
 fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
     serde_json::json!({
         "cols": u16::try_from(screen.cols()).unwrap_or(u16::MAX),
@@ -291,6 +316,43 @@ fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
         "cursorVisible": screen.cursor().visible,
         "cursorShape": cursor_shape_name(screen),
     })
+}
+
+/// Create an ad-hoc workspace definition from a profile name and global settings.
+///
+/// Used when the user runs `wtd` / `wtd open` / `wtd open --profile <name>` without
+/// a workspace YAML file.
+fn synthesize_default_workspace(
+    name: &str,
+    profile: Option<&str>,
+    settings: &GlobalSettings,
+) -> WorkspaceDefinition {
+    let effective_profile = profile.unwrap_or(settings.default_profile.as_str());
+    WorkspaceDefinition {
+        version: 1,
+        name: name.to_string(),
+        description: None,
+        defaults: None,
+        profiles: None,
+        bindings: None,
+        windows: None,
+        tabs: Some(vec![TabDefinition {
+            name: "main".to_string(),
+            layout: PaneNode::Pane(PaneLeaf {
+                name: "shell".to_string(),
+                session: Some(SessionLaunchDefinition {
+                    profile: Some(effective_profile.to_string()),
+                    cwd: None,
+                    env: None,
+                    startup_command: None,
+                    title: None,
+                    args: None,
+                    terminal_size: None,
+                }),
+            }),
+            focus: None,
+        }]),
+    }
 }
 
 /// Load a workspace definition from disk by name (with optional explicit file).
@@ -407,9 +469,16 @@ impl HostRequestHandler {
         let id = &envelope.id;
         let mut state = self.state.lock().unwrap();
 
+        // Derive effective workspace name.
+        let ws_name = match (&open.name, &open.profile) {
+            (Some(name), _) => name.clone(),
+            (None, Some(prof)) => prof.clone(),
+            (None, None) => "default".to_string(),
+        };
+
         // Check if already open (and not requesting recreate)
         if !open.recreate {
-            if let Some(inst) = state.workspaces.get(&open.name) {
+            if let Some(inst) = state.workspaces.get(&ws_name) {
                 return Some(Envelope::new(
                     id,
                     &OpenWorkspaceResult {
@@ -420,22 +489,24 @@ impl HostRequestHandler {
             }
         }
 
-        // Load workspace definition
-        let def = match load_workspace_from_disk(
-            &open.name,
-            open.file.as_deref(),
-            &request_cwd(envelope),
-        ) {
-            Ok(d) => d,
-            Err(mut e) => {
-                e.id = id.to_string();
-                return Some(e);
+        // Load or synthesize workspace definition.
+        let def = if open.file.is_some() || (open.name.is_some() && open.profile.is_none()) {
+            // File-based path: look up workspace definition on disk.
+            match load_workspace_from_disk(&ws_name, open.file.as_deref(), &request_cwd(envelope)) {
+                Ok(d) => d,
+                Err(mut e) => {
+                    e.id = id.to_string();
+                    return Some(e);
+                }
             }
+        } else {
+            // Ad-hoc path: synthesize from defaults / named profile.
+            synthesize_default_workspace(&ws_name, open.profile.as_deref(), &state.settings)
         };
 
         // If recreating, close existing first
         if open.recreate {
-            if let Some(mut existing) = state.workspaces.remove(&open.name) {
+            if let Some(mut existing) = state.workspaces.remove(&ws_name) {
                 existing.close();
             }
         }
@@ -462,7 +533,7 @@ impl HostRequestHandler {
         };
 
         let instance_id = format!("{}", inst.id().0);
-        state.workspaces.insert(open.name.clone(), inst);
+        state.workspaces.insert(ws_name, inst);
 
         Some(Envelope::new(
             id,
@@ -757,12 +828,9 @@ impl HostRequestHandler {
             }
         };
 
-        let mut input = send.text.clone();
-        if send.newline {
-            input.push_str("\r\n");
-        }
+        let input = encode_send_input(&send.text, send.newline, session.screen().bracketed_paste());
 
-        match session.write_input(input.as_bytes()) {
+        match session.write_input(&input) {
             Ok(()) => Some(Envelope::new(id, &OkResponse {})),
             Err(e) => Some(error_envelope(
                 id,
@@ -1234,6 +1302,41 @@ impl HostRequestHandler {
                     "invalid goto-tab target",
                 ));
             }
+            "rename-tab" => {
+                let name = match action.args.get("name").and_then(|v| v.as_str()) {
+                    Some(name) => name.to_string(),
+                    None => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::InvalidArgument,
+                            "missing rename-tab name",
+                        ));
+                    }
+                };
+                let tab_index = target_pane
+                    .as_ref()
+                    .and_then(|pane_id| {
+                        inst.tabs()
+                            .iter()
+                            .position(|tab| tab.layout().panes().contains(pane_id))
+                    })
+                    .unwrap_or_else(|| inst.active_tab_index());
+                if tab_index >= inst.tabs().len() {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InvalidAction,
+                        "no tabs available",
+                    ));
+                }
+                inst.rename_tab(tab_index, name);
+                return Some(Envelope::new(
+                    id,
+                    &InvokeActionResult {
+                        result: "tab-renamed".to_string(),
+                        pane_id: None,
+                    },
+                ));
+            }
             "close-tab" => {
                 let idx = inst.active_tab_index();
                 if inst.tabs().len() > 1 {
@@ -1474,4 +1577,40 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_send_input;
+
+    #[test]
+    fn encode_send_input_plain_text_without_newline() {
+        assert_eq!(encode_send_input("abc", false, false), b"abc");
+    }
+
+    #[test]
+    fn encode_send_input_uses_carriage_return_for_newline() {
+        assert_eq!(encode_send_input("abc", true, false), b"abc\r");
+    }
+
+    #[test]
+    fn encode_send_input_wraps_bracketed_paste_for_bulk_text() {
+        assert_eq!(
+            encode_send_input("abc", false, true),
+            b"\x1b[200~abc\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn encode_send_input_appends_enter_after_bracketed_paste() {
+        assert_eq!(
+            encode_send_input("abc", true, true),
+            b"\x1b[200~abc\x1b[201~\r"
+        );
+    }
+
+    #[test]
+    fn encode_send_input_does_not_wrap_single_char_input() {
+        assert_eq!(encode_send_input("a", false, true), b"a");
+    }
 }

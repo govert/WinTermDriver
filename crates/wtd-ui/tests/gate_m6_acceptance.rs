@@ -321,7 +321,7 @@ impl RequestHandler for M6Handler {
     ) -> Option<Envelope> {
         match msg {
             TypedMessage::OpenWorkspace(open) => {
-                let yaml = match open.name.as_str() {
+                let yaml = match open.name.as_deref().unwrap() {
                     "m6-lifecycle" => LIFECYCLE_YAML,
                     "m6-controller" => CONTROLLER_YAML,
                     "m6-partial" => PARTIAL_FAILURE_YAML,
@@ -329,7 +329,10 @@ impl RequestHandler for M6Handler {
                         return Some(error_envelope(
                             &envelope.id,
                             ErrorCode::WorkspaceNotFound,
-                            &format!("workspace '{}' not found", open.name),
+                            &format!(
+                                "workspace '{}' not found",
+                                open.name.as_deref().unwrap_or("?")
+                            ),
                         ))
                     }
                 };
@@ -367,7 +370,9 @@ impl RequestHandler for M6Handler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -915,9 +920,11 @@ async fn criterion_36_1_workspace_lifecycle() {
         .write_frame(&Envelope::new(
             "open",
             &OpenWorkspace {
-                name: "m6-lifecycle".to_string(),
+                name: Some("m6-lifecycle".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1248,9 +1255,11 @@ async fn criterion_36_4_controller_interaction() {
         .write_frame(&Envelope::new(
             "open",
             &OpenWorkspace {
-                name: "m6-controller".to_string(),
+                name: Some("m6-controller".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1511,9 +1520,11 @@ tabs:
         .write_frame(&Envelope::new(
             "open",
             &OpenWorkspace {
-                name: "m6-controller".to_string(),
+                name: Some("m6-controller".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1685,9 +1696,11 @@ async fn criterion_36_7_partial_failure() {
         .write_frame(&Envelope::new(
             "open",
             &OpenWorkspace {
-                name: "m6-partial".to_string(),
+                name: Some("m6-partial".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

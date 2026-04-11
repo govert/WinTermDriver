@@ -217,6 +217,54 @@ impl LayoutTree {
         self.node_to_pane_node(self.root, &leaf_fn)
     }
 
+    /// Reassign every pane ID in the tree using the provided allocator.
+    ///
+    /// Returns a map from old pane ID to new pane ID. The tree focus, zoomed
+    /// pane, pane index, and next pane counter are updated to match.
+    pub fn reassign_pane_ids<F>(&mut self, mut alloc: F) -> HashMap<PaneId, PaneId>
+    where
+        F: FnMut() -> PaneId,
+    {
+        let mut mapping = HashMap::new();
+        let mut max_assigned = 0u64;
+
+        for node in self.nodes.iter_mut().flatten() {
+            if let NodeKind::Pane { id } = &mut node.kind {
+                let old = id.clone();
+                let new = alloc();
+                max_assigned = max_assigned.max(new.0);
+                *id = new.clone();
+                mapping.insert(old, new);
+            }
+        }
+
+        let old_focus = self.focus.clone();
+        if let Some(new_focus) = mapping.get(&old_focus).cloned() {
+            self.focus = new_focus;
+        }
+        self.zoomed = self
+            .zoomed
+            .take()
+            .and_then(|old| mapping.get(&old).cloned());
+
+        self.pane_index.clear();
+        for (idx, node) in self.nodes.iter().enumerate() {
+            if let Some(Node {
+                kind: NodeKind::Pane { id },
+                ..
+            }) = node
+            {
+                self.pane_index.insert(id.clone(), idx);
+            }
+        }
+
+        if max_assigned > 0 {
+            self.next_pane_id = max_assigned + 1;
+        }
+
+        mapping
+    }
+
     // ── Split ─────────────────────────────────────────────────────────────────
 
     /// Split the target pane horizontally (left/right). The original pane

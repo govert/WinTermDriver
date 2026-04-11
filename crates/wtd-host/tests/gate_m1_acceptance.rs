@@ -325,9 +325,11 @@ async fn m1_headless_round_trip_acceptance() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "m1-acceptance".to_string(),
+                name: Some("m1-acceptance".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

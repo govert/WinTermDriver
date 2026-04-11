@@ -23,7 +23,7 @@ async fn main() {
     };
     init_stderr_logging(&level);
 
-    if let Command::Completions { shell } = cli.command {
+    if let Some(Command::Completions { shell }) = cli.command {
         wtd_cli::cli::print_completions(shell);
         return;
     }

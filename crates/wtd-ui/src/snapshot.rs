@@ -12,6 +12,7 @@ use wtd_pty::ScreenBuffer;
 pub struct PaneSession {
     pub session_id: String,
     pub pane_path: String,
+    pub title: Option<String>,
     pub session_size: Option<(u16, u16)>,
     pub progress: Option<ProgressInfo>,
 }
@@ -49,13 +50,19 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let pane_states = state["paneStates"].as_object()?;
     let session_screens = state["sessionScreens"].as_object();
     let session_sizes = state["sessionSizes"].as_object();
+    let session_titles = state["sessionTitles"].as_object();
     let session_progress = state["sessionProgress"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
     for tab in tabs {
         let tab_name = tab["name"].as_str().unwrap_or("tab");
         let layout_node: PaneNode = serde_json::from_value(tab["layout"].clone()).ok()?;
-        let (layout_tree, pane_mappings) = LayoutTree::from_pane_node(&layout_node);
+        let (mut layout_tree, pane_mappings) = LayoutTree::from_pane_node(&layout_node);
+        if let Some(focus_name) = tab.get("focus").and_then(|value| value.as_str()) {
+            if let Some((_, pane_id)) = pane_mappings.iter().find(|(name, _)| name == focus_name) {
+                let _ = layout_tree.set_focus(pane_id.clone());
+            }
+        }
 
         let host_panes: Vec<u64> = tab["panes"]
             .as_array()?
@@ -77,6 +84,12 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                             let session_size = session_sizes
                                 .and_then(|sizes| sizes.get(&session_id))
                                 .and_then(session_size_from_value);
+                            let session_title = session_titles
+                                .and_then(|title_map| title_map.get(&session_id))
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_owned);
                             if let Some((session_cols, session_rows)) = session_size {
                                 screen = ScreenBuffer::new(session_cols, session_rows, 1000);
                             }
@@ -97,10 +110,12 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                     progress: session_progress
                                         .and_then(|progress_map| progress_map.get(&session_id))
                                         .and_then(|value| {
-                                            serde_json::from_value::<ProgressInfo>(value.clone()).ok()
+                                            serde_json::from_value::<ProgressInfo>(value.clone())
+                                                .ok()
                                         }),
                                     session_id,
                                     pane_path: format!("{workspace_name}/{tab_name}/{pane_name}",),
+                                    title: session_title,
                                     session_size,
                                 },
                             );
@@ -307,5 +322,47 @@ mod tests {
             visible.contains("SCREEN_SEED_MARKER"),
             "replayed snapshot should contain SCREEN_SEED_MARKER; got:\n{visible}"
         );
+    }
+
+    #[test]
+    fn rebuild_snapshot_restores_tab_focus_from_snapshot() {
+        let state = json!({
+            "name": "focus-restore-test",
+            "tabs": [{
+                "name": "main",
+                "focus": "bottom",
+                "layout": {
+                    "type": "split",
+                    "orientation": "vertical",
+                    "ratio": 0.5,
+                    "children": [
+                        {
+                            "type": "pane",
+                            "name": "top"
+                        },
+                        {
+                            "type": "pane",
+                            "name": "bottom"
+                        }
+                    ]
+                },
+                "panes": [10, 11]
+            }],
+            "paneStates": {
+                "10": { "type": "attached", "sessionId": 100 },
+                "11": { "type": "attached", "sessionId": 101 }
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let tab = &rebuilt.tabs[0];
+        let focused = tab.layout_tree.focus();
+        let session = tab
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane should map to a session");
+
+        assert_eq!(session.pane_path, "focus-restore-test/main/bottom");
+        assert_eq!(session.session_id, "101");
     }
 }

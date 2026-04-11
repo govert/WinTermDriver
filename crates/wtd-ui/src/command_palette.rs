@@ -111,9 +111,20 @@ struct FilteredEntry {
     score: i32,
 }
 
+#[derive(Debug, Clone)]
+enum PaletteMode {
+    Search,
+    Prompt {
+        action: String,
+        label: String,
+        placeholder: String,
+    },
+}
+
 /// Modal command palette overlay with fuzzy search and action dispatch.
 pub struct CommandPalette {
     visible: bool,
+    mode: PaletteMode,
     query: String,
     entries: Vec<PaletteEntry>,
     filtered: Vec<FilteredEntry>,
@@ -191,6 +202,7 @@ impl CommandPalette {
 
         Ok(Self {
             visible: false,
+            mode: PaletteMode::Search,
             query: String::new(),
             entries,
             filtered,
@@ -211,14 +223,35 @@ impl CommandPalette {
     /// Open the palette, resetting query and selection.
     pub fn show(&mut self) {
         self.visible = true;
+        self.mode = PaletteMode::Search;
         self.query.clear();
         self.selected = 0;
         self.scroll_offset = 0;
         self.refilter();
     }
 
+    pub fn show_prompt(
+        &mut self,
+        action: impl Into<String>,
+        label: impl Into<String>,
+        placeholder: impl Into<String>,
+        initial_value: impl Into<String>,
+    ) {
+        self.visible = true;
+        self.mode = PaletteMode::Prompt {
+            action: action.into(),
+            label: label.into(),
+            placeholder: placeholder.into(),
+        };
+        self.query = initial_value.into();
+        self.selected = 0;
+        self.scroll_offset = 0;
+        self.filtered.clear();
+    }
+
     pub fn hide(&mut self) {
         self.visible = false;
+        self.mode = PaletteMode::Search;
     }
 
     pub fn toggle(&mut self) {
@@ -238,6 +271,38 @@ impl CommandPalette {
     pub fn on_key_event(&mut self, event: &KeyEvent) -> PaletteResult {
         if !self.visible {
             return PaletteResult::Consumed;
+        }
+
+        if let PaletteMode::Prompt { action, .. } = &self.mode {
+            match event.key {
+                KeyName::Escape => {
+                    self.hide();
+                    return PaletteResult::Dismissed;
+                }
+                KeyName::Enter => {
+                    let action = action.clone();
+                    let name = self.query.trim().to_string();
+                    self.hide();
+                    return PaletteResult::Action(ActionReference::WithArgs {
+                        action,
+                        args: Some(HashMap::from([("name".to_string(), name)])),
+                    });
+                }
+                KeyName::Backspace => {
+                    self.query.pop();
+                    return PaletteResult::Consumed;
+                }
+                _ => {
+                    if !event.modifiers.ctrl() && !event.modifiers.alt() {
+                        if let Some(ch) = event.character {
+                            if !ch.is_control() {
+                                self.query.push(ch);
+                            }
+                        }
+                    }
+                    return PaletteResult::Consumed;
+                }
+            }
         }
 
         match event.key {
@@ -310,6 +375,10 @@ impl CommandPalette {
             return Some(PaletteResult::Dismissed);
         }
 
+        if matches!(self.mode, PaletteMode::Prompt { .. }) {
+            return Some(PaletteResult::Consumed);
+        }
+
         // Click on an item in the list.
         let items_y = py + INPUT_HEIGHT + PADDING;
         if y >= items_y {
@@ -335,6 +404,10 @@ impl CommandPalette {
     ) -> Option<PaletteResult> {
         if !self.visible {
             return None;
+        }
+
+        if matches!(self.mode, PaletteMode::Prompt { .. }) {
+            return Some(PaletteResult::Consumed);
         }
 
         let (px, py, pw, ph) = self.palette_rect(window_w, window_h);
@@ -435,8 +508,13 @@ impl CommandPalette {
 
     fn palette_rect(&self, window_w: f32, _window_h: f32) -> (f32, f32, f32, f32) {
         let w = PALETTE_WIDTH.min(window_w - 40.0);
-        let visible_items = self.filtered.len().min(MAX_VISIBLE_ITEMS);
-        let h = INPUT_HEIGHT + PADDING + (visible_items as f32 * ITEM_HEIGHT) + PADDING;
+        let h = match self.mode {
+            PaletteMode::Search => {
+                let visible_items = self.filtered.len().min(MAX_VISIBLE_ITEMS);
+                INPUT_HEIGHT + PADDING + (visible_items as f32 * ITEM_HEIGHT) + PADDING
+            }
+            PaletteMode::Prompt { .. } => INPUT_HEIGHT + PADDING + ITEM_HEIGHT + PADDING,
+        };
         let x = (window_w - w) / 2.0;
         (x, TOP_OFFSET, w, h)
     }
@@ -493,15 +571,14 @@ impl CommandPalette {
             bottom: input_rect.bottom - 2.0,
         };
 
+        let placeholder = match &self.mode {
+            PaletteMode::Search => "Type to search actions…",
+            PaletteMode::Prompt { placeholder, .. } => placeholder.as_str(),
+        };
+
         if self.query.is_empty() {
             let brush = make_brush(rt, INPUT_PLACEHOLDER_COLOR)?;
-            draw_text(
-                rt,
-                "Type to search actions\u{2026}",
-                &self.tf_input,
-                &text_rect,
-                &brush,
-            );
+            draw_text(rt, placeholder, &self.tf_input, &text_rect, &brush);
         } else {
             let brush = make_brush(rt, INPUT_TEXT_COLOR)?;
             draw_text(rt, &self.query, &self.tf_input, &text_rect, &brush);
@@ -526,6 +603,41 @@ impl CommandPalette {
     }
 
     unsafe fn paint_items(&self, rt: &ID2D1RenderTarget, px: f32, py: f32, pw: f32) -> Result<()> {
+        if let PaletteMode::Prompt { label, action, .. } = &self.mode {
+            let prompt_rect = D2D_RECT_F {
+                left: px + PADDING,
+                top: py + INPUT_HEIGHT + PADDING,
+                right: px + pw - PADDING,
+                bottom: py + INPUT_HEIGHT + PADDING + ITEM_HEIGHT,
+            };
+            let name_brush = make_brush(rt, ITEM_NAME_COLOR)?;
+            let desc_brush = make_brush(rt, ITEM_DESC_COLOR)?;
+            let rounded = D2D1_ROUNDED_RECT {
+                rect: prompt_rect,
+                radiusX: 3.0,
+                radiusY: 3.0,
+            };
+            let bg_brush = make_brush(rt, SELECTED_BG)?;
+            rt.FillRoundedRectangle(&rounded, &bg_brush);
+
+            let label_rect = D2D_RECT_F {
+                left: prompt_rect.left + 8.0,
+                top: prompt_rect.top + 4.0,
+                right: prompt_rect.right - 8.0,
+                bottom: prompt_rect.top + 18.0,
+            };
+            draw_text(rt, label, &self.tf_name, &label_rect, &name_brush);
+            let hint_rect = D2D_RECT_F {
+                left: prompt_rect.left + 8.0,
+                top: prompt_rect.top + 18.0,
+                right: prompt_rect.right - 8.0,
+                bottom: prompt_rect.bottom - 3.0,
+            };
+            let instruction = format!("Press Enter to run {}", action);
+            draw_text(rt, &instruction, &self.tf_desc, &hint_rect, &desc_brush);
+            return Ok(());
+        }
+
         let items_y = py + INPUT_HEIGHT + PADDING;
         let visible_count = self.filtered.len().min(MAX_VISIBLE_ITEMS);
 

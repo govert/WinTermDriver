@@ -166,6 +166,11 @@ impl MouseHandler {
         let content_bottom = window_height - status_bar_height;
 
         match event.kind {
+            MouseEventKind::LeftDoubleDown => {
+                if event.y < tab_strip_height {
+                    return outputs;
+                }
+            }
             // ── Left button down ─────────────────────────────────────────
             MouseEventKind::LeftDown => {
                 self.left_down = true;

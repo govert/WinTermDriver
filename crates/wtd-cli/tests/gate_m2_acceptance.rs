@@ -191,13 +191,16 @@ impl RequestHandler for M2Handler {
     ) -> Option<Envelope> {
         match msg {
             TypedMessage::OpenWorkspace(open) => {
-                let yaml = match open.name.as_str() {
+                let yaml = match open.name.as_deref().unwrap() {
                     "dev" => DEV_YAML,
                     _ => {
                         return Some(error_envelope(
                             &envelope.id,
                             ErrorCode::WorkspaceNotFound,
-                            &format!("workspace '{}' not found", open.name),
+                            &format!(
+                                "workspace '{}' not found",
+                                open.name.as_deref().unwrap_or("?")
+                            ),
                         ))
                     }
                 };
@@ -235,7 +238,9 @@ impl RequestHandler for M2Handler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -507,9 +512,11 @@ async fn m2_cli_driven_workspace_acceptance() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

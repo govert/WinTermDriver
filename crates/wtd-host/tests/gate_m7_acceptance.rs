@@ -297,9 +297,11 @@ tabs:
     let open_resp = send_request(
         &mut cli,
         &OpenWorkspace {
-            name: "m7-gate".to_string(),
+            name: Some("m7-gate".to_string()),
             file: Some(yaml_path.to_string_lossy().to_string()),
             recreate: false,
+
+            profile: None,
         },
     )
     .await;
@@ -627,9 +629,11 @@ tabs:
     let open_resp = send_request(
         &mut cli,
         &OpenWorkspace {
-            name: "m7-split".to_string(),
+            name: Some("m7-split".to_string()),
             file: Some(yaml_path.to_string_lossy().to_string()),
             recreate: false,
+
+            profile: None,
         },
     )
     .await;
@@ -772,9 +776,11 @@ tabs:
     let open_resp = send_request(
         &mut cli,
         &OpenWorkspace {
-            name: "m7-err".to_string(),
+            name: Some("m7-err".to_string()),
             file: Some(yaml_path.to_string_lossy().to_string()),
             recreate: false,
+
+            profile: None,
         },
     )
     .await;
@@ -799,9 +805,11 @@ tabs:
     let resp = send_request(
         &mut cli,
         &OpenWorkspace {
-            name: "does-not-exist".to_string(),
+            name: Some("does-not-exist".to_string()),
             file: Some("/nonexistent/path.yaml".to_string()),
             recreate: false,
+
+            profile: None,
         },
     )
     .await;

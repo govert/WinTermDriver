@@ -236,7 +236,9 @@ impl RequestHandler for GateHandler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -416,9 +418,11 @@ async fn send_and_capture_round_trip() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -541,9 +545,11 @@ async fn send_to_nonexistent_target_returns_error() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -583,9 +589,11 @@ async fn capture_nonexistent_target_returns_error() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -625,9 +633,11 @@ async fn send_and_capture_targets_correct_pane_in_split() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -758,9 +768,11 @@ async fn send_no_newline_does_not_execute() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

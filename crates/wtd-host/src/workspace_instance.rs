@@ -76,6 +76,10 @@ impl TabInstance {
         &self.name
     }
 
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
     pub fn layout(&self) -> &LayoutTree {
         &self.layout
     }
@@ -126,6 +130,7 @@ pub struct WorkspaceInstance {
     state: WorkspaceState,
     tabs: Vec<TabInstance>,
     active_tab_index: usize,
+    next_pane_id: u64,
     sessions: HashMap<SessionId, Session>,
     panes: HashMap<PaneId, PaneRecord>,
     #[cfg(windows)]
@@ -154,6 +159,7 @@ impl WorkspaceInstance {
             state: WorkspaceState::Creating,
             tabs: Vec::new(),
             active_tab_index: 0,
+            next_pane_id: 1,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
@@ -183,6 +189,10 @@ impl WorkspaceInstance {
                     id: t.id.clone(),
                     name: t.name.clone(),
                     panes: t.layout.panes(),
+                    focus: self
+                        .panes
+                        .get(&t.layout.focus())
+                        .map(|rec| rec.name.clone()),
                     layout: t.layout.to_pane_node(|pane_id| {
                         if let Some(rec) = self.panes.get(pane_id) {
                             PaneLeaf {
@@ -387,11 +397,18 @@ impl WorkspaceInstance {
         }
     }
 
+    fn alloc_workspace_pane_id(&mut self) -> PaneId {
+        let id = PaneId(self.next_pane_id);
+        self.next_pane_id += 1;
+        id
+    }
+
     /// Add a new empty tab and return a reference to it.
     pub fn add_tab(&mut self, name: String) -> &TabInstance {
         let tab_id = TabId(self.next_tab_id);
         self.next_tab_id += 1;
-        let layout = LayoutTree::new();
+        let mut layout = LayoutTree::new();
+        layout.reassign_pane_ids(|| self.alloc_workspace_pane_id());
         let pane_id = layout.focus();
         let pane_name = format!("pane-{}", pane_id.0);
         self.panes.insert(
@@ -427,6 +444,12 @@ impl WorkspaceInstance {
         self.tabs.remove(tab_index);
         if self.active_tab_index >= self.tabs.len() {
             self.active_tab_index = self.tabs.len() - 1;
+        }
+    }
+
+    pub fn rename_tab(&mut self, tab_index: usize, name: String) {
+        if let Some(tab) = self.tabs.get_mut(tab_index) {
+            tab.set_name(name);
         }
     }
 
@@ -692,6 +715,7 @@ impl WorkspaceInstance {
             state: WorkspaceState::Active,
             tabs: Vec::new(),
             active_tab_index: 0,
+            next_pane_id: 1,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
@@ -704,7 +728,8 @@ impl WorkspaceInstance {
         let tab_id = TabId(inst.next_tab_id);
         inst.next_tab_id += 1;
 
-        let layout = LayoutTree::new();
+        let mut layout = LayoutTree::new();
+        layout.reassign_pane_ids(|| inst.alloc_workspace_pane_id());
         let pane_id = layout.focus();
 
         inst.panes.insert(
@@ -746,6 +771,7 @@ impl WorkspaceInstance {
             state: WorkspaceState::Active,
             tabs: Vec::new(),
             active_tab_index: 0,
+            next_pane_id: 1,
             sessions: HashMap::new(),
             panes: HashMap::new(),
             #[cfg(windows)]
@@ -762,6 +788,7 @@ impl WorkspaceInstance {
             inst.next_tab_id += 1;
 
             let mut layout = LayoutTree::new();
+            layout.reassign_pane_ids(|| inst.alloc_workspace_pane_id());
             let first_pane = layout.focus();
             inst.panes.insert(
                 first_pane.clone(),
@@ -857,6 +884,17 @@ impl WorkspaceInstance {
             self.next_tab_id += 1;
 
             let (mut layout, pane_mappings) = LayoutTree::from_pane_node(&tab_def.layout);
+            let pane_id_mapping = layout.reassign_pane_ids(|| self.alloc_workspace_pane_id());
+            let pane_mappings: Vec<(String, PaneId)> = pane_mappings
+                .into_iter()
+                .map(|(name, pane_id)| {
+                    let mapped = pane_id_mapping
+                        .get(&pane_id)
+                        .cloned()
+                        .expect("pane remap must cover every layout pane");
+                    (name, mapped)
+                })
+                .collect();
             let pane_defs = collect_pane_defs(&tab_def.layout);
 
             for ((pane_name, pane_id), (_, session_def)) in
@@ -1023,6 +1061,8 @@ pub struct TabSnapshot {
     pub id: TabId,
     pub name: String,
     pub panes: Vec<PaneId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
     /// Full layout tree as a serializable PaneNode (same schema as workspace YAML).
     pub layout: PaneNode,
 }
@@ -1296,6 +1336,32 @@ mod tests {
         assert_eq!(names, vec!["a", "b", "c"]);
     }
 
+    #[test]
+    fn rename_tab_updates_selected_tab_name() {
+        let mut inst = WorkspaceInstance::new_for_test_multi(
+            "test-rename",
+            1,
+            &[("main", &["editor"]), ("logs", &["tail"])],
+        );
+        inst.rename_tab(1, "debug".to_string());
+        assert_eq!(inst.tabs()[0].name(), "main");
+        assert_eq!(inst.tabs()[1].name(), "debug");
+    }
+
+    #[test]
+    fn pane_ids_are_unique_across_tabs() {
+        let inst = WorkspaceInstance::new_for_test_multi(
+            "test-pane-ids",
+            1,
+            &[("main", &["editor"]), ("logs", &["tail"])],
+        );
+        let first = inst.tabs()[0].layout().focus();
+        let second = inst.tabs()[1].layout().focus();
+        assert_ne!(first, second);
+        assert!(inst.pane_state(&first).is_some());
+        assert!(inst.pane_state(&second).is_some());
+    }
+
     // ── Integration tests (spawn real processes) ────────────────────────────
 
     #[cfg(windows)]
@@ -1513,6 +1579,22 @@ mod tests {
             assert_eq!(snap.state, WorkspaceState::Active);
             assert_eq!(snap.tabs.len(), 1);
             assert_eq!(snap.active_tab_index, 0);
+        }
+    }
+
+    #[test]
+    fn attach_snapshot_includes_focused_pane_name() {
+        let def = split_workspace_def();
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(8), &def, &gs, &env, find_exe_windows);
+
+        if let Ok(inst) = inst {
+            let snap = inst.attach_snapshot();
+            assert_eq!(snap.tabs.len(), 1);
+            assert_eq!(snap.tabs[0].focus.as_deref(), Some("bottom"));
         }
     }
 }

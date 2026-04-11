@@ -7,6 +7,13 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, DestroyMenu, SetForegroundWindow, TrackPopupMenuEx, MF_ENABLED,
+    MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN,
+};
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
 use wtd_core::logging::init_stderr_logging;
@@ -23,7 +30,7 @@ use wtd_ui::paint_scheduler::PaintScheduler;
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction, PixelRect};
 use wtd_ui::prefix_state::{PrefixOutput, PrefixStateMachine};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
-use wtd_ui::snapshot::{rebuild_from_snapshot, SnapshotRebuild, SnapshotTab};
+use wtd_ui::snapshot::{rebuild_from_snapshot, PaneSession, SnapshotRebuild, SnapshotTab};
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
 use wtd_ui::window::{self, MouseEventKind};
@@ -148,6 +155,46 @@ fn pane_host_target<'a>(tab: &'a SnapshotTab, pane_id: &PaneId) -> Option<&'a st
         .map(|pane_session| pane_session.pane_path.as_str())
 }
 
+fn pane_short_name(pane_path: &str) -> &str {
+    pane_path.rsplit('/').next().unwrap_or(pane_path)
+}
+
+fn focused_pane_title(tab: &SnapshotTab) -> Option<&str> {
+    let focused = tab.layout_tree.focus();
+    tab.pane_sessions
+        .get(&focused)
+        .and_then(|pane_session| pane_session.title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+}
+
+fn compose_window_title(
+    workspace_name: &str,
+    tab_strip: &TabStrip,
+    active_tab: Option<&SnapshotTab>,
+) -> String {
+    let mut title = tab_strip.window_title(workspace_name);
+    if let Some(pane_title) = active_tab.and_then(focused_pane_title) {
+        title.push_str(" — ");
+        title.push_str(pane_title);
+    }
+    title
+}
+
+fn refresh_window_title(
+    hwnd: windows::Win32::Foundation::HWND,
+    workspace_name: &str,
+    tab_strip: &TabStrip,
+    active_tab: Option<&SnapshotTab>,
+) {
+    let win_title = compose_window_title(workspace_name, tab_strip, active_tab);
+    window::set_window_title(hwnd, &win_title);
+}
+
+fn pane_overlay_label(pane_session: &PaneSession) -> String {
+    pane_short_name(&pane_session.pane_path).to_string()
+}
+
 fn send_active_pane_sizes(
     bridge: Option<&HostBridge>,
     connected: bool,
@@ -189,8 +236,7 @@ fn pane_sizes_for_layout(
             continue;
         };
 
-        let (cols, rows) =
-            pane_cell_size_for_viewport(&rect, cell_w, cell_h, pane_viewport_insets);
+        let (cols, rows) = pane_cell_size_for_viewport(&rect, cell_w, cell_h, pane_viewport_insets);
         sizes.push((pane_id, cols, rows));
     }
     sizes
@@ -269,22 +315,113 @@ fn bound_action_name(classifier: &InputClassifier, event: &KeyEvent) -> Option<S
     }
 }
 
-fn send_ui_action(bridge: &HostBridge, tab: &SnapshotTab, action_name: &str) {
+const TAB_MENU_NEW_TAB: u32 = 1;
+const TAB_MENU_RENAME_TAB: u32 = 2;
+const TAB_MENU_CLOSE_TAB: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabContextMenuAction {
+    NewTab,
+    RenameTab,
+    CloseTab,
+}
+
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn action_args_to_value(args: &Option<HashMap<String, String>>) -> serde_json::Value {
+    args.as_ref()
+        .map(|value| serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn send_ui_action(
+    bridge: &HostBridge,
+    tab: &SnapshotTab,
+    action_name: &str,
+    args: serde_json::Value,
+) {
     let focused = tab.layout_tree.focus();
     let target = pane_host_target(tab, &focused)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{}", focused.0));
-    bridge.send_action(
-        action_name.to_string(),
-        Some(target),
-        serde_json::Value::Null,
-    );
+    bridge.send_action(action_name.to_string(), Some(target), args);
     bridge.refresh_workspace();
 }
 
 fn send_workspace_action(bridge: &HostBridge, action: &str, args: serde_json::Value) {
     bridge.send_action(action.to_string(), None, args);
     bridge.refresh_workspace();
+}
+
+fn focused_pane_name(tab: &SnapshotTab) -> String {
+    let focused = tab.layout_tree.focus();
+    tab.pane_sessions
+        .get(&focused)
+        .and_then(|session| session.pane_path.rsplit('/').next().map(str::to_owned))
+        .unwrap_or_else(|| format!("{}", focused.0))
+}
+
+fn show_tab_context_menu(
+    hwnd: HWND,
+    x: f32,
+    y: f32,
+    can_close: bool,
+) -> Option<TabContextMenuAction> {
+    unsafe {
+        let menu = CreatePopupMenu().ok()?;
+        let new_tab = wide_null("New Tab");
+        let rename_tab = wide_null("Rename Tab");
+        let close_tab = wide_null("Close Tab");
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            TAB_MENU_NEW_TAB as usize,
+            PCWSTR(new_tab.as_ptr()),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            TAB_MENU_RENAME_TAB as usize,
+            PCWSTR(rename_tab.as_ptr()),
+        );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let close_flags = if can_close {
+            MF_STRING | MF_ENABLED
+        } else {
+            MF_STRING | MF_GRAYED
+        };
+        let _ = AppendMenuW(
+            menu,
+            close_flags,
+            TAB_MENU_CLOSE_TAB as usize,
+            PCWSTR(close_tab.as_ptr()),
+        );
+
+        let mut point = POINT {
+            x: x.round() as i32,
+            y: y.round() as i32,
+        };
+        let _ = ClientToScreen(hwnd, &mut point);
+        let _ = SetForegroundWindow(hwnd);
+        let command = TrackPopupMenuEx(
+            menu,
+            (TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD).0,
+            point.x,
+            point.y,
+            hwnd,
+            None,
+        );
+        let _ = DestroyMenu(menu);
+
+        match command.0 as u32 {
+            TAB_MENU_NEW_TAB => Some(TabContextMenuAction::NewTab),
+            TAB_MENU_RENAME_TAB => Some(TabContextMenuAction::RenameTab),
+            TAB_MENU_CLOSE_TAB if can_close => Some(TabContextMenuAction::CloseTab),
+            _ => None,
+        }
+    }
 }
 
 fn clamp_cells(value: f32) -> u16 {
@@ -404,12 +541,16 @@ fn dispatch_action(
         "next-tab" => {
             let count = tab_strip.tab_count();
             if count > 0 {
-                let next = (tab_strip.active_index() + 1) % count;
-                tab_strip.set_active(next);
                 if let Some(bridge) = bridge {
                     if connected {
                         send_workspace_action(bridge, "next-tab", serde_json::Value::Null);
+                    } else {
+                        let next = (tab_strip.active_index() + 1) % count;
+                        tab_strip.set_active(next);
                     }
+                } else {
+                    let next = (tab_strip.active_index() + 1) % count;
+                    tab_strip.set_active(next);
                 }
             }
             true
@@ -417,16 +558,24 @@ fn dispatch_action(
         "prev-tab" => {
             let count = tab_strip.tab_count();
             if count > 0 {
-                let prev = if tab_strip.active_index() == 0 {
-                    count - 1
-                } else {
-                    tab_strip.active_index() - 1
-                };
-                tab_strip.set_active(prev);
                 if let Some(bridge) = bridge {
                     if connected {
                         send_workspace_action(bridge, "prev-tab", serde_json::Value::Null);
+                    } else {
+                        let prev = if tab_strip.active_index() == 0 {
+                            count - 1
+                        } else {
+                            tab_strip.active_index() - 1
+                        };
+                        tab_strip.set_active(prev);
                     }
+                } else {
+                    let prev = if tab_strip.active_index() == 0 {
+                        count - 1
+                    } else {
+                        tab_strip.active_index() - 1
+                    };
+                    tab_strip.set_active(prev);
                 }
             }
             true
@@ -436,7 +585,6 @@ fn dispatch_action(
                 if let Some(idx_str) = a.get("index") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
                         if idx < tab_strip.tab_count() {
-                            tab_strip.set_active(idx);
                             if let Some(bridge) = bridge {
                                 if connected {
                                     send_workspace_action(
@@ -444,7 +592,11 @@ fn dispatch_action(
                                         "goto-tab",
                                         serde_json::json!({ "index": idx }),
                                     );
+                                } else {
+                                    tab_strip.set_active(idx);
                                 }
+                            } else {
+                                tab_strip.set_active(idx);
                             }
                         }
                     }
@@ -453,26 +605,72 @@ fn dispatch_action(
             true
         }
         "new-tab" => {
-            let tab_name = format!("tab-{}", tab_strip.tab_count() + 1);
-            tab_strip.add_tab(tab_name);
-            tab_strip.set_active(tab_strip.tab_count() - 1);
-            // Also tell host to create a tab with a session.
             if let Some(bridge) = bridge {
                 if connected {
                     send_workspace_action(bridge, "new-tab", serde_json::json!({}));
+                } else {
+                    let tab_name = format!("tab-{}", tab_strip.tab_count() + 1);
+                    tab_strip.add_tab(tab_name);
+                    tab_strip.set_active(tab_strip.tab_count() - 1);
                 }
+            } else {
+                let tab_name = format!("tab-{}", tab_strip.tab_count() + 1);
+                tab_strip.add_tab(tab_name);
+                tab_strip.set_active(tab_strip.tab_count() - 1);
             }
             true
         }
         "close-tab" => {
             if tab_strip.tab_count() > 1 {
-                let idx = tab_strip.active_index();
-                tab_strip.close_tab(idx);
-                // Also tell host to close the tab.
                 if let Some(bridge) = bridge {
                     if connected {
                         send_workspace_action(bridge, "close-tab", serde_json::json!({}));
+                    } else {
+                        let idx = tab_strip.active_index();
+                        tab_strip.close_tab(idx);
                     }
+                } else {
+                    let idx = tab_strip.active_index();
+                    tab_strip.close_tab(idx);
+                }
+            }
+            true
+        }
+        "rename-tab" => {
+            if args.is_none() {
+                let initial = tab_strip
+                    .active_tab()
+                    .map(|tab| tab.name.clone())
+                    .unwrap_or_default();
+                command_palette.show_prompt(
+                    "rename-tab",
+                    "Rename the active tab",
+                    "Enter a new tab name",
+                    initial,
+                );
+            } else if let Some(bridge) = bridge {
+                if connected {
+                    send_workspace_action(bridge, "rename-tab", action_args_to_value(&args));
+                }
+            }
+            true
+        }
+        "rename-pane" => {
+            if args.is_none() {
+                command_palette.show_prompt(
+                    "rename-pane",
+                    "Rename the focused pane",
+                    "Enter a new pane name",
+                    focused_pane_name(active_tab),
+                );
+            } else if let Some(bridge) = bridge {
+                if connected {
+                    send_ui_action(
+                        bridge,
+                        active_tab,
+                        "rename-pane",
+                        action_args_to_value(&args),
+                    );
                 }
             }
             true
@@ -509,7 +707,7 @@ fn dispatch_action(
         _ => {
             if let Some(bridge) = bridge {
                 if connected {
-                    send_ui_action(bridge, active_tab, name);
+                    send_ui_action(bridge, active_tab, name, action_args_to_value(&args));
                 }
             }
             false
@@ -574,6 +772,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         tab_strip.add_tab("loading".to_string());
     }
     tab_strip.set_active(0);
+    tab_strip.set_window_maximized(window::is_maximized(hwnd));
 
     // Create the status bar.
     let mut status_bar = StatusBar::new(renderer.dw_factory())?;
@@ -582,6 +781,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     } else {
         status_bar.set_workspace_name("demo".to_string());
     }
+    tab_strip.set_workspace_name(status_bar.workspace_name().to_string());
 
     // Create the command palette and input state machine.
     let bindings = wtd_core::global_settings::default_bindings();
@@ -622,8 +822,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     }
 
     // Set initial window title.
-    let win_title = tab_strip.window_title(title);
-    window::set_window_title(hwnd, &win_title);
+    refresh_window_title(
+        hwnd,
+        title,
+        &tab_strip,
+        active_tab_ref(&tabs, active_tab_index),
+    );
 
     // Track whether we're connected to host.
     let mut connected = false;
@@ -642,8 +846,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             &renderer,
             &tab_strip,
             &pane_layout,
-            &tabs[active_tab_index].layout_tree,
-            &tabs[active_tab_index].screens,
+            &tabs[active_tab_index],
             &status_bar,
             &command_palette,
             window_width,
@@ -673,6 +876,14 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         tracing::info!("attached to workspace");
                         delayed_show_deadline = Some(Instant::now() + Duration::from_millis(120));
                         startup_present_deadline = None;
+                        let (content_cols, content_rows) = content_dims(
+                            window_width,
+                            window_height,
+                            &tab_strip,
+                            &status_bar,
+                            cell_w,
+                            cell_h,
+                        );
                         if let Some(SnapshotRebuild {
                             workspace_name,
                             tab_names,
@@ -687,14 +898,20 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             status_bar.set_session_status(SessionStatus::Running);
 
                             tab_strip = TabStrip::new(renderer.dw_factory())?;
+                            tab_strip.set_workspace_name(workspace_name.clone());
+                            tab_strip.set_window_maximized(window::is_maximized(hwnd));
                             for name in tab_names {
                                 tab_strip.add_tab(name);
                             }
                             tab_strip.set_active(active_tab_index);
                             sync_tab_progresses(&mut tab_strip, &tabs);
                             tab_strip.layout(window_width);
-                            let win_title = tab_strip.window_title(&workspace_name);
-                            window::set_window_title(hwnd, &win_title);
+                            refresh_window_title(
+                                hwnd,
+                                &workspace_name,
+                                &tab_strip,
+                                active_tab_ref(&tabs, active_tab_index),
+                            );
 
                             let mut startup_sizes_match = false;
                             if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
@@ -804,16 +1021,22 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     }
                     HostEvent::TitleChanged { session_id, title } => {
                         tracing::debug!(session_id = %session_id, title = %title, "session title changed");
-                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                            let focused = active_tab.layout_tree.focus();
-                            if active_tab
-                                .pane_sessions
-                                .get(&focused)
-                                .is_some_and(|ps| ps.session_id == session_id)
-                            {
-                                window::set_window_title(hwnd, &format!("{title} — {title}"));
+                        if let Some((tab_index, pane_id)) =
+                            find_pane_for_session(&tabs, &session_id)
+                        {
+                            if let Some(tab) = tabs.get_mut(tab_index) {
+                                if let Some(pane_session) = tab.pane_sessions.get_mut(&pane_id) {
+                                    pane_session.title = Some(title.trim().to_string())
+                                        .filter(|value| !value.is_empty());
+                                }
                             }
                         }
+                        refresh_window_title(
+                            hwnd,
+                            workspace_name.as_deref().unwrap_or("WinTermDriver"),
+                            &tab_strip,
+                            active_tab_ref(&tabs, active_tab_index),
+                        );
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
@@ -822,7 +1045,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         progress,
                     } => {
                         tracing::debug!(session_id = %session_id, "session progress changed");
-                        if let Some((tab_index, pane_id)) = find_pane_for_session(&tabs, &session_id)
+                        if let Some((tab_index, pane_id)) =
+                            find_pane_for_session(&tabs, &session_id)
                         {
                             if let Some(tab) = tabs.get_mut(tab_index) {
                                 if let Some(pane_session) = tab.pane_sessions.get_mut(&pane_id) {
@@ -952,6 +1176,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 let _ = renderer.resize(w, h);
                 window_width = w as f32;
                 window_height = h as f32;
+                tab_strip.set_window_maximized(window::is_maximized(hwnd));
                 tab_strip.layout(window_width);
                 status_bar.layout(window_width);
 
@@ -1140,6 +1365,88 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 continue;
             }
 
+            if matches!(event.kind, MouseEventKind::RightDown) && event.y < tab_strip.height() {
+                if let Some(tab_index) = tab_strip.tab_index_at(event.x, event.y) {
+                    if let Some(action) =
+                        show_tab_context_menu(hwnd, event.x, event.y, tab_strip.tab_count() > 1)
+                    {
+                        match action {
+                            TabContextMenuAction::NewTab => {
+                                if let Some(ref bridge) = bridge {
+                                    if connected {
+                                        send_workspace_action(
+                                            bridge,
+                                            "new-tab",
+                                            serde_json::json!({}),
+                                        );
+                                    }
+                                } else {
+                                    let n = tab_strip.tab_count() + 1;
+                                    tab_strip.add_tab(format!("tab-{n}"));
+                                    tab_strip.set_active(tab_strip.tab_count() - 1);
+                                }
+                            }
+                            TabContextMenuAction::RenameTab => {
+                                let clicked_name = tab_strip
+                                    .tabs()
+                                    .get(tab_index)
+                                    .map(|tab| tab.name.clone())
+                                    .unwrap_or_default();
+                                if let Some(ref bridge) = bridge {
+                                    if connected && tab_index != active_tab_index {
+                                        send_workspace_action(
+                                            bridge,
+                                            "goto-tab",
+                                            serde_json::json!({"index": tab_index}),
+                                        );
+                                    }
+                                } else if tab_index < tab_strip.tab_count() {
+                                    tab_strip.set_active(tab_index);
+                                    active_tab_index = tab_index;
+                                }
+                                command_palette.show_prompt(
+                                    "rename-tab",
+                                    "Rename the selected tab",
+                                    "Enter a new tab name",
+                                    clicked_name,
+                                );
+                            }
+                            TabContextMenuAction::CloseTab => {
+                                if let Some(ref bridge) = bridge {
+                                    if connected {
+                                        if tab_index != active_tab_index {
+                                            send_workspace_action(
+                                                bridge,
+                                                "goto-tab",
+                                                serde_json::json!({"index": tab_index}),
+                                            );
+                                        }
+                                        send_workspace_action(
+                                            bridge,
+                                            "close-tab",
+                                            serde_json::json!({}),
+                                        );
+                                    }
+                                } else if tab_strip.tab_count() > 1 {
+                                    let result = tab_strip.close_tab(tab_index);
+                                    if matches!(result, TabAction::Close(_))
+                                        && tab_index < tabs.len()
+                                    {
+                                        tabs.remove(tab_index);
+                                        active_tab_index = tab_strip
+                                            .active_index()
+                                            .min(tabs.len().saturating_sub(1));
+                                    }
+                                }
+                            }
+                        }
+                        force_immediate_paint = true;
+                        needs_paint = true;
+                        continue;
+                    }
+                }
+            }
+
             // Normal mode — delegate to MouseHandler.
             let focused = match active_tab_ref(&tabs, active_tab_index) {
                 Some(tab) => tab.layout_tree.focus(),
@@ -1170,6 +1477,27 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 pane_viewport_insets.vertical_cells,
             );
 
+            if matches!(event.kind, MouseEventKind::LeftDoubleDown)
+                && event.y < ts_height
+                && !tab_strip.hits_interactive_target(event.x, event.y)
+            {
+                window::toggle_maximize_window(hwnd);
+                tab_strip.set_window_maximized(window::is_maximized(hwnd));
+                tab_strip.layout(window_width);
+                force_immediate_paint = true;
+                needs_paint = true;
+                continue;
+            }
+
+            if matches!(event.kind, MouseEventKind::LeftDown)
+                && event.y < ts_height
+                && outputs.is_empty()
+                && !tab_strip.hits_interactive_target(event.x, event.y)
+            {
+                window::begin_window_drag(hwnd);
+                continue;
+            }
+
             for output in outputs {
                 match output {
                     MouseOutput::FocusPane(pane_id) => {
@@ -1182,6 +1510,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             }
                         }
                         sync_tab_progresses(&mut tab_strip, &tabs);
+                        refresh_window_title(
+                            hwnd,
+                            workspace_name.as_deref().unwrap_or("WinTermDriver"),
+                            &tab_strip,
+                            active_tab_ref(&tabs, active_tab_index),
+                        );
                     }
                     MouseOutput::SelectionChanged(_pane_id, _selection) => {
                         // Selection state is tracked inside MouseHandler.
@@ -1227,6 +1561,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             let _ = active_tab.layout_tree.set_focus(pane_id);
                         }
                         sync_tab_progresses(&mut tab_strip, &tabs);
+                        refresh_window_title(
+                            hwnd,
+                            workspace_name.as_deref().unwrap_or("WinTermDriver"),
+                            &tab_strip,
+                            active_tab_ref(&tabs, active_tab_index),
+                        );
                     }
                     MouseOutput::SendToSession(pane_id, bytes) => {
                         if let Some(ref bridge) = bridge {
@@ -1272,30 +1612,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 return Ok(());
                             }
                             TabAction::Create => {
-                                let n = tab_strip.tab_count() + 1;
-                                tab_strip.add_tab(format!("tab-{n}"));
-                                tab_strip.set_active(tab_strip.tab_count() - 1);
-                                active_tab_index = tab_strip.active_index();
-                                let fresh = LayoutTree::new();
-                                let pane_id = fresh.focus();
-                                let mut screens = HashMap::new();
-                                screens.insert(pane_id, ScreenBuffer::new(cols, rows, 1000));
-                                tabs.push(SnapshotTab {
-                                    layout_tree: fresh,
-                                    pane_sessions: HashMap::new(),
-                                    screens,
-                                });
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    pane_layout.update(
-                                        &active_tab.layout_tree,
-                                        0.0,
-                                        tab_strip.height(),
-                                        content_cols,
-                                        content_rows,
-                                    );
-                                    refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
-                                }
-                                tab_strip.layout(window_width);
                                 if let Some(ref bridge) = bridge {
                                     if connected {
                                         send_workspace_action(
@@ -1303,19 +1619,76 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             "new-tab",
                                             serde_json::json!({}),
                                         );
+                                    } else {
+                                        let n = tab_strip.tab_count() + 1;
+                                        tab_strip.add_tab(format!("tab-{n}"));
+                                        tab_strip.set_active(tab_strip.tab_count() - 1);
+                                        active_tab_index = tab_strip.active_index();
+                                        let fresh = LayoutTree::new();
+                                        let pane_id = fresh.focus();
+                                        let mut screens = HashMap::new();
+                                        screens
+                                            .insert(pane_id, ScreenBuffer::new(cols, rows, 1000));
+                                        tabs.push(SnapshotTab {
+                                            layout_tree: fresh,
+                                            pane_sessions: HashMap::new(),
+                                            screens,
+                                        });
+                                        if let Some(active_tab) =
+                                            active_tab_ref(&tabs, active_tab_index)
+                                        {
+                                            pane_layout.update(
+                                                &active_tab.layout_tree,
+                                                0.0,
+                                                tab_strip.height(),
+                                                content_cols,
+                                                content_rows,
+                                            );
+                                            refresh_mouse_modes(
+                                                &mut mouse_modes,
+                                                &active_tab.screens,
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    let n = tab_strip.tab_count() + 1;
+                                    tab_strip.add_tab(format!("tab-{n}"));
+                                    tab_strip.set_active(tab_strip.tab_count() - 1);
+                                    active_tab_index = tab_strip.active_index();
+                                    let fresh = LayoutTree::new();
+                                    let pane_id = fresh.focus();
+                                    let mut screens = HashMap::new();
+                                    screens.insert(pane_id, ScreenBuffer::new(cols, rows, 1000));
+                                    tabs.push(SnapshotTab {
+                                        layout_tree: fresh,
+                                        pane_sessions: HashMap::new(),
+                                        screens,
+                                    });
+                                    if let Some(active_tab) =
+                                        active_tab_ref(&tabs, active_tab_index)
+                                    {
+                                        pane_layout.update(
+                                            &active_tab.layout_tree,
+                                            0.0,
+                                            tab_strip.height(),
+                                            content_cols,
+                                            content_rows,
+                                        );
+                                        refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
                                     }
                                 }
+                                tab_strip.layout(window_width);
+                            }
+                            TabAction::MinimizeWindow => {
+                                window::minimize_window(hwnd);
+                            }
+                            TabAction::ToggleMaximizeWindow => {
+                                window::toggle_maximize_window(hwnd);
+                                tab_strip.set_window_maximized(window::is_maximized(hwnd));
+                                tab_strip.layout(window_width);
                             }
                             TabAction::Close(_) => {
                                 if tabs.len() > 1 {
-                                    let result = tab_strip.close_tab(active_tab_index);
-                                    if matches!(result, TabAction::Close(_)) && !tabs.is_empty() {
-                                        tabs.remove(active_tab_index);
-                                        active_tab_index = tab_strip.active_index();
-                                        if active_tab_index >= tabs.len() {
-                                            active_tab_index = tabs.len().saturating_sub(1);
-                                        }
-                                    }
                                     if let Some(ref bridge) = bridge {
                                         if connected {
                                             send_workspace_action(
@@ -1323,6 +1696,27 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 "close-tab",
                                                 serde_json::json!({}),
                                             );
+                                        } else {
+                                            let result = tab_strip.close_tab(active_tab_index);
+                                            if matches!(result, TabAction::Close(_))
+                                                && !tabs.is_empty()
+                                            {
+                                                tabs.remove(active_tab_index);
+                                                active_tab_index = tab_strip.active_index();
+                                                if active_tab_index >= tabs.len() {
+                                                    active_tab_index = tabs.len().saturating_sub(1);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        let result = tab_strip.close_tab(active_tab_index);
+                                        if matches!(result, TabAction::Close(_)) && !tabs.is_empty()
+                                        {
+                                            tabs.remove(active_tab_index);
+                                            active_tab_index = tab_strip.active_index();
+                                            if active_tab_index >= tabs.len() {
+                                                active_tab_index = tabs.len().saturating_sub(1);
+                                            }
                                         }
                                     }
                                 }
@@ -1333,49 +1727,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             }
                             TabAction::SwitchTo(target_tab) => {
                                 if target_tab < tab_strip.tab_count() {
-                                    tab_strip.set_active(target_tab);
-                                    active_tab_index = target_tab;
-                                    let (pane_sizes, focused, pane_path) = if let Some(active_tab) =
-                                        active_tab_ref(&tabs, active_tab_index)
-                                    {
-                                        pane_layout.update(
-                                            &active_tab.layout_tree,
-                                            0.0,
-                                            tab_strip.height(),
-                                            content_cols,
-                                            content_rows,
-                                        );
-                                        let pane_sizes = pane_sizes_for_layout(
-                                            &pane_layout,
-                                            &active_tab.layout_tree,
-                                            cell_w,
-                                            cell_h,
-                                            pane_viewport_insets,
-                                        );
-                                        let focused = active_tab.layout_tree.focus();
-                                        let pane_path = active_tab
-                                            .pane_sessions
-                                            .get(&focused)
-                                            .map(|ps| ps.pane_path.clone());
-                                        (pane_sizes, Some(focused), pane_path)
-                                    } else {
-                                        (Vec::new(), None, None)
-                                    };
-                                    if let Some(active_tab) =
-                                        active_tab_mut(&mut tabs, active_tab_index)
-                                    {
-                                        sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
-                                    }
-                                    if let Some(path) = pane_path {
-                                        status_bar.set_pane_path(path);
-                                    } else if let Some(focused) = focused {
-                                        status_bar.set_pane_path(format!("{}", focused.0));
-                                    }
-                                    if let Some(active_tab) =
-                                        active_tab_ref(&tabs, active_tab_index)
-                                    {
-                                        refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
-                                    }
                                     if let Some(ref bridge) = bridge {
                                         if connected {
                                             send_workspace_action(
@@ -1383,14 +1734,116 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 "goto-tab",
                                                 serde_json::json!({"index": target_tab}),
                                             );
+                                        } else {
+                                            tab_strip.set_active(target_tab);
+                                            active_tab_index = target_tab;
+                                            let (pane_sizes, focused, pane_path) =
+                                                if let Some(active_tab) =
+                                                    active_tab_ref(&tabs, active_tab_index)
+                                                {
+                                                    pane_layout.update(
+                                                        &active_tab.layout_tree,
+                                                        0.0,
+                                                        tab_strip.height(),
+                                                        content_cols,
+                                                        content_rows,
+                                                    );
+                                                    let pane_sizes = pane_sizes_for_layout(
+                                                        &pane_layout,
+                                                        &active_tab.layout_tree,
+                                                        cell_w,
+                                                        cell_h,
+                                                        pane_viewport_insets,
+                                                    );
+                                                    let focused = active_tab.layout_tree.focus();
+                                                    let pane_path = active_tab
+                                                        .pane_sessions
+                                                        .get(&focused)
+                                                        .map(|ps| ps.pane_path.clone());
+                                                    (pane_sizes, Some(focused), pane_path)
+                                                } else {
+                                                    (Vec::new(), None, None)
+                                                };
+                                            if let Some(active_tab) =
+                                                active_tab_mut(&mut tabs, active_tab_index)
+                                            {
+                                                sync_screen_buffers_to_sizes(
+                                                    active_tab,
+                                                    &pane_sizes,
+                                                );
+                                            }
+                                            if let Some(path) = pane_path {
+                                                status_bar.set_pane_path(path);
+                                            } else if let Some(focused) = focused {
+                                                status_bar.set_pane_path(format!("{}", focused.0));
+                                            }
+                                            if let Some(active_tab) =
+                                                active_tab_ref(&tabs, active_tab_index)
+                                            {
+                                                refresh_mouse_modes(
+                                                    &mut mouse_modes,
+                                                    &active_tab.screens,
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        tab_strip.set_active(target_tab);
+                                        active_tab_index = target_tab;
+                                        let (pane_sizes, focused, pane_path) =
+                                            if let Some(active_tab) =
+                                                active_tab_ref(&tabs, active_tab_index)
+                                            {
+                                                pane_layout.update(
+                                                    &active_tab.layout_tree,
+                                                    0.0,
+                                                    tab_strip.height(),
+                                                    content_cols,
+                                                    content_rows,
+                                                );
+                                                let pane_sizes = pane_sizes_for_layout(
+                                                    &pane_layout,
+                                                    &active_tab.layout_tree,
+                                                    cell_w,
+                                                    cell_h,
+                                                    pane_viewport_insets,
+                                                );
+                                                let focused = active_tab.layout_tree.focus();
+                                                let pane_path = active_tab
+                                                    .pane_sessions
+                                                    .get(&focused)
+                                                    .map(|ps| ps.pane_path.clone());
+                                                (pane_sizes, Some(focused), pane_path)
+                                            } else {
+                                                (Vec::new(), None, None)
+                                            };
+                                        if let Some(active_tab) =
+                                            active_tab_mut(&mut tabs, active_tab_index)
+                                        {
+                                            sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
+                                        }
+                                        if let Some(path) = pane_path {
+                                            status_bar.set_pane_path(path);
+                                        } else if let Some(focused) = focused {
+                                            status_bar.set_pane_path(format!("{}", focused.0));
+                                        }
+                                        if let Some(active_tab) =
+                                            active_tab_ref(&tabs, active_tab_index)
+                                        {
+                                            refresh_mouse_modes(
+                                                &mut mouse_modes,
+                                                &active_tab.screens,
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
-                        let win_title = tab_strip
-                            .window_title(workspace_name.as_deref().unwrap_or("WinTermDriver"));
-                        window::set_window_title(hwnd, &win_title);
+                        refresh_window_title(
+                            hwnd,
+                            workspace_name.as_deref().unwrap_or("WinTermDriver"),
+                            &tab_strip,
+                            active_tab_ref(&tabs, active_tab_index),
+                        );
                     }
                     MouseOutput::SetCursor(_hint) => {
                         // Cursor shape changes — could map to Win32 SetCursor.
@@ -1420,8 +1873,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             if should_show {
                 window::show_terminal_window(hwnd);
                 if awaiting_startup_frame {
-                    startup_present_deadline =
-                        Some(Instant::now() + Duration::from_millis(700));
+                    startup_present_deadline = Some(Instant::now() + Duration::from_millis(700));
                 } else {
                     startup_present_deadline = None;
                 }
@@ -1487,8 +1939,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         }
 
         let startup_paint_ready = !awaiting_startup_frame
-            || startup_present_deadline
-                .is_some_and(|deadline| Instant::now() >= deadline);
+            || startup_present_deadline.is_some_and(|deadline| Instant::now() >= deadline);
         if startup_paint_ready {
             startup_present_deadline = None;
         }
@@ -1504,8 +1955,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 &renderer,
                 &tab_strip,
                 &pane_layout,
-                &active_tab.layout_tree,
-                &active_tab.screens,
+                active_tab,
                 &status_bar,
                 &command_palette,
                 window_width,
@@ -1537,8 +1987,7 @@ fn paint_all(
     renderer: &TerminalRenderer,
     tab_strip: &TabStrip,
     pane_layout: &PaneLayout,
-    layout_tree: &LayoutTree,
-    screens: &HashMap<PaneId, ScreenBuffer>,
+    tab: &SnapshotTab,
     status_bar: &StatusBar,
     command_palette: &CommandPalette,
     window_width: f32,
@@ -1554,10 +2003,12 @@ fn paint_all(
     let tab_result = tab_strip.paint(renderer.render_target());
 
     // Pane content: render each pane's screen buffer clipped to its viewport.
-    for pane_id in layout_tree.panes() {
-        if let (Some(rect), Some(screen)) =
-            (pane_layout.pane_pixel_rect(&pane_id), screens.get(&pane_id))
-        {
+    let focused = tab.layout_tree.focus();
+    for pane_id in tab.layout_tree.panes() {
+        if let (Some(rect), Some(screen)) = (
+            pane_layout.pane_pixel_rect(&pane_id),
+            tab.screens.get(&pane_id),
+        ) {
             let content_rect = pane_content_rect(rect, cell_w, cell_h, pane_viewport_insets);
             renderer
                 .paint_pane_viewport(
@@ -1569,11 +2020,23 @@ fn paint_all(
                     None,
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if let Some(pane_session) = tab.pane_sessions.get(&pane_id) {
+                let overlay_label = pane_overlay_label(pane_session);
+                renderer
+                    .paint_pane_title_overlay(
+                        &overlay_label,
+                        rect.x,
+                        rect.y,
+                        rect.width,
+                        rect.height,
+                        pane_id == focused,
+                    )
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
         }
     }
 
     // Pane borders, splitters, and focus indicator.
-    let focused = layout_tree.focus();
     let layout_result = pane_layout.paint(renderer.render_target(), &focused);
 
     // Status bar at the bottom.

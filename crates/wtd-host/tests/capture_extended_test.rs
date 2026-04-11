@@ -190,9 +190,11 @@ async fn open_workspace_and_wait(
     let open_resp = send_request(
         client,
         &OpenWorkspace {
-            name: name.to_owned(),
+            name: Some(name.to_owned()),
             file: Some(file_path.to_owned()),
             recreate: false,
+
+            profile: None,
         },
     )
     .await;

@@ -101,9 +101,11 @@ async fn open_workspace(
         &Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: name.to_string(),
+                name: Some(name.to_string()),
                 file: Some(file.to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

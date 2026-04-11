@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 use wtd_ipc::message::{
-    ProgressChanged, ProgressInfo, ProgressState, SessionOutput, SessionStateChanged,
-    TitleChanged, WorkspaceStateChanged,
+    ProgressChanged, ProgressInfo, ProgressState, SessionOutput, SessionStateChanged, TitleChanged,
+    WorkspaceStateChanged,
 };
 use wtd_ipc::Envelope;
 

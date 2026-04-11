@@ -147,9 +147,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "action-split".to_string(),
+                name: Some("action-split".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -312,9 +314,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "action-close".to_string(),
+                name: Some("action-close".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -457,9 +461,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "action-focus".to_string(),
+                name: Some("action-focus".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -539,9 +545,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "action-err".to_string(),
+                name: Some("action-err".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

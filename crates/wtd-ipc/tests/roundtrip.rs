@@ -58,18 +58,22 @@ fn handshake_cli_roundtrip() {
 #[test]
 fn open_workspace_roundtrip() {
     roundtrip(OpenWorkspace {
-        name: "dev".into(),
+        name: Some("dev".into()),
         file: Some("/path/to/dev.yaml".into()),
         recreate: false,
+
+        profile: None,
     });
 }
 
 #[test]
 fn open_workspace_minimal_roundtrip() {
     roundtrip(OpenWorkspace {
-        name: "dev".into(),
+        name: Some("dev".into()),
         file: None,
         recreate: true,
+
+        profile: None,
     });
 }
 

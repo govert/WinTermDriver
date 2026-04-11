@@ -405,28 +405,60 @@ fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     out.extend_from_slice(b"\x1b[0");
 
-    if attrs.is_set(CellAttrs::BOLD) { out.extend_from_slice(b";1"); }
-    if attrs.is_set(CellAttrs::DIM) { out.extend_from_slice(b";2"); }
-    if attrs.is_set(CellAttrs::ITALIC) { out.extend_from_slice(b";3"); }
-    if attrs.is_set(CellAttrs::UNDERLINE) { out.extend_from_slice(b";4"); }
-    if attrs.is_set(CellAttrs::BLINK) { out.extend_from_slice(b";5"); }
-    if attrs.is_set(CellAttrs::INVERSE) { out.extend_from_slice(b";7"); }
-    if attrs.is_set(CellAttrs::HIDDEN) { out.extend_from_slice(b";8"); }
-    if attrs.is_set(CellAttrs::STRIKETHROUGH) { out.extend_from_slice(b";9"); }
+    if attrs.is_set(CellAttrs::BOLD) {
+        out.extend_from_slice(b";1");
+    }
+    if attrs.is_set(CellAttrs::DIM) {
+        out.extend_from_slice(b";2");
+    }
+    if attrs.is_set(CellAttrs::ITALIC) {
+        out.extend_from_slice(b";3");
+    }
+    if attrs.is_set(CellAttrs::UNDERLINE) {
+        out.extend_from_slice(b";4");
+    }
+    if attrs.is_set(CellAttrs::BLINK) {
+        out.extend_from_slice(b";5");
+    }
+    if attrs.is_set(CellAttrs::INVERSE) {
+        out.extend_from_slice(b";7");
+    }
+    if attrs.is_set(CellAttrs::HIDDEN) {
+        out.extend_from_slice(b";8");
+    }
+    if attrs.is_set(CellAttrs::STRIKETHROUGH) {
+        out.extend_from_slice(b";9");
+    }
 
     match fg {
         Color::Default => {}
-        Color::Ansi(n) => { let _ = write!(out, ";3{}", n); }
-        Color::AnsiBright(n) => { let _ = write!(out, ";9{}", n); }
-        Color::Indexed(n) => { let _ = write!(out, ";38;5;{}", n); }
-        Color::Rgb(r, g, b) => { let _ = write!(out, ";38;2;{};{};{}", r, g, b); }
+        Color::Ansi(n) => {
+            let _ = write!(out, ";3{}", n);
+        }
+        Color::AnsiBright(n) => {
+            let _ = write!(out, ";9{}", n);
+        }
+        Color::Indexed(n) => {
+            let _ = write!(out, ";38;5;{}", n);
+        }
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, ";38;2;{};{};{}", r, g, b);
+        }
     }
     match bg {
         Color::Default => {}
-        Color::Ansi(n) => { let _ = write!(out, ";4{}", n); }
-        Color::AnsiBright(n) => { let _ = write!(out, ";10{}", n); }
-        Color::Indexed(n) => { let _ = write!(out, ";48;5;{}", n); }
-        Color::Rgb(r, g, b) => { let _ = write!(out, ";48;2;{};{};{}", r, g, b); }
+        Color::Ansi(n) => {
+            let _ = write!(out, ";4{}", n);
+        }
+        Color::AnsiBright(n) => {
+            let _ = write!(out, ";10{}", n);
+        }
+        Color::Indexed(n) => {
+            let _ = write!(out, ";48;5;{}", n);
+        }
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, ";48;2;{};{};{}", r, g, b);
+        }
     }
 
     out.push(b'm');
@@ -1494,7 +1526,8 @@ impl Perform for ScreenBuffer {
                 let g = self.active_grid_mut();
                 let row_start = row * g.cols;
                 if col + n < end {
-                    g.cells.copy_within(row_start + col + n..row_start + end, row_start + col);
+                    g.cells
+                        .copy_within(row_start + col + n..row_start + end, row_start + col);
                 }
                 let blank_start = row_start + end.saturating_sub(n).max(col);
                 g.cells[blank_start..row_start + end].fill(Cell::blank());
@@ -1580,7 +1613,8 @@ impl Perform for ScreenBuffer {
                 let g = self.active_grid_mut();
                 let row_start = row * g.cols;
                 if col + n < end {
-                    g.cells.copy_within(row_start + col..row_start + end - n, row_start + col + n);
+                    g.cells
+                        .copy_within(row_start + col..row_start + end - n, row_start + col + n);
                 }
                 let blank_end = (row_start + col + n).min(row_start + end);
                 g.cells[row_start + col..blank_end].fill(Cell::blank());

@@ -170,9 +170,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "file-open-test".to_string(),
+                name: Some("file-open-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -302,9 +304,11 @@ async fn open_workspace_file_not_found() {
         &Envelope::new(
             "open-bad",
             &OpenWorkspace {
-                name: "ghost-workspace".to_string(),
+                name: Some("ghost-workspace".to_string()),
                 file: Some(r"C:\nonexistent\path\ghost.yaml".to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -356,9 +360,11 @@ async fn open_workspace_invalid_yaml() {
         &Envelope::new(
             "open-bad-yaml",
             &OpenWorkspace {
-                name: "bad-yaml-test".to_string(),
+                name: Some("bad-yaml-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -421,9 +427,11 @@ tabs:
         &Envelope::new(
             "open-incomplete",
             &OpenWorkspace {
-                name: "bad-version".to_string(),
+                name: Some("bad-version".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -483,9 +491,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "save-test".to_string(),
+                name: Some("save-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -601,9 +611,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "split-file-test".to_string(),
+                name: Some("split-file-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

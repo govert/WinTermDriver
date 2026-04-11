@@ -532,9 +532,11 @@ async fn typed_bytes_reach_conpty_session_via_ipc() {
         .write_frame(&Envelope::new(
             "kb-open",
             &OpenWorkspace {
-                name: "gate-kb-test".to_string(),
+                name: Some("gate-kb-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

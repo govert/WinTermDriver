@@ -159,7 +159,7 @@ impl RequestHandler for PerfHandler {
     ) -> Option<Envelope> {
         match msg {
             TypedMessage::OpenWorkspace(open) => {
-                let yaml = if open.name == "perf-five" {
+                let yaml = if open.name.as_deref() == Some("perf-five") {
                     FIVE_PANE_YAML
                 } else {
                     SINGLE_PANE_YAML
@@ -425,9 +425,11 @@ async fn capture_response_under_100ms() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "perf-single".to_string(),
+                name: Some("perf-single".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -612,9 +614,11 @@ async fn workspace_open_5_sessions_under_2s() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "perf-five".to_string(),
+                name: Some("perf-five".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

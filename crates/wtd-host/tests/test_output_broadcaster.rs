@@ -205,9 +205,11 @@ async fn ui_client_receives_session_output() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "bcast-test".to_string(),
+                name: Some("bcast-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -321,9 +323,11 @@ async fn session_output_is_valid_base64() {
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "b64-test".to_string(),
+                name: Some("b64-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().to_string()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

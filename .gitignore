@@ -7,3 +7,4 @@ target/
 # Local agent / workspace state
 .claude/
 .wtd/
+.tmp/

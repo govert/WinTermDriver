@@ -45,6 +45,16 @@ pub fn request_repaint(hwnd: HWND) {
     }
 }
 
+fn record_resize(width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    RESIZE_WIDTH.store(width, Ordering::Relaxed);
+    RESIZE_HEIGHT.store(height, Ordering::Relaxed);
+    RESIZED.store(true, Ordering::Relaxed);
+    NEEDS_PAINT.store(true, Ordering::Relaxed);
+}
+
 /// Return the current client area size in pixels.
 pub fn client_size(hwnd: HWND) -> Option<(u32, u32)> {
     unsafe {
@@ -63,6 +73,15 @@ pub fn client_size(hwnd: HWND) -> Option<(u32, u32)> {
     }
 }
 
+fn record_resize_from_client(hwnd: HWND) -> bool {
+    if let Some((width, height)) = client_size(hwnd) {
+        record_resize(width, height);
+        true
+    } else {
+        false
+    }
+}
+
 // ── Mouse events ─────────────────────────────────────────────────────────────
 
 /// A mouse event captured from the window proc.
@@ -78,6 +97,8 @@ pub struct MouseEvent {
 pub enum MouseEventKind {
     /// Left button pressed.
     LeftDown,
+    /// Left button double-clicked.
+    LeftDoubleDown,
     /// Left button released.
     LeftUp,
     /// Right button pressed.
@@ -159,6 +180,41 @@ pub fn set_window_title(hwnd: HWND, title: &str) {
     }
 }
 
+/// Begin a standard window drag from client-area chrome.
+pub fn begin_window_drag(hwnd: HWND) {
+    unsafe {
+        let _ = SendMessageW(
+            hwnd,
+            WM_NCLBUTTONDOWN,
+            WPARAM(HTCAPTION as usize),
+            LPARAM(0),
+        );
+    }
+}
+
+pub fn minimize_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_MINIMIZE);
+    }
+}
+
+pub fn toggle_maximize_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(
+            hwnd,
+            if IsZoomed(hwnd).as_bool() {
+                SW_RESTORE
+            } else {
+                SW_MAXIMIZE
+            },
+        );
+    }
+}
+
+pub fn is_maximized(hwnd: HWND) -> bool {
+    unsafe { IsZoomed(hwnd).as_bool() }
+}
+
 /// Create a top-level window for the terminal UI.
 pub fn create_terminal_window(title: &str, width: i32, height: i32) -> Result<HWND> {
     unsafe {
@@ -172,17 +228,22 @@ pub fn create_terminal_window(title: &str, width: i32, height: i32) -> Result<HW
             lpszClassName: class_name,
             hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
+            style: CS_DBLCLKS,
             ..Default::default()
         };
         RegisterClassW(&wc);
 
         let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
 
+        let style = WINDOW_STYLE(
+            WS_POPUP.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0 | WS_SYSMENU.0,
+        );
+
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class_name,
             PCWSTR(title_wide.as_ptr()),
-            WS_OVERLAPPEDWINDOW,
+            style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             width,
@@ -251,8 +312,51 @@ fn client_pos_from_screen(hwnd: HWND, lparam: LPARAM) -> (f32, f32) {
     (point.x as f32, point.y as f32)
 }
 
+unsafe fn resize_hit_test(hwnd: HWND, lparam: LPARAM) -> Option<LRESULT> {
+    if IsZoomed(hwnd).as_bool() {
+        return None;
+    }
+
+    let mut window_rect = RECT::default();
+    if GetWindowRect(hwnd, &mut window_rect).is_err() {
+        return None;
+    }
+
+    let border_x = (GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)).max(6);
+    let border_y = (GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)).max(6);
+
+    let x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+
+    let left = x < window_rect.left + border_x;
+    let right = x >= window_rect.right - border_x;
+    let top = y < window_rect.top + border_y;
+    let bottom = y >= window_rect.bottom - border_y;
+
+    let hit = match (left, right, top, bottom) {
+        (true, _, true, _) => HTTOPLEFT,
+        (_, true, true, _) => HTTOPRIGHT,
+        (true, _, _, true) => HTBOTTOMLEFT,
+        (_, true, _, true) => HTBOTTOMRIGHT,
+        (true, _, _, _) => HTLEFT,
+        (_, true, _, _) => HTRIGHT,
+        (_, _, true, _) => HTTOP,
+        (_, _, _, true) => HTBOTTOM,
+        _ => return None,
+    };
+
+    Some(LRESULT(hit as isize))
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
+        WM_NCCALCSIZE => LRESULT(0),
+        WM_NCHITTEST => {
+            if let Some(hit) = resize_hit_test(hwnd, lparam) {
+                return hit;
+            }
+            LRESULT(HTCLIENT as isize)
+        }
         WM_PAINT => {
             NEEDS_PAINT.store(true, Ordering::Relaxed);
             // Validate the window region so WM_PAINT stops repeating.
@@ -279,15 +383,48 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 return LRESULT(0);
             }
 
-            RESIZE_WIDTH.store(width, Ordering::Relaxed);
-            RESIZE_HEIGHT.store(height, Ordering::Relaxed);
-            RESIZED.store(true, Ordering::Relaxed);
+            record_resize(width, height);
+            LRESULT(0)
+        }
+        WM_WINDOWPOSCHANGED => {
+            let _ = record_resize_from_client(hwnd);
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_EXITSIZEMOVE => {
+            let _ = record_resize_from_client(hwnd);
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            if lparam.0 != 0 {
+                let suggested = lparam.0 as *const RECT;
+                if let Some(rect) = suggested.as_ref() {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        rect.left,
+                        rect.top,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
+            let _ = record_resize_from_client(hwnd);
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
             let (x, y) = extract_mouse_pos(lparam);
             mouse_queue().lock().unwrap().push(MouseEvent {
                 kind: MouseEventKind::LeftDown,
+                x,
+                y,
+            });
+            LRESULT(0)
+        }
+        WM_LBUTTONDBLCLK => {
+            let (x, y) = extract_mouse_pos(lparam);
+            mouse_queue().lock().unwrap().push(MouseEvent {
+                kind: MouseEventKind::LeftDoubleDown,
                 x,
                 y,
             });

@@ -122,9 +122,10 @@ tabs:
     /// Open the test workspace using an explicit file path.
     fn open_request(&self) -> OpenWorkspace {
         OpenWorkspace {
-            name: "s5-test".to_string(),
+            name: Some("s5-test".to_string()),
             file: Some(self.yaml_path.to_string_lossy().to_string()),
             recreate: false,
+            profile: None,
         }
     }
 }
@@ -377,9 +378,10 @@ async fn s5_open_nonexistent_workspace_error() {
     let resp = request(
         &mut client,
         &OpenWorkspace {
-            name: "does-not-exist-xyz".to_string(),
+            name: Some("does-not-exist-xyz".to_string()),
             file: Some("/nonexistent/path/to/workspace.yaml".to_string()),
             recreate: false,
+            profile: None,
         },
     )
     .await;
@@ -443,9 +445,10 @@ tabs:
     let resp = request(
         &mut client,
         &OpenWorkspace {
-            name: "file-test".to_string(),
+            name: Some("file-test".to_string()),
             file: Some(file_path.to_string_lossy().to_string()),
             recreate: false,
+            profile: None,
         },
     )
     .await;

@@ -31,14 +31,29 @@ pub struct Cli {
     pub timeout: Option<f64>,
 
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
     // ── Workspace commands ──────────────────────────────────────────
-    /// Open workspace from definition.
+    /// Open workspace from definition, or launch a default shell.
     Open {
+        /// Workspace name (omit to open default shell).
+        name: Option<String>,
+        /// Path to a workspace definition file.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Tear down existing instance and recreate from definition.
+        #[arg(long)]
+        recreate: bool,
+        /// Open an ad-hoc workspace using a named profile (no YAML file needed).
+        #[arg(long, conflicts_with = "file")]
+        profile: Option<String>,
+    },
+
+    /// Open a workspace and launch the graphical UI attached to it.
+    Up {
         /// Workspace name.
         name: String,
         /// Path to a workspace definition file.
@@ -47,6 +62,9 @@ pub enum Command {
         /// Tear down existing instance and recreate from definition.
         #[arg(long)]
         recreate: bool,
+        /// Open an ad-hoc workspace using a named profile (no YAML file needed).
+        #[arg(long, conflicts_with = "file")]
+        profile: Option<String>,
     },
 
     /// Attach to an existing workspace instance.
@@ -284,8 +302,8 @@ mod tests {
         let cli = parse(&["open", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Open { ref name, ref file, recreate }
-            if name == "dev" && file.is_none() && !recreate
+            Some(Command::Open { ref name, ref file, recreate, ref profile })
+            if name.as_deref() == Some("dev") && file.is_none() && !recreate && profile.is_none()
         ));
     }
 
@@ -294,20 +312,90 @@ mod tests {
         let cli = parse(&["open", "dev", "--file", "dev.yaml", "--recreate"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Open { ref name, ref file, recreate }
+            Some(Command::Open { ref name, ref file, recreate, .. })
+            if name.as_deref() == Some("dev") && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
+        ));
+    }
+
+    #[test]
+    fn open_no_args_is_valid() {
+        let cli = parse(&["open"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Open { ref name, ref file, recreate, ref profile })
+            if name.is_none() && file.is_none() && !recreate && profile.is_none()
+        ));
+    }
+
+    #[test]
+    fn open_with_profile() {
+        let cli = parse(&["open", "--profile", "ssh-prod"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Open { ref name, ref profile, .. })
+            if name.is_none() && profile.as_deref() == Some("ssh-prod")
+        ));
+    }
+
+    #[test]
+    fn open_with_name_and_profile() {
+        let cli = parse(&["open", "myws", "--profile", "ssh-prod"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Open { ref name, ref profile, .. })
+            if name.as_deref() == Some("myws") && profile.as_deref() == Some("ssh-prod")
+        ));
+    }
+
+    #[test]
+    fn open_profile_conflicts_with_file() {
+        assert!(parse(&["open", "--profile", "x", "--file", "y.yaml"]).is_err());
+    }
+
+    #[test]
+    fn up_basic() {
+        let cli = parse(&["up", "dev"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Up { ref name, ref file, recreate, ref profile })
+            if name == "dev" && file.is_none() && !recreate && profile.is_none()
+        ));
+    }
+
+    #[test]
+    fn up_with_file_and_recreate() {
+        let cli = parse(&["up", "dev", "--file", "dev.yaml", "--recreate"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Up { ref name, ref file, recreate, .. })
             if name == "dev" && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
         ));
     }
 
     #[test]
-    fn open_missing_name() {
-        assert!(parse(&["open"]).is_err());
+    fn up_with_profile() {
+        let cli = parse(&["up", "myws", "--profile", "ssh-prod"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Up { ref name, ref profile, .. })
+            if name == "myws" && profile.as_deref() == Some("ssh-prod")
+        ));
+    }
+
+    #[test]
+    fn up_requires_name() {
+        assert!(parse(&["up"]).is_err());
+    }
+
+    #[test]
+    fn up_profile_conflicts_with_file() {
+        assert!(parse(&["up", "dev", "--profile", "x", "--file", "y.yaml"]).is_err());
     }
 
     #[test]
     fn attach_basic() {
         let cli = parse(&["attach", "dev"]).unwrap();
-        assert!(matches!(cli.command, Command::Attach { ref name } if name == "dev"));
+        assert!(matches!(cli.command, Some(Command::Attach { ref name }) if name == "dev"));
     }
 
     #[test]
@@ -318,7 +406,7 @@ mod tests {
     #[test]
     fn recreate_basic() {
         let cli = parse(&["recreate", "dev"]).unwrap();
-        assert!(matches!(cli.command, Command::Recreate { ref name } if name == "dev"));
+        assert!(matches!(cli.command, Some(Command::Recreate { ref name }) if name == "dev"));
     }
 
     #[test]
@@ -326,7 +414,7 @@ mod tests {
         let cli = parse(&["close", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Close { ref name, kill } if name == "dev" && !kill
+            Some(Command::Close { ref name, kill }) if name == "dev" && !kill
         ));
     }
 
@@ -335,7 +423,7 @@ mod tests {
         let cli = parse(&["close", "dev", "--kill"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Close { ref name, kill } if name == "dev" && kill
+            Some(Command::Close { ref name, kill }) if name == "dev" && kill
         ));
     }
 
@@ -344,7 +432,7 @@ mod tests {
         let cli = parse(&["save", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Save { ref name, ref file } if name == "dev" && file.is_none()
+            Some(Command::Save { ref name, ref file }) if name == "dev" && file.is_none()
         ));
     }
 
@@ -353,8 +441,8 @@ mod tests {
         let cli = parse(&["save", "dev", "--file", "out.yaml"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Save { ref name, ref file }
-            if name == "dev" && file.as_deref() == Some(std::path::Path::new("out.yaml"))
+            Some(Command::Save { ref name, ref file }
+            ) if name == "dev" && file.as_deref() == Some(std::path::Path::new("out.yaml"))
         ));
     }
 
@@ -363,7 +451,7 @@ mod tests {
         let cli = parse(&["snapshot", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Snapshot { ref name, ref file } if name == "dev" && file.is_none()
+            Some(Command::Snapshot { ref name, ref file }) if name == "dev" && file.is_none()
         ));
     }
 
@@ -372,8 +460,8 @@ mod tests {
         let cli = parse(&["snapshot", "dev", "--file", "snap.json"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Snapshot { ref name, ref file }
-            if name == "dev" && file.as_deref() == Some(std::path::Path::new("snap.json"))
+            Some(Command::Snapshot { ref name, ref file }
+            ) if name == "dev" && file.as_deref() == Some(std::path::Path::new("snap.json"))
         ));
     }
 
@@ -384,9 +472,9 @@ mod tests {
         let cli = parse(&["list", "workspaces"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List {
+            Some(Command::List {
                 what: ListCommand::Workspaces
-            }
+            })
         ));
     }
 
@@ -395,9 +483,9 @@ mod tests {
         let cli = parse(&["list", "instances"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List {
+            Some(Command::List {
                 what: ListCommand::Instances
-            }
+            })
         ));
     }
 
@@ -406,7 +494,7 @@ mod tests {
         let cli = parse(&["list", "panes", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List { what: ListCommand::Panes { ref workspace } } if workspace == "dev"
+            Some(Command::List { what: ListCommand::Panes { ref workspace } }) if workspace == "dev"
         ));
     }
 
@@ -420,7 +508,7 @@ mod tests {
         let cli = parse(&["list", "sessions", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::List { what: ListCommand::Sessions { ref workspace } } if workspace == "dev"
+            Some(Command::List { what: ListCommand::Sessions { ref workspace } }) if workspace == "dev"
         ));
     }
 
@@ -439,7 +527,9 @@ mod tests {
     #[test]
     fn focus_basic() {
         let cli = parse(&["focus", "dev/server"]).unwrap();
-        assert!(matches!(cli.command, Command::Focus { ref target } if target == "dev/server"));
+        assert!(
+            matches!(cli.command, Some(Command::Focus { ref target }) if target == "dev/server")
+        );
     }
 
     #[test]
@@ -452,8 +542,8 @@ mod tests {
         let cli = parse(&["rename", "dev/server", "api-server"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Rename { ref target, ref new_name }
-            if target == "dev/server" && new_name == "api-server"
+            Some(Command::Rename { ref target, ref new_name }
+            ) if target == "dev/server" && new_name == "api-server"
         ));
     }
 
@@ -467,8 +557,8 @@ mod tests {
         let cli = parse(&["action", "dev/server", "split-right"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Action { ref target, ref action_name, ref args }
-            if target == "dev/server" && action_name == "split-right" && args.is_empty()
+            Some(Command::Action { ref target, ref action_name, ref args }
+            ) if target == "dev/server" && action_name == "split-right" && args.is_empty()
         ));
     }
 
@@ -477,8 +567,8 @@ mod tests {
         let cli = parse(&["action", "dev/server", "resize-pane-grow-right", "cells=5"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Action { ref target, ref action_name, ref args }
-            if target == "dev/server"
+            Some(Command::Action { ref target, ref action_name, ref args }
+            ) if target == "dev/server"
                 && action_name == "resize-pane-grow-right"
                 && args == &["cells=5"]
         ));
@@ -496,8 +586,8 @@ mod tests {
         let cli = parse(&["send", "dev/server", "echo hello"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Send { ref target, ref text, no_newline }
-            if target == "dev/server" && text == "echo hello" && !no_newline
+            Some(Command::Send { ref target, ref text, no_newline }
+            ) if target == "dev/server" && text == "echo hello" && !no_newline
         ));
     }
 
@@ -506,8 +596,8 @@ mod tests {
         let cli = parse(&["send", "dev/server", "data", "--no-newline"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Send { ref target, ref text, no_newline }
-            if target == "dev/server" && text == "data" && no_newline
+            Some(Command::Send { ref target, ref text, no_newline }
+            ) if target == "dev/server" && text == "data" && no_newline
         ));
     }
 
@@ -521,8 +611,8 @@ mod tests {
         let cli = parse(&["keys", "dev/server", "Enter"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Keys { ref target, ref key_specs }
-            if target == "dev/server" && key_specs == &["Enter"]
+            Some(Command::Keys { ref target, ref key_specs }
+            ) if target == "dev/server" && key_specs == &["Enter"]
         ));
     }
 
@@ -531,8 +621,8 @@ mod tests {
         let cli = parse(&["keys", "dev/server", "Ctrl+C", "Enter", "Up"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Keys { ref target, ref key_specs }
-            if target == "dev/server" && key_specs == &["Ctrl+C", "Enter", "Up"]
+            Some(Command::Keys { ref target, ref key_specs }
+            ) if target == "dev/server" && key_specs == &["Ctrl+C", "Enter", "Up"]
         ));
     }
 
@@ -546,8 +636,8 @@ mod tests {
         let cli = parse(&["input", "dev/server", "\\e[<35;40;12M", "--escape"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Input { ref target, ref data, escape, hex, base64 }
-            if target == "dev/server" && data == "\\e[<35;40;12M" && escape && !hex && !base64
+            Some(Command::Input { ref target, ref data, escape, hex, base64 }
+            ) if target == "dev/server" && data == "\\e[<35;40;12M" && escape && !hex && !base64
         ));
     }
 
@@ -556,8 +646,8 @@ mod tests {
         let cli = parse(&["input", "dev/server", "1b5b41", "--hex"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Input { ref target, ref data, escape, hex, base64 }
-            if target == "dev/server" && data == "1b5b41" && !escape && hex && !base64
+            Some(Command::Input { ref target, ref data, escape, hex, base64 }
+            ) if target == "dev/server" && data == "1b5b41" && !escape && hex && !base64
         ));
     }
 
@@ -566,7 +656,7 @@ mod tests {
     #[test]
     fn capture_basic() {
         let cli = parse(&["capture", "dev/server"]).unwrap();
-        if let Command::Capture {
+        if let Some(Command::Capture {
             target,
             vt,
             lines,
@@ -575,7 +665,7 @@ mod tests {
             after_regex,
             max_lines,
             count,
-        } = &cli.command
+        }) = &cli.command
         {
             assert_eq!(target, "dev/server");
             assert!(!vt);
@@ -607,7 +697,7 @@ mod tests {
             "--count",
         ])
         .unwrap();
-        if let Command::Capture {
+        if let Some(Command::Capture {
             target,
             vt,
             lines,
@@ -616,7 +706,7 @@ mod tests {
             after_regex,
             max_lines,
             count,
-        } = &cli.command
+        }) = &cli.command
         {
             assert_eq!(target, "dev/server");
             assert!(!vt);
@@ -639,7 +729,7 @@ mod tests {
     #[test]
     fn capture_vt_mode() {
         let cli = parse(&["capture", "dev/server", "--vt"]).unwrap();
-        if let Command::Capture {
+        if let Some(Command::Capture {
             target,
             vt,
             lines,
@@ -648,7 +738,7 @@ mod tests {
             after_regex,
             max_lines,
             count,
-        } = &cli.command
+        }) = &cli.command
         {
             assert_eq!(target, "dev/server");
             assert!(*vt);
@@ -668,8 +758,8 @@ mod tests {
         let cli = parse(&["scrollback", "dev/server", "--tail", "100"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Scrollback { ref target, tail }
-            if target == "dev/server" && tail == 100
+            Some(Command::Scrollback { ref target, tail }
+            ) if target == "dev/server" && tail == 100
         ));
     }
 
@@ -688,8 +778,8 @@ mod tests {
         let cli = parse(&["follow", "dev/server"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Follow { ref target, raw }
-            if target == "dev/server" && !raw
+            Some(Command::Follow { ref target, raw }
+            ) if target == "dev/server" && !raw
         ));
     }
 
@@ -698,15 +788,17 @@ mod tests {
         let cli = parse(&["follow", "dev/server", "--raw"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Follow { ref target, raw }
-            if target == "dev/server" && raw
+            Some(Command::Follow { ref target, raw }
+            ) if target == "dev/server" && raw
         ));
     }
 
     #[test]
     fn inspect_basic() {
         let cli = parse(&["inspect", "dev/server"]).unwrap();
-        assert!(matches!(cli.command, Command::Inspect { ref target } if target == "dev/server"));
+        assert!(
+            matches!(cli.command, Some(Command::Inspect { ref target }) if target == "dev/server")
+        );
     }
 
     // ── Host management commands ────────────────────────────────
@@ -716,9 +808,9 @@ mod tests {
         let cli = parse(&["host", "status"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Host {
+            Some(Command::Host {
                 action: HostCommand::Status
-            }
+            })
         ));
     }
 
@@ -727,9 +819,9 @@ mod tests {
         let cli = parse(&["host", "stop"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Host {
+            Some(Command::Host {
                 action: HostCommand::Stop
-            }
+            })
         ));
     }
 
@@ -845,12 +937,9 @@ mod tests {
     }
 
     #[test]
-    fn missing_command_produces_error() {
-        let err = parse(&[]).unwrap_err();
-        assert!(
-            err.contains("Usage") || err.contains("subcommand"),
-            "expected usage hint, got: {err}"
-        );
+    fn bare_wtd_parses_as_none_command() {
+        let cli = parse(&[]).unwrap();
+        assert!(cli.command.is_none());
     }
 
     // ── Shell completions ───────────────────────────────────────
@@ -860,7 +949,7 @@ mod tests {
         let cli = parse(&["completions", "bash"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Completions { shell: Shell::Bash }
+            Some(Command::Completions { shell: Shell::Bash })
         ));
     }
 
@@ -869,9 +958,9 @@ mod tests {
         let cli = parse(&["completions", "powershell"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Completions {
+            Some(Command::Completions {
                 shell: Shell::PowerShell
-            }
+            })
         ));
     }
 
@@ -880,7 +969,7 @@ mod tests {
     #[test]
     fn single_segment_target() {
         let cli = parse(&["capture", "server"]).unwrap();
-        if let Command::Capture { target, .. } = &cli.command {
+        if let Some(Command::Capture { target, .. }) = &cli.command {
             assert_eq!(target, "server");
         } else {
             panic!("expected Capture");
@@ -890,7 +979,7 @@ mod tests {
     #[test]
     fn two_segment_target() {
         let cli = parse(&["capture", "dev/server"]).unwrap();
-        if let Command::Capture { target, .. } = &cli.command {
+        if let Some(Command::Capture { target, .. }) = &cli.command {
             assert_eq!(target, "dev/server");
         } else {
             panic!("expected Capture");
@@ -900,7 +989,7 @@ mod tests {
     #[test]
     fn three_segment_target() {
         let cli = parse(&["capture", "dev/backend/server"]).unwrap();
-        if let Command::Capture { target, .. } = &cli.command {
+        if let Some(Command::Capture { target, .. }) = &cli.command {
             assert_eq!(target, "dev/backend/server");
         } else {
             panic!("expected Capture");
@@ -910,7 +999,7 @@ mod tests {
     #[test]
     fn four_segment_target() {
         let cli = parse(&["capture", "dev/main/backend/server"]).unwrap();
-        if let Command::Capture { target, .. } = &cli.command {
+        if let Some(Command::Capture { target, .. }) = &cli.command {
             assert_eq!(target, "dev/main/backend/server");
         } else {
             panic!("expected Capture");

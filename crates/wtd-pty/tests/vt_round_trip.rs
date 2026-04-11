@@ -171,7 +171,8 @@ fn widget_gallery_re_snapshot_is_stable() {
     // (The first fixture → snapshot may differ because the original app output
     // uses different SGR grouping, but snapshot → snapshot must be stable.)
     assert_eq!(
-        snap_a, snap_b,
+        snap_a,
+        snap_b,
         "re-snapshot bytes differ (len {} vs {})",
         snap_a.len(),
         snap_b.len()

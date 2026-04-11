@@ -65,6 +65,9 @@ const SELECTION_COLOR: (u8, u8, u8) = (58, 100, 150);
 const FAILED_PANE_BG: (u8, u8, u8) = (30, 30, 42);
 const FAILED_PANE_MSG_FG: (u8, u8, u8) = (204, 120, 120);
 const FAILED_PANE_HINT_FG: (u8, u8, u8) = (140, 140, 160);
+const PANE_OVERLAY_BG: (u8, u8, u8) = (12, 12, 20);
+const PANE_OVERLAY_BORDER: (u8, u8, u8) = (100, 100, 120);
+const PANE_OVERLAY_TEXT: (u8, u8, u8) = (220, 220, 235);
 
 // ── Default theme colors ─────────────────────────────────────────────────────
 
@@ -112,6 +115,7 @@ pub struct TerminalRenderer {
     tf_bold: IDWriteTextFormat,
     tf_italic: IDWriteTextFormat,
     tf_bold_italic: IDWriteTextFormat,
+    tf_overlay: IDWriteTextFormat,
     cell_width: f32,
     cell_height: f32,
 }
@@ -182,11 +186,15 @@ fn indexed_color(idx: u8) -> (u8, u8, u8) {
 }
 
 fn rgb_to_d2d(r: u8, g: u8, b: u8) -> D2D1_COLOR_F {
+    rgba_to_d2d(r, g, b, 1.0)
+}
+
+fn rgba_to_d2d(r: u8, g: u8, b: u8, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F {
         r: r as f32 / 255.0,
         g: g as f32 / 255.0,
         b: b as f32 / 255.0,
-        a: 1.0,
+        a,
     }
 }
 
@@ -208,7 +216,11 @@ pub fn resolve_cell_colors(cell: &Cell) -> ((u8, u8, u8), (u8, u8, u8)) {
 }
 
 fn cell_display_cols(cell: &Cell) -> usize {
-    if cell.attrs.is_wide() { 2 } else { 1 }
+    if cell.attrs.is_wide() {
+        2
+    } else {
+        1
+    }
 }
 
 // ── TerminalRenderer ─────────────────────────────────────────────────────────
@@ -300,9 +312,26 @@ impl TerminalRenderer {
                 w!("en-us"),
             )?
         };
+        let tf_overlay = unsafe {
+            dw_factory.CreateTextFormat(
+                font_pcwstr,
+                None,
+                DWRITE_FONT_WEIGHT_REGULAR,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                (config.font_size - 2.0).max(9.0),
+                w!("en-us"),
+            )?
+        };
 
         unsafe {
-            for tf in [&tf_regular, &tf_bold, &tf_italic, &tf_bold_italic] {
+            for tf in [
+                &tf_regular,
+                &tf_bold,
+                &tf_italic,
+                &tf_bold_italic,
+                &tf_overlay,
+            ] {
                 tf.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
                 tf.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
                 tf.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR)?;
@@ -320,6 +349,7 @@ impl TerminalRenderer {
             tf_bold,
             tf_italic,
             tf_bold_italic,
+            tf_overlay,
             cell_width,
             cell_height,
         })
@@ -475,6 +505,41 @@ impl TerminalRenderer {
         result
     }
 
+    /// Paint a faint monitor-style pane label in the top-right corner.
+    pub fn paint_pane_title_overlay(
+        &self,
+        label: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        is_focused: bool,
+    ) -> Result<()> {
+        let label = label.trim();
+        if label.is_empty() || width < 180.0 || height < self.cell_height * 2.5 {
+            return Ok(());
+        }
+
+        let (x, y, width, height) = snap_viewport(x, y, width, height);
+        let clip = D2D_RECT_F {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        };
+        unsafe {
+            self.rt
+                .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        }
+
+        let result = self.paint_pane_title_overlay_inner(label, x, y, width, is_focused);
+
+        unsafe {
+            self.rt.PopAxisAlignedClip();
+        }
+        result
+    }
+
     fn paint_failed_pane_inner(
         &self,
         message: &str,
@@ -567,6 +632,100 @@ impl TerminalRenderer {
                 &self.tf_regular,
                 &hint_rect,
                 &hint_brush,
+                TEXT_DRAW_OPTIONS,
+                TEXT_MEASURING_MODE,
+            );
+        }
+        Ok(())
+    }
+
+    fn paint_pane_title_overlay_inner(
+        &self,
+        label: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        is_focused: bool,
+    ) -> Result<()> {
+        let overlay_margin = (self.cell_width * 0.15).max(1.0);
+        let horizontal_padding = (self.cell_width * 0.45).max(6.0);
+        let vertical_padding = (self.cell_height * 0.15).max(2.0);
+        let max_label_width = (width * 0.35).clamp(84.0, 180.0);
+        let label_utf16: Vec<u16> = label.encode_utf16().collect();
+
+        unsafe {
+            let text_layout = self.dw_factory.CreateTextLayout(
+                &label_utf16,
+                &self.tf_overlay,
+                max_label_width,
+                self.cell_height * 1.2,
+            )?;
+            text_layout.SetMaxWidth(max_label_width)?;
+            text_layout.SetMaxHeight(self.cell_height * 1.2)?;
+            text_layout.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            text_layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+
+            let mut text_metrics = DWRITE_TEXT_METRICS::default();
+            text_layout.GetMetrics(&mut text_metrics)?;
+
+            let bubble_width = (text_metrics.width + horizontal_padding * 2.0)
+                .clamp(72.0, max_label_width + horizontal_padding * 2.0);
+            let bubble_height = text_metrics.height + vertical_padding * 2.0;
+            let bubble_left = x + width - bubble_width - overlay_margin;
+            let bubble_top = y + overlay_margin;
+            let bubble_rect = D2D_RECT_F {
+                left: bubble_left,
+                top: bubble_top,
+                right: bubble_left + bubble_width,
+                bottom: bubble_top + bubble_height,
+            };
+
+            let bg_alpha = if is_focused { 0.48 } else { 0.32 };
+            let border_alpha = if is_focused { 0.30 } else { 0.18 };
+            let text_alpha = if is_focused { 0.74 } else { 0.56 };
+            let bg_brush = self.rt.CreateSolidColorBrush(
+                &rgba_to_d2d(
+                    PANE_OVERLAY_BG.0,
+                    PANE_OVERLAY_BG.1,
+                    PANE_OVERLAY_BG.2,
+                    bg_alpha,
+                ),
+                None,
+            )?;
+            let border_brush = self.rt.CreateSolidColorBrush(
+                &rgba_to_d2d(
+                    PANE_OVERLAY_BORDER.0,
+                    PANE_OVERLAY_BORDER.1,
+                    PANE_OVERLAY_BORDER.2,
+                    border_alpha,
+                ),
+                None,
+            )?;
+            let text_brush = self.rt.CreateSolidColorBrush(
+                &rgba_to_d2d(
+                    PANE_OVERLAY_TEXT.0,
+                    PANE_OVERLAY_TEXT.1,
+                    PANE_OVERLAY_TEXT.2,
+                    text_alpha,
+                ),
+                None,
+            )?;
+
+            self.rt.FillRectangle(&bubble_rect, &bg_brush);
+            self.rt
+                .DrawRectangle(&bubble_rect, &border_brush, 1.0, None);
+
+            let text_rect = D2D_RECT_F {
+                left: bubble_left + horizontal_padding,
+                top: bubble_top + vertical_padding,
+                right: bubble_rect.right - horizontal_padding,
+                bottom: bubble_rect.bottom - vertical_padding,
+            };
+            self.rt.DrawText(
+                &label_utf16,
+                &self.tf_overlay,
+                &text_rect,
+                &text_brush,
                 TEXT_DRAW_OPTIONS,
                 TEXT_MEASURING_MODE,
             );

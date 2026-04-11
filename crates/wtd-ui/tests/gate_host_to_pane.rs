@@ -411,9 +411,11 @@ async fn host_session_output_renders_in_pane_viewport() {
         .write_frame(&Envelope::new(
             "gate-open-1",
             &OpenWorkspace {
-                name: "gate-test".to_string(),
+                name: Some("gate-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

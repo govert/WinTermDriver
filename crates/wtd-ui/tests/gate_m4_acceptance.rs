@@ -377,9 +377,11 @@ async fn m4_visual_terminal_acceptance() {
         .write_frame(&Envelope::new(
             "m4-open",
             &OpenWorkspace {
-                name: "m4-gate".to_string(),
+                name: Some("m4-gate".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

@@ -216,7 +216,7 @@ impl RequestHandler for GateHandler {
             TypedMessage::OpenWorkspace(open) => {
                 // §12: Discover workspace definition from CWD/.wtd/
                 let discovered = match find_workspace_in(
-                    &open.name,
+                    open.name.as_deref().unwrap(),
                     open.file.as_ref().map(|f| Path::new(f.as_str())),
                     &self.cwd,
                     &self.user_dir,
@@ -282,7 +282,9 @@ impl RequestHandler for GateHandler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -455,9 +457,11 @@ async fn open_discovers_from_cwd_and_list_panes_shows_name() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "gate-discover".to_string(),
+                name: Some("gate-discover".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -555,9 +559,11 @@ async fn open_multi_pane_lists_all_panes_by_name() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "gate-multi".to_string(),
+                name: Some("gate-multi".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -693,9 +699,11 @@ async fn open_nonexistent_workspace_returns_not_found() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "nonexistent".to_string(),
+                name: Some("nonexistent".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

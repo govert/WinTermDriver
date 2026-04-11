@@ -206,13 +206,16 @@ impl RequestHandler for E2eHandler {
     ) -> Option<Envelope> {
         match msg {
             TypedMessage::OpenWorkspace(open) => {
-                let yaml = match open.name.as_str() {
+                let yaml = match open.name.as_deref().unwrap() {
                     "e2e-test" => SIMPLE_YAML,
                     _ => {
                         return Some(error_envelope(
                             &envelope.id,
                             ErrorCode::WorkspaceNotFound,
-                            &format!("workspace '{}' not found", open.name),
+                            &format!(
+                                "workspace '{}' not found",
+                                open.name.as_deref().unwrap_or("?")
+                            ),
                         ))
                     }
                 };
@@ -250,7 +253,9 @@ impl RequestHandler for E2eHandler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -707,9 +712,11 @@ async fn full_lifecycle_open_list_send_capture_inspect_close() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -921,9 +928,11 @@ async fn follow_success_initial_response() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1124,9 +1133,11 @@ async fn error_open_workspace_not_found() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "no-such-workspace".to_string(),
+                name: Some("no-such-workspace".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1261,9 +1272,11 @@ async fn json_output_open_workspace() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1304,9 +1317,11 @@ async fn json_output_list_panes() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1343,9 +1358,11 @@ async fn json_output_list_instances() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1375,9 +1392,11 @@ async fn json_output_list_sessions() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1413,9 +1432,11 @@ async fn json_output_capture() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1450,9 +1471,11 @@ async fn json_output_inspect() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1509,9 +1532,11 @@ async fn json_output_scrollback() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1546,9 +1571,11 @@ async fn attach_recreate_save_focus_rename_action_keys() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1673,9 +1700,11 @@ async fn concurrent_input_no_crash_or_hang() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "e2e-test".to_string(),
+                name: Some("e2e-test".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

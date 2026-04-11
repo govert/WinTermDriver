@@ -491,9 +491,11 @@ async fn m5_interactive_workspace_acceptance() {
         .write_frame(&Envelope::new(
             "m5-open",
             &OpenWorkspace {
-                name: "m5-gate".to_string(),
+                name: Some("m5-gate".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await

@@ -139,6 +139,9 @@ If no profile is specified, the global default (`powershell`) is used.
 ### Opening and closing workspaces
 
 ```bash
+# Open and attach the UI in one step
+wtd up build-and-test
+
 # Open from project-local or user-global definition
 wtd open build-and-test
 
@@ -151,6 +154,8 @@ wtd open build-and-test --recreate
 # Close and destroy the instance
 wtd close build-and-test --kill
 ```
+
+`wtd up <name>` is the ergonomic entry point for interactive use. `wtd open` remains the lower-level command for headless automation or when you want to launch `wtd-ui` separately.
 
 ### Sending commands
 
@@ -604,6 +609,7 @@ Available layout actions:
 ## Complete command reference
 
 ```
+wtd up <name> [--file <path>] [--recreate]
 wtd open <name> [--file <path>] [--recreate]
 wtd close <name> [--kill]
 wtd attach <name>

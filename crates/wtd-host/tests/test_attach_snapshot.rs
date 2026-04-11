@@ -146,9 +146,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "attach-test".to_string(),
+                name: Some("attach-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().into_owned()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -391,9 +393,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "single-test".to_string(),
+                name: Some("single-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().into_owned()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )
@@ -564,9 +568,11 @@ tabs:
         &Envelope::new(
             "open-1",
             &OpenWorkspace {
-                name: "screen-seed-test".to_string(),
+                name: Some("screen-seed-test".to_string()),
                 file: Some(yaml_path.to_string_lossy().into_owned()),
                 recreate: false,
+
+                profile: None,
             },
         ),
     )

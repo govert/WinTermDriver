@@ -240,13 +240,16 @@ impl RequestHandler for S2Handler {
     ) -> Option<Envelope> {
         match msg {
             TypedMessage::OpenWorkspace(open) => {
-                let yaml = match open.name.as_str() {
+                let yaml = match open.name.as_deref().unwrap() {
                     "gate-s2" => GATE_YAML,
                     _ => {
                         return Some(error_envelope(
                             &envelope.id,
                             ErrorCode::WorkspaceNotFound,
-                            &format!("workspace '{}' not found", open.name),
+                            &format!(
+                                "workspace '{}' not found",
+                                open.name.as_deref().unwrap_or("?")
+                            ),
                         ))
                     }
                 };
@@ -265,7 +268,7 @@ impl RequestHandler for S2Handler {
                 let mut state = self.state.lock().unwrap();
 
                 if open.recreate {
-                    if let Some(mut old) = state.workspaces.remove(&open.name) {
+                    if let Some(mut old) = state.workspaces.remove(open.name.as_deref().unwrap()) {
                         old.close();
                     }
                 }
@@ -291,7 +294,9 @@ impl RequestHandler for S2Handler {
                 };
 
                 let instance_id = format!("{}", inst.id().0);
-                state.workspaces.insert(open.name.clone(), inst);
+                state
+                    .workspaces
+                    .insert(open.name.clone().unwrap_or_default(), inst);
 
                 Some(Envelope::new(
                     &envelope.id,
@@ -740,9 +745,11 @@ async fn s2_all_commands_full_lifecycle() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "gate-s2".to_string(),
+                name: Some("gate-s2".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1304,9 +1311,11 @@ async fn exit_code_2_workspace_not_found_all_commands() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "nonexistent".to_string(),
+                name: Some("nonexistent".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1496,9 +1505,11 @@ async fn json_output_structure_all_response_types() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "gate-s2".to_string(),
+                name: Some("gate-s2".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1720,9 +1731,11 @@ async fn cross_pane_isolation_send_capture() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "gate-s2".to_string(),
+                name: Some("gate-s2".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
@@ -1821,9 +1834,11 @@ async fn error_json_output_valid_for_all_error_types() {
         .request(&Envelope::new(
             &next_id(),
             &OpenWorkspace {
-                name: "absent".to_string(),
+                name: Some("absent".to_string()),
                 file: None,
                 recreate: false,
+
+                profile: None,
             },
         ))
         .await
