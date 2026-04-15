@@ -47,6 +47,7 @@ fn encode_decode_multiple_message_types() {
         Envelope::new(
             "id-4",
             &SessionOutput {
+                workspace: "dev".into(),
                 session_id: "s1".into(),
                 data: "dGVzdA==".into(),
             },

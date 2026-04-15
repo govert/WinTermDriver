@@ -26,17 +26,27 @@ const POLL_INTERVAL_MS: u64 = 50;
 /// An event to broadcast to UI clients.
 pub enum BroadcastEvent {
     /// Raw VT bytes produced by a session.
-    Output { session_id: String, data: Vec<u8> },
+    Output {
+        workspace: String,
+        session_id: String,
+        data: Vec<u8>,
+    },
     /// Session state transition (e.g. running → exited).
     StateChanged {
+        workspace: String,
         session_id: String,
         new_state: String,
         exit_code: Option<i32>,
     },
     /// Session window title changed via VT escape sequence.
-    TitleChange { session_id: String, title: String },
+    TitleChange {
+        workspace: String,
+        session_id: String,
+        title: String,
+    },
     /// Session progress changed via OSC 9;4.
     ProgressChange {
+        workspace: String,
         session_id: String,
         progress: Option<ProgressInfo>,
     },
@@ -75,43 +85,54 @@ pub async fn run(
                         event_counter.fetch_add(1, Ordering::Relaxed)
                     );
                     let envelope = match &event {
-                        BroadcastEvent::Output { session_id, data } => {
+                        BroadcastEvent::Output {
+                            workspace,
+                            session_id,
+                            data,
+                        } => {
                             Envelope::new(
                                 &id,
                                 &SessionOutput {
+                                    workspace: workspace.clone(),
                                     session_id: session_id.clone(),
                                     data: encode_base64(data),
                                 },
                             )
                         }
                         BroadcastEvent::StateChanged {
+                            workspace,
                             session_id,
                             new_state,
                             exit_code,
                         } => Envelope::new(
                             &id,
                             &SessionStateChanged {
+                                workspace: workspace.clone(),
                                 session_id: session_id.clone(),
                                 new_state: new_state.clone(),
                                 exit_code: *exit_code,
                             },
                         ),
                         BroadcastEvent::TitleChange {
+                            workspace,
                             session_id,
                             title,
                         } => Envelope::new(
                             &id,
                             &TitleChanged {
+                                workspace: workspace.clone(),
                                 session_id: session_id.clone(),
                                 title: title.clone(),
                             },
                         ),
                         BroadcastEvent::ProgressChange {
+                            workspace,
                             session_id,
                             progress,
                         } => Envelope::new(
                             &id,
                             &ProgressChanged {
+                                workspace: workspace.clone(),
                                 session_id: session_id.clone(),
                                 progress: progress.clone(),
                             },

@@ -29,6 +29,29 @@ use crate::target_resolver::{resolve_by_id, resolve_target};
 use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VtMouseButton {
+    Left,
+    Middle,
+    Right,
+    None,
+    WheelUp,
+    WheelDown,
+}
+
+impl VtMouseButton {
+    fn code(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Middle => 1,
+            Self::Right => 2,
+            Self::None => 3,
+            Self::WheelUp => 64,
+            Self::WheelDown => 65,
+        }
+    }
+}
+
 // ── Internal state ────────────────────────────────────────────────────────
 
 struct HostState {
@@ -78,14 +101,16 @@ impl HostRequestHandler {
         let mut events = Vec::new();
         events.append(&mut state.pending_broadcasts);
 
-        for inst in state.workspaces.values_mut() {
+        for (workspace_name, inst) in state.workspaces.iter_mut() {
             for (session_id, session) in inst.sessions_mut().iter_mut() {
                 let sid = format!("{}", session_id.0);
+                let scope_key = scoped_session_key(workspace_name, &sid);
 
                 // Drain output and feed to screen buffer.
                 let raw_bytes = session.process_pending_output_collecting();
                 if !raw_bytes.is_empty() {
                     events.push(BroadcastEvent::Output {
+                        workspace: workspace_name.clone(),
                         session_id: sid.clone(),
                         data: raw_bytes,
                     });
@@ -93,23 +118,25 @@ impl HostRequestHandler {
 
                 // Detect title changes (screen buffer is up-to-date after drain).
                 let new_title = session.screen().title.clone();
-                let title_changed = match prev_titles.get(&sid) {
+                let title_changed = match prev_titles.get(&scope_key) {
                     Some(old) => *old != new_title,
                     None => !new_title.is_empty(),
                 };
                 if title_changed {
-                    prev_titles.insert(sid.clone(), new_title.clone());
+                    prev_titles.insert(scope_key.clone(), new_title.clone());
                     events.push(BroadcastEvent::TitleChange {
+                        workspace: workspace_name.clone(),
                         session_id: sid.clone(),
                         title: new_title,
                     });
                 }
 
                 let new_progress = progress_info_from_screen(session.screen().progress());
-                let progress_changed = prev_progress.get(&sid) != Some(&new_progress);
+                let progress_changed = prev_progress.get(&scope_key) != Some(&new_progress);
                 if progress_changed {
-                    prev_progress.insert(sid.clone(), new_progress.clone());
+                    prev_progress.insert(scope_key.clone(), new_progress.clone());
                     events.push(BroadcastEvent::ProgressChange {
+                        workspace: workspace_name.clone(),
                         session_id: sid.clone(),
                         progress: new_progress,
                     });
@@ -118,6 +145,7 @@ impl HostRequestHandler {
                 // Detect session exit.
                 if let Some(exit_code) = session.check_exit() {
                     events.push(BroadcastEvent::StateChanged {
+                        workspace: workspace_name.clone(),
                         session_id: sid,
                         new_state: "exited".to_string(),
                         exit_code: Some(exit_code as i32),
@@ -133,12 +161,9 @@ impl HostRequestHandler {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn host_env() -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    if let Ok(val) = std::env::var("USERPROFILE") {
-        env.insert("USERPROFILE".to_string(), val);
-    } else {
-        env.insert("USERPROFILE".to_string(), r"C:\".to_string());
-    }
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    env.entry("USERPROFILE".to_string())
+        .or_insert_with(|| r"C:\".to_string());
     env
 }
 
@@ -169,6 +194,10 @@ fn request_cwd(envelope: &Envelope) -> std::path::PathBuf {
         .unwrap_or_else(|| {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         })
+}
+
+fn scoped_session_key(workspace: &str, session_id: &str) -> String {
+    format!("{workspace}:{session_id}")
 }
 
 /// Find a pane by name across all open workspaces.
@@ -301,6 +330,130 @@ fn encode_send_input(text: &str, newline: bool, bracketed_paste_active: bool) ->
     out
 }
 
+fn encode_mouse_modifiers(shift: bool, alt: bool, ctrl: bool) -> u8 {
+    let mut bits = 0u8;
+    if shift {
+        bits |= 4;
+    }
+    if alt {
+        bits |= 8;
+    }
+    if ctrl {
+        bits |= 16;
+    }
+    bits
+}
+
+fn encode_mouse_event(
+    button: VtMouseButton,
+    press: bool,
+    col: usize,
+    row: usize,
+    modifier_bits: u8,
+    sgr: bool,
+) -> Vec<u8> {
+    let cb = button.code() | modifier_bits;
+    if sgr {
+        let suffix = if press { 'M' } else { 'm' };
+        format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix).into_bytes()
+    } else {
+        let cb = if press { cb + 32 } else { 3 + 32 };
+        let cx = ((col + 1) as u8).saturating_add(32);
+        let cy = ((row + 1) as u8).saturating_add(32);
+        vec![0x1b, b'[', b'M', cb, cx, cy]
+    }
+}
+
+fn encode_mouse_motion(
+    button: VtMouseButton,
+    col: usize,
+    row: usize,
+    modifier_bits: u8,
+    sgr: bool,
+) -> Vec<u8> {
+    let cb = button.code() | modifier_bits | 32;
+    if sgr {
+        format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
+    } else {
+        let cb = cb + 32;
+        let cx = ((col + 1) as u8).saturating_add(32);
+        let cy = ((row + 1) as u8).saturating_add(32);
+        vec![0x1b, b'[', b'M', cb, cx, cy]
+    }
+}
+
+fn map_mouse_button(button: Option<message::MouseButton>) -> VtMouseButton {
+    match button.unwrap_or(message::MouseButton::None) {
+        message::MouseButton::Left => VtMouseButton::Left,
+        message::MouseButton::Middle => VtMouseButton::Middle,
+        message::MouseButton::Right => VtMouseButton::Right,
+        message::MouseButton::None => VtMouseButton::None,
+    }
+}
+
+fn encode_mouse_input(mouse: &message::Mouse, sgr: bool) -> Result<Vec<u8>, &'static str> {
+    if mouse.repeat == 0 {
+        return Err("repeat must be at least 1");
+    }
+
+    let button = map_mouse_button(mouse.button);
+    let modifiers = encode_mouse_modifiers(mouse.shift, mouse.alt, mouse.ctrl);
+    let col = mouse.col as usize;
+    let row = mouse.row as usize;
+
+    let mut bytes = Vec::new();
+    match mouse.kind {
+        message::MouseKind::Press => {
+            if button == VtMouseButton::None {
+                return Err("press requires --button left|middle|right");
+            }
+            bytes.extend(encode_mouse_event(button, true, col, row, modifiers, sgr));
+        }
+        message::MouseKind::Release => {
+            if button == VtMouseButton::None {
+                return Err("release requires --button left|middle|right");
+            }
+            bytes.extend(encode_mouse_event(button, false, col, row, modifiers, sgr));
+        }
+        message::MouseKind::Click => {
+            if button == VtMouseButton::None {
+                return Err("click requires --button left|middle|right");
+            }
+            bytes.extend(encode_mouse_event(button, true, col, row, modifiers, sgr));
+            bytes.extend(encode_mouse_event(button, false, col, row, modifiers, sgr));
+        }
+        message::MouseKind::Move => {
+            bytes.extend(encode_mouse_motion(button, col, row, modifiers, sgr));
+        }
+        message::MouseKind::WheelUp => {
+            for _ in 0..mouse.repeat {
+                bytes.extend(encode_mouse_event(
+                    VtMouseButton::WheelUp,
+                    true,
+                    col,
+                    row,
+                    modifiers,
+                    sgr,
+                ));
+            }
+        }
+        message::MouseKind::WheelDown => {
+            for _ in 0..mouse.repeat {
+                bytes.extend(encode_mouse_event(
+                    VtMouseButton::WheelDown,
+                    true,
+                    col,
+                    row,
+                    modifiers,
+                    sgr,
+                ));
+            }
+        }
+    }
+
+    Ok(bytes)
+}
+
 fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
     serde_json::json!({
         "cols": u16::try_from(screen.cols()).unwrap_or(u16::MAX),
@@ -429,6 +582,8 @@ impl RequestHandler for HostRequestHandler {
             TypedMessage::Send(send) => self.handle_send(&envelope.id, send),
 
             TypedMessage::Keys(keys) => self.handle_keys(&envelope.id, keys),
+
+            TypedMessage::Mouse(mouse) => self.handle_mouse(&envelope.id, mouse),
 
             TypedMessage::PaneInput(input) => self.handle_pane_input(&envelope.id, input),
 
@@ -887,6 +1042,68 @@ impl HostRequestHandler {
         };
 
         if let Err(e) = session.write_input(&encoded) {
+            return Some(error_envelope(
+                id,
+                ErrorCode::SessionFailed,
+                &format!("write failed: {}", e),
+            ));
+        }
+
+        Some(Envelope::new(id, &OkResponse {}))
+    }
+
+    fn handle_mouse(&self, id: &str, mouse: &message::Mouse) -> Option<Envelope> {
+        let state = self.state.lock().unwrap();
+        let (inst, pane_id) = match find_pane(&state.workspaces, &mouse.target) {
+            Some(r) => r,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::TargetNotFound,
+                    &format!("pane '{}' not found", mouse.target),
+                ));
+            }
+        };
+
+        let session_id = match inst.pane_state(&pane_id) {
+            Some(PaneState::Attached { session_id }) => session_id.clone(),
+            _ => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "pane not attached",
+                ));
+            }
+        };
+
+        let session = match inst.session(&session_id) {
+            Some(s) => s,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "session not found",
+                ));
+            }
+        };
+
+        let screen = session.screen();
+        if screen.mouse_mode() == wtd_pty::MouseMode::None && !mouse.force {
+            return Some(error_envelope(
+                id,
+                ErrorCode::InvalidArgument,
+                "pane is not advertising VT mouse mode; use --force to inject anyway",
+            ));
+        }
+
+        let bytes = match encode_mouse_input(mouse, screen.sgr_mouse()) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return Some(error_envelope(id, ErrorCode::InvalidArgument, e));
+            }
+        };
+
+        if let Err(e) = session.write_input(&bytes) {
             return Some(error_envelope(
                 id,
                 ErrorCode::SessionFailed,
@@ -1463,15 +1680,13 @@ impl HostRequestHandler {
 
     fn handle_session_input(&self, input: &SessionInput) {
         let state = self.state.lock().unwrap();
+        let Some(inst) = state.workspaces.get(&input.workspace) else {
+            return;
+        };
         let session_id = SessionId(input.session_id.parse::<u64>().unwrap_or(0));
-
-        for inst in state.workspaces.values() {
-            if let Some(session) = inst.session(&session_id) {
-                // Decode base64 data
-                if let Some(bytes) = decode_base64(&input.data) {
-                    let _ = session.write_input(&bytes);
-                }
-                return;
+        if let Some(session) = inst.session(&session_id) {
+            if let Some(bytes) = decode_base64(&input.data) {
+                let _ = session.write_input(&bytes);
             }
         }
     }
@@ -1581,7 +1796,40 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_send_input;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use super::{encode_mouse_input, encode_send_input, scoped_session_key, HostRequestHandler};
+    use crate::output_broadcaster::BroadcastEvent;
+    use crate::workspace_instance::WorkspaceInstance;
+    use wtd_core::global_settings::GlobalSettings;
+    use wtd_core::workspace::{PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition};
+    use wtd_ipc::message::{Mouse, MouseButton, MouseKind};
+
+    fn encode_b64(input: &[u8]) -> String {
+        const CHARS: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+        for chunk in input.chunks(3) {
+            let b0 = chunk[0] as u32;
+            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+            let triple = (b0 << 16) | (b1 << 8) | b2;
+            out.push(CHARS[((triple >> 18) & 0x3f) as usize] as char);
+            out.push(CHARS[((triple >> 12) & 0x3f) as usize] as char);
+            if chunk.len() > 1 {
+                out.push(CHARS[((triple >> 6) & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+            if chunk.len() > 2 {
+                out.push(CHARS[(triple & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+        out
+    }
 
     #[test]
     fn encode_send_input_plain_text_without_newline() {
@@ -1612,5 +1860,175 @@ mod tests {
     #[test]
     fn encode_send_input_does_not_wrap_single_char_input() {
         assert_eq!(encode_send_input("a", false, true), b"a");
+    }
+
+    #[test]
+    fn encode_mouse_click_sgr() {
+        let mouse = Mouse {
+            target: "w/p".into(),
+            kind: MouseKind::Click,
+            col: 4,
+            row: 2,
+            button: Some(MouseButton::Left),
+            shift: false,
+            alt: false,
+            ctrl: false,
+            repeat: 1,
+            force: false,
+        };
+        assert_eq!(
+            encode_mouse_input(&mouse, true).unwrap(),
+            b"\x1b[<0;5;3M\x1b[<0;5;3m"
+        );
+    }
+
+    #[test]
+    fn encode_mouse_wheel_repeat_legacy() {
+        let mouse = Mouse {
+            target: "w/p".into(),
+            kind: MouseKind::WheelDown,
+            col: 1,
+            row: 1,
+            button: None,
+            shift: false,
+            alt: true,
+            ctrl: false,
+            repeat: 2,
+            force: false,
+        };
+        assert_eq!(
+            encode_mouse_input(&mouse, false).unwrap(),
+            vec![0x1b, b'[', b'M', 105, 34, 34, 0x1b, b'[', b'M', 105, 34, 34]
+        );
+    }
+
+    #[test]
+    fn encode_mouse_click_requires_button() {
+        let mouse = Mouse {
+            target: "w/p".into(),
+            kind: MouseKind::Click,
+            col: 0,
+            row: 0,
+            button: None,
+            shift: false,
+            alt: false,
+            ctrl: false,
+            repeat: 1,
+            force: false,
+        };
+        assert_eq!(
+            encode_mouse_input(&mouse, true).unwrap_err(),
+            "click requires --button left|middle|right"
+        );
+    }
+
+    #[test]
+    fn scoped_session_key_includes_workspace_namespace() {
+        assert_eq!(scoped_session_key("dev", "1"), "dev:1");
+        assert_eq!(scoped_session_key("ops", "1"), "ops:1");
+    }
+
+    #[test]
+    fn session_input_routes_within_named_workspace() {
+        fn single_cmd_workspace(name: &str) -> WorkspaceDefinition {
+            WorkspaceDefinition {
+                version: 1,
+                name: name.to_string(),
+                description: None,
+                defaults: None,
+                profiles: None,
+                bindings: None,
+                windows: None,
+                tabs: Some(vec![TabDefinition {
+                    name: "main".to_string(),
+                    layout: PaneNode::Pane(PaneLeaf {
+                        name: "shell".to_string(),
+                        session: Some(SessionLaunchDefinition {
+                            profile: Some("cmd".to_string()),
+                            ..Default::default()
+                        }),
+                    }),
+                    focus: None,
+                }]),
+            }
+        }
+
+        let settings = GlobalSettings::default();
+        let env: HashMap<String, String> = std::env::vars().collect();
+        let mut alpha = WorkspaceInstance::open(
+            wtd_core::ids::WorkspaceInstanceId(1),
+            &single_cmd_workspace("alpha"),
+            &settings,
+            &env,
+            super::find_exe,
+        )
+        .expect("alpha workspace should open");
+        let mut beta = WorkspaceInstance::open(
+            wtd_core::ids::WorkspaceInstanceId(2),
+            &single_cmd_workspace("beta"),
+            &settings,
+            &env,
+            super::find_exe,
+        )
+        .expect("beta workspace should open");
+
+        let alpha_session = alpha
+            .sessions()
+            .keys()
+            .next()
+            .expect("alpha session id")
+            .0;
+        let beta_session = beta
+            .sessions()
+            .keys()
+            .next()
+            .expect("beta session id")
+            .0;
+        assert_eq!(alpha_session, 1, "expected overlapping test session ids");
+        assert_eq!(beta_session, 1, "expected overlapping test session ids");
+
+        let handler = HostRequestHandler::new(settings);
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert("alpha".into(), alpha);
+            state.workspaces.insert("beta".into(), beta);
+        }
+
+        let mut prev_titles = HashMap::new();
+        let mut prev_progress = HashMap::new();
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = handler.drain_session_events(&mut prev_titles, &mut prev_progress);
+
+        let marker = "WTD_SESSION_SCOPE_TEST_7QH2";
+        handler.handle_session_input(&wtd_ipc::message::SessionInput {
+            workspace: "beta".into(),
+            session_id: "1".into(),
+            data: encode_b64(format!("echo {marker}\r").as_bytes()),
+        });
+
+        std::thread::sleep(Duration::from_millis(250));
+        let events = handler.drain_session_events(&mut prev_titles, &mut prev_progress);
+
+        let mut saw_beta_marker = false;
+        let mut saw_alpha_marker = false;
+        for event in events {
+            if let BroadcastEvent::Output {
+                workspace, data, ..
+            } = event
+            {
+                let text = String::from_utf8_lossy(&data);
+                if text.contains(marker) {
+                    if workspace == "beta" {
+                        saw_beta_marker = true;
+                    }
+                    if workspace == "alpha" {
+                        saw_alpha_marker = true;
+                    }
+                }
+            }
+        }
+
+        assert!(saw_beta_marker, "expected scoped input output in beta workspace");
+        assert!(!saw_alpha_marker, "input leaked into alpha workspace");
     }
 }

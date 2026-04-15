@@ -512,7 +512,7 @@ pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
     // Special keys with optional modifier encoding
     let special_bytes = special_key_bytes(&event.key, mods);
     if let Some(bytes) = special_bytes {
-        if mods.alt() && !matches!(event.key, KeyName::Escape) {
+        if mods.alt() && !matches!(event.key, KeyName::Escape | KeyName::Enter) {
             // Alt prefix: ESC + the sequence
             let mut result = vec![0x1B];
             result.extend_from_slice(&bytes);
@@ -551,7 +551,13 @@ fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
     let has_mods = mod_param > 1;
 
     match key {
-        KeyName::Enter => Some(vec![0x0D]),
+        KeyName::Enter => {
+            if has_mods {
+                Some(csi_u(13, mod_param))
+            } else {
+                Some(vec![0x0D])
+            }
+        }
         KeyName::Tab => {
             if mods.shift() {
                 Some(vec![0x1B, b'[', b'Z']) // Shift+Tab → CSI Z (backtab)
@@ -634,6 +640,11 @@ fn ss3_or_csi(ch: u8, mod_param: u8, has_mods: bool) -> Vec<u8> {
     } else {
         vec![0x1B, b'O', ch]
     }
+}
+
+/// CSI {codepoint};{mod}u
+fn csi_u(codepoint: u32, mod_param: u8) -> Vec<u8> {
+    format!("\x1B[{codepoint};{mod_param}u").into_bytes()
 }
 
 // ── Win32 VK code mapping ────────────────────────────────────────────────────
@@ -1268,6 +1279,24 @@ mod tests {
     fn raw_bytes_enter() {
         let event = key(KeyName::Enter, Modifiers::NONE, None);
         assert_eq!(key_event_to_bytes(&event), vec![0x0D]);
+    }
+
+    #[test]
+    fn raw_bytes_shift_enter_uses_csi_u() {
+        let event = key(KeyName::Enter, Modifiers::SHIFT, None);
+        assert_eq!(key_event_to_bytes(&event), b"\x1B[13;2u");
+    }
+
+    #[test]
+    fn raw_bytes_alt_enter_uses_csi_u_without_extra_escape_prefix() {
+        let event = key(KeyName::Enter, Modifiers::ALT, None);
+        assert_eq!(key_event_to_bytes(&event), b"\x1B[13;3u");
+    }
+
+    #[test]
+    fn raw_bytes_ctrl_enter_uses_csi_u() {
+        let event = key(KeyName::Enter, Modifiers::CTRL, None);
+        assert_eq!(key_event_to_bytes(&event), b"\x1B[13;5u");
     }
 
     #[test]

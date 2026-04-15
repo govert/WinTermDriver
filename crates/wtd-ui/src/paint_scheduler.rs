@@ -7,6 +7,7 @@ pub struct PaintScheduler {
     pending: bool,
     defer_until: Option<Instant>,
     alt_screen_coalesce: Duration,
+    primary_screen_tui_coalesce: Duration,
 }
 
 impl Default for PaintScheduler {
@@ -18,16 +19,33 @@ impl Default for PaintScheduler {
 impl PaintScheduler {
     /// Default quiet-window used for visible alternate-screen redraw bursts.
     pub const DEFAULT_ALT_SCREEN_COALESCE: Duration = Duration::from_millis(10);
+    /// Default quiet-window used for clear-heavy inline TUI redraw bursts on
+    /// the primary screen.
+    pub const DEFAULT_PRIMARY_SCREEN_TUI_COALESCE: Duration = Duration::from_millis(60);
 
     pub fn new() -> Self {
-        Self::with_alt_screen_coalesce(Self::DEFAULT_ALT_SCREEN_COALESCE)
+        Self::with_coalesce_windows(
+            Self::DEFAULT_ALT_SCREEN_COALESCE,
+            Self::DEFAULT_PRIMARY_SCREEN_TUI_COALESCE,
+        )
     }
 
     pub fn with_alt_screen_coalesce(alt_screen_coalesce: Duration) -> Self {
+        Self::with_coalesce_windows(
+            alt_screen_coalesce,
+            Self::DEFAULT_PRIMARY_SCREEN_TUI_COALESCE,
+        )
+    }
+
+    pub fn with_coalesce_windows(
+        alt_screen_coalesce: Duration,
+        primary_screen_tui_coalesce: Duration,
+    ) -> Self {
         Self {
             pending: false,
             defer_until: None,
             alt_screen_coalesce,
+            primary_screen_tui_coalesce,
         }
     }
 
@@ -45,6 +63,18 @@ impl PaintScheduler {
             None
         } else {
             Some(now + self.alt_screen_coalesce)
+        };
+    }
+
+    /// Queue a repaint for a burst of clear-heavy inline primary-screen TUI
+    /// output. Each call refreshes the quiet-window so we paint after the
+    /// redraw burst settles.
+    pub fn request_primary_screen_tui_burst(&mut self, now: Instant) {
+        self.pending = true;
+        self.defer_until = if self.primary_screen_tui_coalesce.is_zero() {
+            None
+        } else {
+            Some(now + self.primary_screen_tui_coalesce)
         };
     }
 
@@ -98,6 +128,21 @@ mod tests {
         assert!(!scheduler.should_paint_now(start));
         assert!(!scheduler.should_paint_now(start + Duration::from_millis(9)));
         assert!(scheduler.should_paint_now(start + Duration::from_millis(10)));
+    }
+
+    #[test]
+    fn primary_screen_tui_burst_waits_for_quiet_window() {
+        let mut scheduler = PaintScheduler::with_coalesce_windows(
+            Duration::from_millis(10),
+            Duration::from_millis(60),
+        );
+        let start = Instant::now();
+
+        scheduler.request_primary_screen_tui_burst(start);
+
+        assert!(!scheduler.should_paint_now(start));
+        assert!(!scheduler.should_paint_now(start + Duration::from_millis(59)));
+        assert!(scheduler.should_paint_now(start + Duration::from_millis(60)));
     }
 
     #[test]

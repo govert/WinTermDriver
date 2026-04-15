@@ -8,7 +8,7 @@ use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use crate::cli::{Cli, Command, HostCommand, ListCommand};
+use crate::cli::{Cli, Command, HostCommand, ListCommand, MouseButtonArg, MouseKindArg};
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
 use crate::input_bytes::{encode_input_payload, InputEncoding};
@@ -17,7 +17,7 @@ use wtd_ipc::connect;
 use wtd_ipc::message::{
     self, AttachWorkspace, CancelFollow, Capture, CloseWorkspace, ErrorResponse, FocusPane, Follow,
     FollowEnd, Inspect, InvokeAction, ListInstances, ListPanes, ListSessions, ListWorkspaces,
-    MessagePayload, OpenWorkspace, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback,
+    MessagePayload, Mouse, OpenWorkspace, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback,
 };
 use wtd_ipc::Envelope;
 
@@ -50,6 +50,26 @@ fn normalize_request_path(path: &Path) -> String {
             .join(path)
             .to_string_lossy()
             .to_string()
+    }
+}
+
+fn map_mouse_kind(kind: MouseKindArg) -> message::MouseKind {
+    match kind {
+        MouseKindArg::Press => message::MouseKind::Press,
+        MouseKindArg::Release => message::MouseKind::Release,
+        MouseKindArg::Click => message::MouseKind::Click,
+        MouseKindArg::Move => message::MouseKind::Move,
+        MouseKindArg::WheelUp => message::MouseKind::WheelUp,
+        MouseKindArg::WheelDown => message::MouseKind::WheelDown,
+    }
+}
+
+fn map_mouse_button(button: MouseButtonArg) -> message::MouseButton {
+    match button {
+        MouseButtonArg::Left => message::MouseButton::Left,
+        MouseButtonArg::Middle => message::MouseButton::Middle,
+        MouseButtonArg::Right => message::MouseButton::Right,
+        MouseButtonArg::None => message::MouseButton::None,
     }
 }
 
@@ -225,6 +245,32 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &message::Keys {
                 target: target.clone(),
                 keys: key_specs.clone(),
+            },
+        )),
+        Command::Mouse {
+            target,
+            kind,
+            col,
+            row,
+            button,
+            repeat,
+            shift,
+            alt,
+            ctrl,
+            force,
+        } => Some(Envelope::new(
+            &id,
+            &Mouse {
+                target: target.clone(),
+                kind: map_mouse_kind(*kind),
+                col: *col,
+                row: *row,
+                button: button.map(map_mouse_button),
+                shift: *shift,
+                alt: *alt,
+                ctrl: *ctrl,
+                repeat: *repeat,
+                force: *force,
             },
         )),
         Command::Input {

@@ -35,6 +35,10 @@ use wtd_ui::status_bar::{SessionStatus, StatusBar};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
 use wtd_ui::window::{self, MouseEventKind};
 
+const MIN_FONT_SIZE: f32 = 8.0;
+const MAX_FONT_SIZE: f32 = 32.0;
+const FONT_SIZE_STEP: f32 = 1.0;
+
 fn main() {
     // §31.1: UI logs to stderr.
     init_stderr_logging(&LogLevel::default());
@@ -132,11 +136,164 @@ fn apply_tab_layout(tab: &mut SnapshotTab, cols: u16, rows: u16, pane_node: &Pan
     tab.layout_tree = layout_tree;
 }
 
+fn refresh_active_tab_ui(
+    tabs: &mut Vec<SnapshotTab>,
+    active_tab_index: usize,
+    pane_layout: &mut PaneLayout,
+    tab_strip: &TabStrip,
+    status_bar: &mut StatusBar,
+    mouse_modes: &mut HashMap<PaneId, MouseMode>,
+    window_width: f32,
+    window_height: f32,
+    cell_w: f32,
+    cell_h: f32,
+    pane_viewport_insets: PaneViewportInsets,
+) {
+    if tabs.is_empty() || active_tab_index >= tabs.len() {
+        return;
+    }
+
+    let (content_cols, content_rows) = content_dims(
+        window_width,
+        window_height,
+        tab_strip,
+        status_bar,
+        cell_w,
+        cell_h,
+    );
+
+    let (pane_sizes, focused, pane_path) =
+        if let Some(active_tab) = active_tab_ref(tabs, active_tab_index) {
+            pane_layout.update(
+                &active_tab.layout_tree,
+                0.0,
+                tab_strip.height(),
+                content_cols,
+                content_rows,
+            );
+            let pane_sizes = pane_sizes_for_layout(
+                pane_layout,
+                &active_tab.layout_tree,
+                cell_w,
+                cell_h,
+                pane_viewport_insets,
+            );
+            let focused = active_tab.layout_tree.focus();
+            let pane_path = active_tab
+                .pane_sessions
+                .get(&focused)
+                .map(|ps| ps.pane_path.clone());
+            (pane_sizes, Some(focused), pane_path)
+        } else {
+            return;
+        };
+
+    if let Some(active_tab) = active_tab_mut(tabs, active_tab_index) {
+        sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
+    }
+    if let Some(path) = pane_path {
+        status_bar.set_pane_path(path);
+    } else if let Some(focused) = focused {
+        status_bar.set_pane_path(format!("{}", focused.0));
+    }
+    if let Some(active_tab) = active_tab_ref(tabs, active_tab_index) {
+        refresh_mouse_modes(mouse_modes, &active_tab.screens);
+    }
+}
+
 fn pane_cell_size_for_rect(rect: &PixelRect, cell_w: f32, cell_h: f32) -> (u16, u16) {
     (
         clamp_cells(rect.width / cell_w),
         clamp_cells(rect.height / cell_h),
     )
+}
+
+fn adjusted_font_size(current: f32, wheel_delta: i16) -> f32 {
+    let notches = wheel_delta as i32 / 120;
+    if notches == 0 {
+        return current;
+    }
+    (current + notches as f32 * FONT_SIZE_STEP).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+}
+
+fn should_coalesce_primary_screen_output(data: &[u8]) -> bool {
+    let esc_count = data.iter().filter(|&&byte| byte == 0x1B).count();
+    let has_clear = data.windows(4).any(|window| window == b"\x1B[2J");
+    let has_home = data.windows(3).any(|window| window == b"\x1B[H");
+
+    has_clear || (has_home && esc_count >= 4) || esc_count >= 8
+}
+
+fn prepare_pane_for_live_input(
+    mouse_handler: &mut MouseHandler,
+    tab: &SnapshotTab,
+    pane_id: &PaneId,
+    clear_selection: bool,
+) -> bool {
+    let Some(screen) = tab.screens.get(pane_id) else {
+        return false;
+    };
+
+    if screen.on_alternate() {
+        return false;
+    }
+
+    let had_scrollback = mouse_handler.scroll_offset(pane_id) != 0;
+    let had_selection = clear_selection && mouse_handler.selection(pane_id).is_some();
+
+    if had_scrollback {
+        mouse_handler.reset_scroll(pane_id);
+    }
+    if had_selection {
+        mouse_handler.clear_selection(pane_id);
+    }
+
+    had_scrollback || had_selection
+}
+
+fn rebuild_renderer_resources(
+    hwnd: HWND,
+    config: &RendererConfig,
+    bindings: &wtd_core::workspace::BindingsDefinition,
+    renderer: &mut TerminalRenderer,
+    tab_strip: &mut TabStrip,
+    status_bar: &mut StatusBar,
+    command_palette: &mut CommandPalette,
+    window_width: f32,
+) -> anyhow::Result<(f32, f32)> {
+    *renderer = TerminalRenderer::new(hwnd, config)?;
+    let (cell_w, cell_h) = renderer.cell_size();
+
+    let tabs = tab_strip.tabs().to_vec();
+    let active_index = tab_strip.active_index();
+    let window_maximized = window::is_maximized(hwnd);
+    let mut rebuilt_tab_strip = TabStrip::new(renderer.dw_factory())?;
+    for (index, tab) in tabs.iter().enumerate() {
+        rebuilt_tab_strip.add_tab(tab.name.clone());
+        rebuilt_tab_strip.set_progress(index, tab.progress.clone());
+    }
+    if !tabs.is_empty() {
+        rebuilt_tab_strip.set_active(active_index.min(tabs.len().saturating_sub(1)));
+    }
+    rebuilt_tab_strip.set_window_maximized(window_maximized);
+    rebuilt_tab_strip.layout(window_width);
+    *tab_strip = rebuilt_tab_strip;
+
+    let pane_path = status_bar.pane_path().to_string();
+    let session_status = status_bar.session_status().clone();
+    let mut rebuilt_status_bar = StatusBar::new(renderer.dw_factory())?;
+    rebuilt_status_bar.set_pane_path(pane_path);
+    rebuilt_status_bar.set_session_status(session_status);
+    rebuilt_status_bar.layout(window_width);
+    *status_bar = rebuilt_status_bar;
+
+    let palette_was_visible = command_palette.is_visible();
+    *command_palette = CommandPalette::new(renderer.dw_factory(), bindings)?;
+    if palette_was_visible {
+        command_palette.show();
+    }
+
+    Ok((cell_w, cell_h))
 }
 
 fn pane_cell_size_for_viewport(
@@ -504,6 +661,22 @@ fn refresh_mouse_modes(
     }
 }
 
+fn pane_at_point(pane_layout: &PaneLayout, x: f32, y: f32) -> Option<PaneId> {
+    for (pane_id, rect) in pane_layout.pane_pixel_rects() {
+        if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+            return Some(pane_id.clone());
+        }
+    }
+    None
+}
+
+fn pane_is_on_alternate(tab: &SnapshotTab, pane_id: &PaneId) -> bool {
+    tab.screens
+        .get(pane_id)
+        .map(ScreenBuffer::on_alternate)
+        .unwrap_or(false)
+}
+
 fn active_tab_ref(tabs: &Vec<SnapshotTab>, active_tab_index: usize) -> Option<&SnapshotTab> {
     tabs.get(active_tab_index)
 }
@@ -525,7 +698,7 @@ fn dispatch_action(
     active_tab: &SnapshotTab,
     bridge: Option<&HostBridge>,
     connected: bool,
-    mouse_handler: &MouseHandler,
+    mouse_handler: &mut MouseHandler,
 ) -> bool {
     let name = action_name(action_ref);
     let args = match action_ref {
@@ -679,7 +852,12 @@ fn dispatch_action(
             let focused = active_tab.layout_tree.focus();
             if let Some(sel) = mouse_handler.selection(&focused) {
                 if let Some(screen) = active_tab.screens.get(&focused) {
-                    let text = wtd_ui::clipboard::extract_selection_text(screen, &sel);
+                    let scrollback_offset = mouse_handler.scroll_offset(&focused).max(0) as usize;
+                    let text = wtd_ui::clipboard::extract_selection_text_at_offset(
+                        screen,
+                        &sel,
+                        scrollback_offset,
+                    );
                     if !text.is_empty() {
                         let _ = wtd_ui::clipboard::copy_to_clipboard(&text);
                     }
@@ -694,6 +872,8 @@ fn dispatch_action(
                     if let Some(bridge) = bridge {
                         if connected {
                             let focused = active_tab.layout_tree.focus();
+                            let _ =
+                                prepare_pane_for_live_input(mouse_handler, active_tab, &focused, true);
                             if let Some(ps) = active_tab.pane_sessions.get(&focused) {
                                 bridge.send_input(ps.session_id.clone(), bytes);
                             }
@@ -758,10 +938,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let hwnd = window::create_terminal_window(title, 1000, 600)?;
 
     // Create the renderer.
-    let config = RendererConfig::default();
+    let mut config = RendererConfig::default();
     let mut renderer = TerminalRenderer::new(hwnd, &config)?;
 
-    let (cell_w, cell_h) = renderer.cell_size();
+    let (mut cell_w, mut cell_h) = renderer.cell_size();
     let pane_viewport_insets = PaneViewportInsets::from_env();
 
     // Create the tab strip.
@@ -847,6 +1027,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             &tab_strip,
             &pane_layout,
             &tabs[active_tab_index],
+            &mouse_handler,
             &status_bar,
             &command_palette,
             window_width,
@@ -865,6 +1046,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         let mut needs_paint = false;
         let mut force_immediate_paint = false;
         let mut saw_visible_alt_screen_output = false;
+        let mut saw_visible_primary_screen_tui_output = false;
         let mut should_close_window = false;
 
         // ── Drain host events ────────────────────────────────────
@@ -963,7 +1145,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
-                    HostEvent::SessionOutput { session_id, data } => {
+                    HostEvent::SessionOutput {
+                        session_id, data, ..
+                    } => {
                         // Feed VT bytes to the screen buffer of the matching pane.
                         if let Some((tab_index, pane_id)) =
                             find_pane_for_session(&tabs, &session_id)
@@ -982,6 +1166,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     refresh_mouse_modes(&mut mouse_modes, &tab.screens);
                                     if on_alternate {
                                         saw_visible_alt_screen_output = true;
+                                    } else if should_coalesce_primary_screen_output(&data) {
+                                        saw_visible_primary_screen_tui_output = true;
                                     } else {
                                         force_immediate_paint = true;
                                     }
@@ -994,6 +1180,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         session_id,
                         new_state,
                         exit_code,
+                        ..
                     } => {
                         if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                             let focused = active_tab.layout_tree.focus();
@@ -1019,7 +1206,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
-                    HostEvent::TitleChanged { session_id, title } => {
+                    HostEvent::TitleChanged {
+                        session_id, title, ..
+                    } => {
                         tracing::debug!(session_id = %session_id, title = %title, "session title changed");
                         if let Some((tab_index, pane_id)) =
                             find_pane_for_session(&tabs, &session_id)
@@ -1043,6 +1232,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     HostEvent::ProgressChanged {
                         session_id,
                         progress,
+                        ..
                     } => {
                         tracing::debug!(session_id = %session_id, "session progress changed");
                         if let Some((tab_index, pane_id)) =
@@ -1173,9 +1363,24 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         // ── Handle resize ────────────────────────────────────────
         if let Some((w, h)) = window::take_resize() {
             if w > 0 && h > 0 {
-                let _ = renderer.resize(w, h);
                 window_width = w as f32;
                 window_height = h as f32;
+                if let Err(error) = renderer.resize(w, h) {
+                    tracing::warn!(%error, "renderer resize failed; rebuilding render resources");
+                    let (new_cell_w, new_cell_h) = rebuild_renderer_resources(
+                        hwnd,
+                        &config,
+                        &bindings,
+                        &mut renderer,
+                        &mut tab_strip,
+                        &mut status_bar,
+                        &mut command_palette,
+                        window_width,
+                    )?;
+                    cell_w = new_cell_w;
+                    cell_h = new_cell_h;
+                    pane_layout = PaneLayout::new(cell_w, cell_h);
+                }
                 tab_strip.set_window_maximized(window::is_maximized(hwnd));
                 tab_strip.layout(window_width);
                 status_bar.layout(window_width);
@@ -1245,7 +1450,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 active_tab,
                                 bridge.as_ref(),
                                 connected,
-                                &mouse_handler,
+                                &mut mouse_handler,
                             );
                         }
                         force_immediate_paint = true;
@@ -1267,7 +1472,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 active_tab,
                                 bridge.as_ref(),
                                 connected,
-                                &mouse_handler,
+                                &mut mouse_handler,
                             );
                         }
                         force_immediate_paint = true;
@@ -1293,7 +1498,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             active_tab,
                             bridge.as_ref(),
                             connected,
-                            &mouse_handler,
+                            &mut mouse_handler,
                         );
                     }
                     force_immediate_paint = true;
@@ -1304,8 +1509,18 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         if connected && !bytes.is_empty() {
                             if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                                 let focused = active_tab.layout_tree.focus();
+                                let reset_live_view = prepare_pane_for_live_input(
+                                    &mut mouse_handler,
+                                    active_tab,
+                                    &focused,
+                                    true,
+                                );
                                 if let Some(ps) = active_tab.pane_sessions.get(&focused) {
                                     bridge.send_input(ps.session_id.clone(), bytes);
+                                }
+                                if reset_live_view {
+                                    force_immediate_paint = true;
+                                    needs_paint = true;
                                 }
                             }
                         }
@@ -1329,6 +1544,50 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // ── Process mouse events ─────────────────────────────────
         for event in window::drain_mouse_events() {
+            if let MouseEventKind::Wheel(delta) = event.kind {
+                if event.modifiers.ctrl() {
+                    let target_pane = active_tab_ref(&tabs, active_tab_index).and_then(|tab| {
+                        pane_at_point(&pane_layout, event.x, event.y)
+                            .or_else(|| Some(tab.layout_tree.focus()))
+                            .filter(|pane_id| pane_is_on_alternate(tab, pane_id))
+                    });
+                    if target_pane.is_none() {
+                        let new_font_size = adjusted_font_size(config.font_size, delta);
+                        if (new_font_size - config.font_size).abs() > f32::EPSILON {
+                            config.font_size = new_font_size;
+                            renderer = TerminalRenderer::new(hwnd, &config)?;
+                            (cell_w, cell_h) = renderer.cell_size();
+                            pane_layout = PaneLayout::new(cell_w, cell_h);
+                            refresh_active_tab_ui(
+                                &mut tabs,
+                                active_tab_index,
+                                &mut pane_layout,
+                                &tab_strip,
+                                &mut status_bar,
+                                &mut mouse_modes,
+                                window_width,
+                                window_height,
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                            );
+                            send_active_pane_sizes(
+                                bridge.as_ref(),
+                                connected,
+                                &pane_layout,
+                                &tabs[active_tab_index],
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                            );
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                        }
+                    }
+                    continue;
+                }
+            }
+
             // When the command palette is visible, clicks dismiss or select.
             if command_palette.is_visible() {
                 let result = match event.kind {
@@ -1355,7 +1614,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 active_tab,
                                 bridge.as_ref(),
                                 connected,
-                                &mouse_handler,
+                                &mut mouse_handler,
                             );
                         }
                     }
@@ -1452,6 +1711,14 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 Some(tab) => tab.layout_tree.focus(),
                 None => continue,
             };
+            let alternate_screens: HashMap<PaneId, bool> = active_tab_ref(&tabs, active_tab_index)
+                .map(|tab| {
+                    tab.screens
+                        .iter()
+                        .map(|(pane_id, screen)| (pane_id.clone(), screen.on_alternate()))
+                        .collect()
+                })
+                .unwrap_or_default();
             let ts_height = tab_strip.height();
             let sb_height = status_bar.height();
             let (content_cols, content_rows) = content_dims(
@@ -1471,6 +1738,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 window_height,
                 &focused,
                 &mouse_modes,
+                &alternate_screens,
                 cell_w,
                 cell_h,
                 pane_viewport_insets.horizontal_cells,
@@ -1518,7 +1786,23 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         );
                     }
                     MouseOutput::SelectionChanged(_pane_id, _selection) => {
-                        // Selection state is tracked inside MouseHandler.
+                        // Selection state is tracked inside MouseHandler and rendered from there.
+                    }
+                    MouseOutput::SelectionFinalized(pane_id, selection) => {
+                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                            if let Some(screen) = active_tab.screens.get(&pane_id) {
+                                let scrollback_offset =
+                                    mouse_handler.scroll_offset(&pane_id).max(0) as usize;
+                                let text = wtd_ui::clipboard::extract_selection_text_at_offset(
+                                    screen,
+                                    &selection,
+                                    scrollback_offset,
+                                );
+                                if !text.is_empty() {
+                                    let _ = wtd_ui::clipboard::copy_to_clipboard(&text);
+                                }
+                            }
+                        }
                     }
                     MouseOutput::PaneResize(PaneLayoutAction::Resize {
                         pane_id,
@@ -1571,16 +1855,33 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     MouseOutput::SendToSession(pane_id, bytes) => {
                         if let Some(ref bridge) = bridge {
                             if connected {
-                                let ps = active_tab_ref(&tabs, active_tab_index)
-                                    .and_then(|tab| tab.pane_sessions.get(&pane_id));
-                                if let Some(ps) = ps {
-                                    bridge.send_input(ps.session_id.clone(), bytes);
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    let reset_live_view = prepare_pane_for_live_input(
+                                        &mut mouse_handler,
+                                        active_tab,
+                                        &pane_id,
+                                        false,
+                                    );
+                                    if let Some(ps) = active_tab.pane_sessions.get(&pane_id) {
+                                        bridge.send_input(ps.session_id.clone(), bytes);
+                                    }
+                                    if reset_live_view {
+                                        force_immediate_paint = true;
+                                        needs_paint = true;
+                                    }
                                 }
                             }
                         }
                     }
-                    MouseOutput::ScrollPane(_pane_id, _delta) => {
-                        // Scrollback view adjustment — tracked in MouseHandler.
+                    MouseOutput::ScrollPane(pane_id, _delta) => {
+                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                            if let Some(screen) = active_tab.screens.get(&pane_id) {
+                                mouse_handler
+                                    .clamp_scroll(&pane_id, screen.scrollback_len() as i32);
+                            }
+                        }
+                        force_immediate_paint = true;
+                        needs_paint = true;
                     }
                     MouseOutput::PasteClipboard(pane_id) => {
                         if let Ok(text) = wtd_ui::clipboard::read_from_clipboard() {
@@ -1588,10 +1889,24 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 let bytes = wtd_ui::clipboard::prepare_paste(&text, false);
                                 if let Some(ref bridge) = bridge {
                                     if connected {
-                                        let ps = active_tab_ref(&tabs, active_tab_index)
-                                            .and_then(|tab| tab.pane_sessions.get(&pane_id));
-                                        if let Some(ps) = ps {
-                                            bridge.send_input(ps.session_id.clone(), bytes);
+                                        if let Some(active_tab) =
+                                            active_tab_ref(&tabs, active_tab_index)
+                                        {
+                                            let reset_live_view = prepare_pane_for_live_input(
+                                                &mut mouse_handler,
+                                                active_tab,
+                                                &pane_id,
+                                                true,
+                                            );
+                                            if let Some(ps) =
+                                                active_tab.pane_sessions.get(&pane_id)
+                                            {
+                                                bridge.send_input(ps.session_id.clone(), bytes);
+                                            }
+                                            if reset_live_view {
+                                                force_immediate_paint = true;
+                                                needs_paint = true;
+                                            }
                                         }
                                     }
                                 }
@@ -1687,36 +2002,69 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 tab_strip.set_window_maximized(window::is_maximized(hwnd));
                                 tab_strip.layout(window_width);
                             }
-                            TabAction::Close(_) => {
+                            TabAction::Close(tab_index) => {
                                 if tabs.len() > 1 {
                                     if let Some(ref bridge) = bridge {
                                         if connected {
+                                            if tab_index != active_tab_index {
+                                                send_workspace_action(
+                                                    bridge,
+                                                    "goto-tab",
+                                                    serde_json::json!({"index": tab_index}),
+                                                );
+                                            }
                                             send_workspace_action(
                                                 bridge,
                                                 "close-tab",
                                                 serde_json::json!({}),
                                             );
                                         } else {
-                                            let result = tab_strip.close_tab(active_tab_index);
+                                            let result = tab_strip.close_tab(tab_index);
                                             if matches!(result, TabAction::Close(_))
                                                 && !tabs.is_empty()
                                             {
-                                                tabs.remove(active_tab_index);
+                                                tabs.remove(tab_index);
                                                 active_tab_index = tab_strip.active_index();
                                                 if active_tab_index >= tabs.len() {
                                                     active_tab_index = tabs.len().saturating_sub(1);
                                                 }
+                                                refresh_active_tab_ui(
+                                                    &mut tabs,
+                                                    active_tab_index,
+                                                    &mut pane_layout,
+                                                    &tab_strip,
+                                                    &mut status_bar,
+                                                    &mut mouse_modes,
+                                                    window_width,
+                                                    window_height,
+                                                    cell_w,
+                                                    cell_h,
+                                                    pane_viewport_insets,
+                                                );
                                             }
                                         }
                                     } else {
-                                        let result = tab_strip.close_tab(active_tab_index);
+                                        let result = tab_strip.close_tab(tab_index);
                                         if matches!(result, TabAction::Close(_)) && !tabs.is_empty()
                                         {
-                                            tabs.remove(active_tab_index);
+                                            tabs.remove(tab_index);
                                             active_tab_index = tab_strip.active_index();
                                             if active_tab_index >= tabs.len() {
                                                 active_tab_index = tabs.len().saturating_sub(1);
                                             }
+                                            refresh_active_tab_ui(
+                                                &mut tabs,
+                                                active_tab_index,
+                                                &mut pane_layout,
+                                                &tab_strip,
+                                                &mut status_bar,
+                                                &mut mouse_modes,
+                                                window_width,
+                                                window_height,
+                                                cell_w,
+                                                cell_h,
+                                                pane_viewport_insets,
+                                            );
                                         }
                                     }
                                 }
@@ -1862,6 +2210,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         if needs_paint {
             if saw_visible_alt_screen_output && !force_immediate_paint {
                 paint_scheduler.request_alt_screen_burst(Instant::now());
+            } else if saw_visible_primary_screen_tui_output && !force_immediate_paint {
+                paint_scheduler.request_primary_screen_tui_burst(Instant::now());
             } else {
                 paint_scheduler.request_immediate();
             }
@@ -1879,9 +2229,27 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 }
                 if let Some((w, h)) = window::client_size(hwnd) {
                     if w > 0 && h > 0 {
-                        let _ = renderer.resize(w, h);
                         window_width = w as f32;
                         window_height = h as f32;
+                        if let Err(error) = renderer.resize(w, h) {
+                            tracing::warn!(
+                                %error,
+                                "renderer resize during window restore failed; rebuilding render resources"
+                            );
+                            let (new_cell_w, new_cell_h) = rebuild_renderer_resources(
+                                hwnd,
+                                &config,
+                                &bindings,
+                                &mut renderer,
+                                &mut tab_strip,
+                                &mut status_bar,
+                                &mut command_palette,
+                                window_width,
+                            )?;
+                            cell_w = new_cell_w;
+                            cell_h = new_cell_h;
+                            pane_layout = PaneLayout::new(cell_w, cell_h);
+                        }
                         tab_strip.layout(window_width);
                         status_bar.layout(window_width);
 
@@ -1951,11 +2319,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             } else {
                 &tabs[active_tab_index]
             };
-            paint_all(
+            if let Err(error) = paint_all(
                 &renderer,
                 &tab_strip,
                 &pane_layout,
                 active_tab,
+                &mouse_handler,
                 &status_bar,
                 &command_palette,
                 window_width,
@@ -1963,7 +2332,49 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 cell_w,
                 cell_h,
                 pane_viewport_insets,
-            )?;
+            ) {
+                tracing::warn!(%error, "paint failed; rebuilding render resources and retrying");
+                let (new_cell_w, new_cell_h) = rebuild_renderer_resources(
+                    hwnd,
+                    &config,
+                    &bindings,
+                    &mut renderer,
+                    &mut tab_strip,
+                    &mut status_bar,
+                    &mut command_palette,
+                    window_width,
+                )?;
+                cell_w = new_cell_w;
+                cell_h = new_cell_h;
+                pane_layout = PaneLayout::new(cell_w, cell_h);
+                refresh_active_tab_ui(
+                    &mut tabs,
+                    active_tab_index,
+                    &mut pane_layout,
+                    &tab_strip,
+                    &mut status_bar,
+                    &mut mouse_modes,
+                    window_width,
+                    window_height,
+                    cell_w,
+                    cell_h,
+                    pane_viewport_insets,
+                );
+                paint_all(
+                    &renderer,
+                    &tab_strip,
+                    &pane_layout,
+                    &tabs[active_tab_index],
+                    &mouse_handler,
+                    &status_bar,
+                    &command_palette,
+                    window_width,
+                    window_height,
+                    cell_w,
+                    cell_h,
+                    pane_viewport_insets,
+                )?;
+            }
             paint_scheduler.complete_paint();
         }
 
@@ -1988,6 +2399,7 @@ fn paint_all(
     tab_strip: &TabStrip,
     pane_layout: &PaneLayout,
     tab: &SnapshotTab,
+    mouse_handler: &MouseHandler,
     status_bar: &StatusBar,
     command_palette: &CommandPalette,
     window_width: f32,
@@ -2011,13 +2423,14 @@ fn paint_all(
         ) {
             let content_rect = pane_content_rect(rect, cell_w, cell_h, pane_viewport_insets);
             renderer
-                .paint_pane_viewport(
+                .paint_pane_viewport_scrolled(
                     screen,
                     content_rect.x,
                     content_rect.y,
                     content_rect.width,
                     content_rect.height,
-                    None,
+                    mouse_handler.selection(&pane_id).as_ref(),
+                    mouse_handler.scroll_offset(&pane_id).max(0) as usize,
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             if let Some(pane_session) = tab.pane_sessions.get(&pane_id) {
@@ -2229,5 +2642,31 @@ mod tests {
             parse_workspace_from_args(&args),
             Some("env-workspace".to_string())
         );
+    }
+
+    #[test]
+    fn adjusted_font_size_grows_and_clamps() {
+        assert_eq!(adjusted_font_size(14.0, 120), 15.0);
+        assert_eq!(adjusted_font_size(MAX_FONT_SIZE, 120), MAX_FONT_SIZE);
+    }
+
+    #[test]
+    fn adjusted_font_size_shrinks_and_clamps() {
+        assert_eq!(adjusted_font_size(14.0, -120), 13.0);
+        assert_eq!(adjusted_font_size(MIN_FONT_SIZE, -120), MIN_FONT_SIZE);
+    }
+
+    #[test]
+    fn clear_heavy_primary_screen_output_is_coalesced() {
+        assert!(should_coalesce_primary_screen_output(
+            b"\x1B[2J\x1B[H\x1B[12;3Hhello"
+        ));
+    }
+
+    #[test]
+    fn plain_shell_output_is_not_coalesced() {
+        assert!(!should_coalesce_primary_screen_output(
+            b"PS C:\\Users\\me> dir\r\n"
+        ));
     }
 }

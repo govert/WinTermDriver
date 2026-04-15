@@ -107,6 +107,7 @@ impl Session {
             &args,
             self.config.cwd.as_deref(),
             self.config.size,
+            Some(&self.config.env),
             None,
         ) {
             Ok(p) => p,

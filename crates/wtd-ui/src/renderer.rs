@@ -451,6 +451,21 @@ impl TerminalRenderer {
         height: f32,
         selection: Option<&TextSelection>,
     ) -> Result<()> {
+        self.paint_pane_viewport_scrolled(screen, x, y, width, height, selection, 0)
+    }
+
+    /// Paint a [`ScreenBuffer`] clipped to a pane viewport rectangle with an
+    /// optional scrollback offset in rows.
+    pub fn paint_pane_viewport_scrolled(
+        &self,
+        screen: &ScreenBuffer,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        selection: Option<&TextSelection>,
+        scrollback_offset: usize,
+    ) -> Result<()> {
         let (x, y, width, height) = snap_viewport(x, y, width, height);
         let clip = D2D_RECT_F {
             left: x,
@@ -463,7 +478,8 @@ impl TerminalRenderer {
                 .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
         }
 
-        let result = self.paint_viewport_inner(screen, x, y, width, height, selection);
+        let result =
+            self.paint_viewport_inner(screen, x, y, width, height, selection, scrollback_offset);
 
         unsafe {
             self.rt.PopAxisAlignedClip();
@@ -741,6 +757,7 @@ impl TerminalRenderer {
         width: f32,
         height: f32,
         selection: Option<&TextSelection>,
+        scrollback_offset: usize,
     ) -> Result<()> {
         let rows = screen.rows();
         let cols = screen.cols();
@@ -748,6 +765,7 @@ impl TerminalRenderer {
         // Only render the rows/cols that fit in the viewport.
         let visible_rows = ((height / self.cell_height).ceil() as usize).min(rows);
         let visible_cols = ((width / self.cell_width).ceil() as usize).min(cols);
+        let base_row = screen.scrollback_len().saturating_sub(scrollback_offset);
 
         unsafe {
             // Make pane rendering self-contained. This clears stale cell
@@ -767,8 +785,8 @@ impl TerminalRenderer {
 
             for row in 0..visible_rows {
                 let py = y + row as f32 * self.cell_height;
-                self.paint_row_backgrounds(screen, row, visible_cols, x, py)?;
-                self.paint_row_text(screen, row, visible_cols, x, py)?;
+                self.paint_row_backgrounds(screen, base_row + row, visible_cols, x, py)?;
+                self.paint_row_text(screen, base_row + row, visible_cols, x, py)?;
             }
 
             // Selection highlight.
@@ -778,7 +796,11 @@ impl TerminalRenderer {
 
             // Cursor.
             let cursor = screen.cursor();
-            if cursor.visible && cursor.row < visible_rows && cursor.col < visible_cols {
+            if scrollback_offset == 0
+                && cursor.visible
+                && cursor.row < visible_rows
+                && cursor.col < visible_cols
+            {
                 self.paint_shaped_cursor(cursor, x, y)?;
             }
         }
@@ -798,7 +820,7 @@ impl TerminalRenderer {
     ) -> Result<()> {
         let mut col = 0;
         while col < cols {
-            let cell = match screen.cell(row, col) {
+            let cell = match screen.cell_at_virtual(row, col) {
                 Some(c) => c,
                 None => {
                     col += 1;
@@ -814,7 +836,7 @@ impl TerminalRenderer {
             let run_start = col;
             col += 1;
             while col < cols {
-                if let Some(next) = screen.cell(row, col) {
+                if let Some(next) = screen.cell_at_virtual(row, col) {
                     let (_, next_bg) = resolve_cell_colors(next);
                     if next_bg == bg_rgb {
                         col += 1;
@@ -852,7 +874,7 @@ impl TerminalRenderer {
     ) -> Result<()> {
         let mut col = 0;
         while col < cols {
-            let cell = match screen.cell(row, col) {
+            let cell = match screen.cell_at_virtual(row, col) {
                 Some(c) => c,
                 None => {
                     col += 1;
@@ -879,7 +901,7 @@ impl TerminalRenderer {
             col += 1;
             // Extend the run while color and font match.
             while col < cols {
-                if let Some(next) = screen.cell(row, col) {
+                if let Some(next) = screen.cell_at_virtual(row, col) {
                     if next.attrs.is_wide_continuation() {
                         col += 1;
                         continue;

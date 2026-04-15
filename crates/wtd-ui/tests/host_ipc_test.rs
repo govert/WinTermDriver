@@ -267,6 +267,7 @@ async fn ui_client_receives_push_session_output() {
     let push = Envelope::new(
         "push-1",
         &SessionOutput {
+            workspace: "dev".into(),
             session_id: "s1".into(),
             data: base64_encode(b"hello from session"),
         },
@@ -281,6 +282,7 @@ async fn ui_client_receives_push_session_output() {
 
     assert_eq!(frame.msg_type, SessionOutput::TYPE_NAME);
     let payload: SessionOutput = frame.extract_payload().unwrap();
+    assert_eq!(payload.workspace, "dev");
     assert_eq!(payload.session_id, "s1");
 }
 
@@ -304,6 +306,7 @@ async fn ui_client_receives_state_changed_notification() {
     let push = Envelope::new(
         "push-2",
         &SessionStateChanged {
+            workspace: "dev".into(),
             session_id: "s1".into(),
             new_state: "exited".into(),
             exit_code: Some(0),
@@ -318,6 +321,7 @@ async fn ui_client_receives_state_changed_notification() {
 
     assert_eq!(frame.msg_type, SessionStateChanged::TYPE_NAME);
     let payload: SessionStateChanged = frame.extract_payload().unwrap();
+    assert_eq!(payload.workspace, "dev");
     assert_eq!(payload.session_id, "s1");
     assert_eq!(payload.new_state, "exited");
     assert_eq!(payload.exit_code, Some(0));
@@ -344,6 +348,7 @@ async fn ui_client_receives_title_changed_notification() {
     let push = Envelope::new(
         "push-3",
         &TitleChanged {
+            workspace: "dev".into(),
             session_id: "s1".into(),
             title: "bash — ~/projects".into(),
         },
@@ -357,6 +362,7 @@ async fn ui_client_receives_title_changed_notification() {
 
     assert_eq!(frame.msg_type, TitleChanged::TYPE_NAME);
     let payload: TitleChanged = frame.extract_payload().unwrap();
+    assert_eq!(payload.workspace, "dev");
     assert_eq!(payload.title, "bash — ~/projects");
 
     let _ = shutdown_tx.send(true);
@@ -382,6 +388,7 @@ async fn ui_client_sends_session_input() {
     let envelope = Envelope::new(
         "input-1",
         &SessionInput {
+            workspace: "dev".into(),
             session_id: "s1".into(),
             data: base64_encode(b"ls -la\n"),
         },
@@ -414,10 +421,10 @@ impl RequestHandler for InputCapture {
         msg: &TypedMessage,
     ) -> Option<Envelope> {
         if let TypedMessage::SessionInput(si) = msg {
-            self.inputs
-                .lock()
-                .unwrap()
-                .push((si.session_id.clone(), si.data.clone()));
+            self.inputs.lock().unwrap().push((
+                format!("{}/{}", si.workspace, si.session_id),
+                si.data.clone(),
+            ));
         }
         None // fire-and-forget
     }
@@ -515,6 +522,7 @@ async fn host_bridge_connect_and_receive_events() {
     let push = Envelope::new(
         "push-bridge-1",
         &SessionOutput {
+            workspace: "dev".into(),
             session_id: "session-1".into(),
             data: base64_encode(b"\x1b[32mhello\x1b[0m"),
         },
@@ -526,7 +534,13 @@ async fn host_bridge_connect_and_receive_events() {
     });
     assert!(output.is_some(), "should receive SessionOutput");
 
-    if let Some(HostEvent::SessionOutput { session_id, data }) = output {
+    if let Some(HostEvent::SessionOutput {
+        workspace,
+        session_id,
+        data,
+    }) = output
+    {
+        assert_eq!(workspace, "dev");
         assert_eq!(session_id, "session-1");
         assert_eq!(data, b"\x1b[32mhello\x1b[0m");
     }
@@ -535,6 +549,7 @@ async fn host_bridge_connect_and_receive_events() {
     let push = Envelope::new(
         "push-bridge-2",
         &SessionStateChanged {
+            workspace: "dev".into(),
             session_id: "session-1".into(),
             new_state: "exited".into(),
             exit_code: Some(42),
@@ -548,11 +563,13 @@ async fn host_bridge_connect_and_receive_events() {
     assert!(state_event.is_some(), "should receive SessionStateChanged");
 
     if let Some(HostEvent::SessionStateChanged {
+        workspace,
         session_id,
         new_state,
         exit_code,
     }) = state_event
     {
+        assert_eq!(workspace, "dev");
         assert_eq!(session_id, "session-1");
         assert_eq!(new_state, "exited");
         assert_eq!(exit_code, Some(42));

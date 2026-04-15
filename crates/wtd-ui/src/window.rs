@@ -9,7 +9,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::input::{current_modifiers, vk_to_char, vk_to_key_name, KeyEvent};
+use crate::input::{current_modifiers, vk_to_char, vk_to_key_name, KeyEvent, Modifiers};
 
 // ── Paint / resize signals (atomics) ─────────────────────────────────────────
 
@@ -90,6 +90,7 @@ pub struct MouseEvent {
     pub kind: MouseEventKind,
     pub x: f32,
     pub y: f32,
+    pub modifiers: Modifiers,
 }
 
 /// Kind of mouse event.
@@ -418,6 +419,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::LeftDown,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -427,6 +429,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::LeftDoubleDown,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -436,6 +439,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::LeftUp,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -445,6 +449,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::RightDown,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -454,6 +459,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::RightUp,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -463,6 +469,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::MiddleDown,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -472,6 +479,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::MiddleUp,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -481,6 +489,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::Move,
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }
@@ -492,6 +501,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 kind: MouseEventKind::Wheel(delta),
                 x,
                 y,
+                modifiers: current_modifiers(),
             });
             LRESULT(0)
         }

@@ -17,9 +17,20 @@ use crate::renderer::TextSelection;
 /// inherently stripped.  Wide-character continuation cells are skipped.
 /// Trailing whitespace on each line is trimmed.
 pub fn extract_selection_text(screen: &ScreenBuffer, selection: &TextSelection) -> String {
+    extract_selection_text_at_offset(screen, selection, 0)
+}
+
+/// Extract plain text from a selection range in a viewport scrolled back from
+/// the live screen by `scrollback_offset` rows.
+pub fn extract_selection_text_at_offset(
+    screen: &ScreenBuffer,
+    selection: &TextSelection,
+    scrollback_offset: usize,
+) -> String {
     let (sr, sc, er, ec) = selection.normalised();
     let rows = screen.rows();
     let cols = screen.cols();
+    let base_row = screen.scrollback_len().saturating_sub(scrollback_offset);
     let mut result = String::new();
 
     for row in sr..=er {
@@ -39,7 +50,7 @@ pub fn extract_selection_text(screen: &ScreenBuffer, selection: &TextSelection) 
             if col >= cols {
                 break;
             }
-            if let Some(cell) = screen.cell(row, col) {
+            if let Some(cell) = screen.cell_at_virtual(base_row + row, col) {
                 if !cell.attrs.is_wide_continuation() {
                     line.push_str(cell.text.as_str());
                 }
@@ -441,6 +452,22 @@ mod tests {
         let text = extract_selection_text(&screen, &sel);
         // Should get row 0 (ABC), rows 1-2 (empty, trimmed), and stop at row 3.
         assert!(text.starts_with("ABC"));
+    }
+
+    #[test]
+    fn extract_selection_from_scrollback_offset() {
+        let mut screen = ScreenBuffer::new(5, 2, 10);
+        screen.advance(b"11111\r\n22222\r\n33333\r\n");
+        let sel = TextSelection {
+            start_row: 0,
+            start_col: 0,
+            end_row: 1,
+            end_col: 4,
+        };
+        assert_eq!(
+            extract_selection_text_at_offset(&screen, &sel, 1),
+            "22222\n33333"
+        );
     }
 
     // ── Win32 clipboard round-trip (integration) ────────────────────────

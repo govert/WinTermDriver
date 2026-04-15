@@ -275,6 +275,10 @@ fn resolve_env(
     // Layer 1: host process environment.
     let mut env: HashMap<String, String> = host_env.clone();
 
+    // `NO_COLOR` is a launcher preference, not a sensible default for spawned panes.
+    // If the user wants monochrome panes they can opt back in via profile/workspace/session env.
+    env.remove("NO_COLOR");
+
     // Layer 2: global default profile env (if defined in global settings).
     if let Some(global_default) = global_settings
         .profiles
@@ -1043,6 +1047,41 @@ mod tests {
             !spec.env.contains_key("TERM"),
             "SSH sessions must not get TERM"
         );
+    }
+
+    #[test]
+    fn host_no_color_does_not_leak_into_sessions_by_default() {
+        let spec = resolve(
+            &empty_session(),
+            &empty_workspace(),
+            &GlobalSettings::default(),
+            &host_env(&[("NO_COLOR", "1"), ("USERPROFILE", "C:\\Users\\test")]),
+            false,
+        );
+        assert!(
+            !spec.env.contains_key("NO_COLOR"),
+            "NO_COLOR should not be inherited from the launcher env"
+        );
+    }
+
+    #[test]
+    fn session_env_can_explicitly_restore_no_color() {
+        let session = SessionLaunchDefinition {
+            env: Some({
+                let mut e = HashMap::new();
+                e.insert("NO_COLOR".to_string(), Some("1".to_string()));
+                e
+            }),
+            ..Default::default()
+        };
+        let spec = resolve(
+            &session,
+            &empty_workspace(),
+            &GlobalSettings::default(),
+            &host_env(&[("NO_COLOR", "1"), ("USERPROFILE", "C:\\Users\\test")]),
+            false,
+        );
+        assert_eq!(spec.env.get("NO_COLOR"), Some(&"1".to_string()));
     }
 
     #[test]

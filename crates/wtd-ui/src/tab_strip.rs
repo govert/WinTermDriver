@@ -586,7 +586,7 @@ impl TabStrip {
         // Tabs: check close button first, then tab body
         for (i, zone) in self.zones.iter().enumerate() {
             if zone.close_rect.contains(x, y) {
-                return Some(self.close_tab(i));
+                return Some(TabAction::Close(i));
             }
             if zone.rect.contains(x, y) {
                 self.drag = Some(DragState {
@@ -596,7 +596,6 @@ impl TabStrip {
                     active: false,
                 });
                 if i != self.active_index {
-                    self.active_index = i;
                     return Some(TabAction::SwitchTo(i));
                 }
                 return None;
@@ -1487,7 +1486,7 @@ mod tests {
         let y = TAB_STRIP_HEIGHT / 2.0;
         let action = strip.on_mouse_down(x, y);
         assert_eq!(action, Some(TabAction::SwitchTo(1)));
-        assert_eq!(strip.active_index(), 1);
+        assert_eq!(strip.active_index(), 0);
     }
 
     #[test]
@@ -1518,7 +1517,7 @@ mod tests {
         let y = close.y + close.height / 2.0;
         let action = strip.on_mouse_down(x, y);
         assert_eq!(action, Some(TabAction::Close(1)));
-        assert_eq!(strip.tab_count(), 1);
+        assert_eq!(strip.tab_count(), 2);
     }
 
     #[test]

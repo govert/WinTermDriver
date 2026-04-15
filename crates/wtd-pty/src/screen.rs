@@ -506,6 +506,25 @@ pub enum CursorShape {
     Bar,
 }
 
+impl CursorShape {
+    fn from_config_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "block" => Some(CursorShape::Block),
+            "underline" | "under" => Some(CursorShape::Underline),
+            "bar" | "beam" | "line" => Some(CursorShape::Bar),
+            _ => None,
+        }
+    }
+}
+
+fn configured_default_cursor_shape() -> CursorShape {
+    std::env::var("WTD_DEFAULT_CURSOR_SHAPE")
+        .ok()
+        .as_deref()
+        .and_then(CursorShape::from_config_name)
+        .unwrap_or(CursorShape::Block)
+}
+
 /// Cursor state.
 #[derive(Debug, Clone, Default)]
 pub struct Cursor {
@@ -521,7 +540,7 @@ impl Cursor {
             row: 0,
             col: 0,
             visible: true,
-            shape: CursorShape::Block,
+            shape: configured_default_cursor_shape(),
         }
     }
 }
@@ -720,6 +739,24 @@ impl ScreenBuffer {
     /// A row from scrollback (0 = oldest).
     pub fn scrollback_row(&self, idx: usize) -> Option<&Vec<Cell>> {
         self.scrollback.get(idx)
+    }
+
+    /// Total rows in the combined buffer (`scrollback + visible screen`).
+    pub fn total_rows(&self) -> usize {
+        self.scrollback.len() + self.rows
+    }
+
+    /// Cell at `(row, col)` in the combined buffer where rows are addressed as
+    /// `scrollback[0..N]` followed by visible screen rows `0..rows`.
+    pub fn cell_at_virtual(&self, row: usize, col: usize) -> Option<&Cell> {
+        if col >= self.cols {
+            return None;
+        }
+        let sb_len = self.scrollback.len();
+        if row < sb_len {
+            return self.scrollback.get(row).and_then(|cells| cells.get(col));
+        }
+        self.cell(row.saturating_sub(sb_len), col)
     }
 
     // ── Capture extended ─────────────────────────────────────────────────────
@@ -1681,7 +1718,6 @@ impl Perform for ScreenBuffer {
                 self.on_alternate = false;
                 self.scrollback.clear();
                 self.cursor = Cursor::default_visible();
-                self.cursor.shape = CursorShape::Block;
                 self.saved_cursor = None;
                 self.alt_saved_cursor = None;
                 self.reset_sgr();
@@ -2231,6 +2267,21 @@ mod tests {
     }
 
     #[test]
+    fn configured_default_cursor_shape_parses_supported_values() {
+        assert_eq!(
+            CursorShape::from_config_name("block"),
+            Some(CursorShape::Block)
+        );
+        assert_eq!(
+            CursorShape::from_config_name("underline"),
+            Some(CursorShape::Underline)
+        );
+        assert_eq!(CursorShape::from_config_name("line"), Some(CursorShape::Bar));
+        assert_eq!(CursorShape::from_config_name("beam"), Some(CursorShape::Bar));
+        assert_eq!(CursorShape::from_config_name("unknown"), None);
+    }
+
+    #[test]
     fn bracketed_paste_mode_enable_disable() {
         let mut b = buf(80, 24);
         assert!(!b.bracketed_paste());
@@ -2247,6 +2298,17 @@ mod tests {
         assert!(b.bracketed_paste());
         feed(&mut b, "\x1bc"); // RIS
         assert!(!b.bracketed_paste());
+    }
+
+    #[test]
+    fn combined_dec_private_modes_enable_from_ftui_sequence() {
+        let mut b = buf(80, 24);
+        feed(
+            &mut b,
+            "\x1b[?1001l\x1b[?1003l\x1b[?1005l\x1b[?1015l\x1b[?1016l\x1b[?1006;1000;1002h\x1b[?1006h\x1b[?1000h\x1b[?1002h",
+        );
+        assert_eq!(b.mouse_mode(), MouseMode::ButtonEvent);
+        assert!(b.sgr_mouse());
     }
 
     // ── capture_extended ──────────────────────────────────────────────────────

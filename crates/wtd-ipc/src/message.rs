@@ -89,6 +89,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         ListSessions        => ListSessions,
         Send                => Send,
         Keys                => Keys,
+        Mouse               => Mouse,
         PaneInput           => PaneInput,
         Capture             => Capture,
         Scrollback          => Scrollback,
@@ -151,6 +152,7 @@ pub enum TypedMessage {
     ListSessions(ListSessions),
     Send(Send),
     Keys(Keys),
+    Mouse(Mouse),
     PaneInput(PaneInput),
     Capture(Capture),
     Scrollback(Scrollback),
@@ -323,6 +325,57 @@ pub struct Keys {
 }
 impl_payload!(Keys, "Keys");
 
+/// Button identifier for semantic mouse injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+    None,
+}
+
+/// Mouse event kind for semantic mouse injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MouseKind {
+    Press,
+    Release,
+    Click,
+    Move,
+    WheelUp,
+    WheelDown,
+}
+
+fn default_repeat() -> u16 {
+    1
+}
+
+/// §13.14 — Inject semantic mouse input into a target pane's session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mouse {
+    pub target: String,
+    pub kind: MouseKind,
+    /// 0-based cell column.
+    pub col: u16,
+    /// 0-based cell row.
+    pub row: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button: Option<MouseButton>,
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default = "default_repeat")]
+    pub repeat: u16,
+    #[serde(default)]
+    pub force: bool,
+}
+impl_payload!(Mouse, "Mouse");
+
 /// §13.14 — Send raw bytes to a target pane's session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -425,6 +478,7 @@ impl_payload!(InvokeAction, "InvokeAction");
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInput {
+    pub workspace: String,
     pub session_id: String,
     /// Base64-encoded input bytes.
     pub data: String,
@@ -719,6 +773,7 @@ impl_payload!(FollowEnd, "FollowEnd");
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionOutput {
+    pub workspace: String,
     pub session_id: String,
     /// Base64-encoded VT bytes.
     pub data: String,
@@ -729,6 +784,7 @@ impl_payload!(SessionOutput, "SessionOutput");
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStateChanged {
+    pub workspace: String,
     pub session_id: String,
     pub new_state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -740,6 +796,7 @@ impl_payload!(SessionStateChanged, "SessionStateChanged");
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TitleChanged {
+    pub workspace: String,
     pub session_id: String,
     pub title: String,
 }
@@ -768,6 +825,7 @@ pub struct ProgressInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressChanged {
+    pub workspace: String,
     pub session_id: String,
     pub progress: Option<ProgressInfo>,
 }

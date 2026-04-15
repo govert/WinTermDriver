@@ -214,7 +214,7 @@ fn layout_and_click_switch_tab() {
     // Tabs start at x=0, each tab is at least MIN_TAB_WIDTH=80px
     let action = strip.on_mouse_down(100.0, 16.0);
     assert_eq!(action, Some(TabAction::SwitchTo(1)));
-    assert_eq!(strip.active_index(), 1);
+    assert_eq!(strip.active_index(), 0);
 }
 
 #[test]

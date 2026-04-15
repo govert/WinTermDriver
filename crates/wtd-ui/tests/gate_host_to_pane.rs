@@ -469,6 +469,7 @@ async fn host_session_output_renders_in_pane_viewport() {
     let output_env = Envelope::new(
         "gate-push-1",
         &SessionOutput {
+            workspace: "dev".to_string(),
             session_id: "1".to_string(),
             data: base64_encode(vt_bytes.as_bytes()),
         },

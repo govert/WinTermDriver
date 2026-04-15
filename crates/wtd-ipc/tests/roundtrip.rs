@@ -329,6 +329,7 @@ fn invoke_action_no_target_roundtrip() {
 #[test]
 fn session_input_roundtrip() {
     roundtrip(SessionInput {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         data: "aGVsbG8=".into(), // "hello" base64
     });
@@ -673,6 +674,7 @@ fn follow_end_no_exit_code_roundtrip() {
 #[test]
 fn session_output_roundtrip() {
     roundtrip(SessionOutput {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         data: "SGVsbG8gV29ybGQ=".into(), // "Hello World" base64
     });
@@ -681,6 +683,7 @@ fn session_output_roundtrip() {
 #[test]
 fn session_state_changed_roundtrip() {
     roundtrip(SessionStateChanged {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         new_state: "exited".into(),
         exit_code: Some(0),
@@ -690,6 +693,7 @@ fn session_state_changed_roundtrip() {
 #[test]
 fn session_state_changed_no_exit_roundtrip() {
     roundtrip(SessionStateChanged {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         new_state: "running".into(),
         exit_code: None,
@@ -699,6 +703,7 @@ fn session_state_changed_no_exit_roundtrip() {
 #[test]
 fn title_changed_roundtrip() {
     roundtrip(TitleChanged {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         title: "vim - main.rs".into(),
     });
@@ -707,6 +712,7 @@ fn title_changed_roundtrip() {
 #[test]
 fn progress_changed_roundtrip() {
     roundtrip(ProgressChanged {
+        workspace: "dev".into(),
         session_id: "sess-1".into(),
         progress: Some(ProgressInfo {
             state: ProgressState::Warning,
@@ -777,6 +783,7 @@ fn parse_envelope_dispatches_all_types() {
     let env = Envelope::new(
         "id-3",
         &SessionOutput {
+            workspace: "dev".into(),
             session_id: "s1".into(),
             data: "AA==".into(),
         },

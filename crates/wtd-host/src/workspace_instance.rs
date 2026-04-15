@@ -444,6 +444,8 @@ impl WorkspaceInstance {
         self.tabs.remove(tab_index);
         if self.active_tab_index >= self.tabs.len() {
             self.active_tab_index = self.tabs.len() - 1;
+        } else if self.active_tab_index > tab_index {
+            self.active_tab_index -= 1;
         }
     }
 
@@ -1119,13 +1121,9 @@ mod tests {
     }
 
     fn default_host_env() -> HashMap<String, String> {
-        let mut env = HashMap::new();
-        // Use real USERPROFILE so CWD resolution produces a valid path.
-        if let Ok(val) = std::env::var("USERPROFILE") {
-            env.insert("USERPROFILE".to_string(), val);
-        } else {
-            env.insert("USERPROFILE".to_string(), r"C:\".to_string());
-        }
+        let mut env: HashMap<String, String> = std::env::vars().collect();
+        env.entry("USERPROFILE".to_string())
+            .or_insert_with(|| r"C:\".to_string());
         env
     }
 
@@ -1360,6 +1358,19 @@ mod tests {
         assert_ne!(first, second);
         assert!(inst.pane_state(&first).is_some());
         assert!(inst.pane_state(&second).is_some());
+    }
+
+    #[test]
+    fn close_tab_before_active_shifts_active_index_left() {
+        let mut inst = WorkspaceInstance::new_for_test_multi(
+            "test-close-tab",
+            1,
+            &[("one", &["a"]), ("two", &["b"]), ("three", &["c"])],
+        );
+        inst.set_active_tab(2);
+        inst.close_tab(1);
+        assert_eq!(inst.active_tab_index(), 1);
+        assert_eq!(inst.tabs()[inst.active_tab_index()].name(), "three");
     }
 
     // ── Integration tests (spawn real processes) ────────────────────────────

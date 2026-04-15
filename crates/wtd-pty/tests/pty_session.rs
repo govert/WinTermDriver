@@ -4,6 +4,7 @@
 
 #![cfg(windows)]
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -136,6 +137,7 @@ fn test_echo_hello_cmd() {
         None,
         PtySize::new(80, 24),
         None,
+        None,
     )
     .expect("PtySession::spawn failed");
 
@@ -160,6 +162,7 @@ fn test_echo_hello() {
         &["-NoLogo", "-NoExit"],
         None,
         PtySize::new(80, 24),
+        None,
         None,
     )
     .expect("PtySession::spawn failed");
@@ -187,6 +190,31 @@ fn test_echo_hello() {
     );
 }
 
+#[test]
+fn test_spawn_passes_custom_environment() {
+    let mut env = HashMap::new();
+    env.insert("TERM".to_string(), "xterm-256color".to_string());
+    let session = PtySession::spawn(
+        "cmd.exe",
+        &["/C", "echo %TERM%"],
+        None,
+        PtySize::new(80, 24),
+        Some(&env),
+        None,
+    )
+    .expect("PtySession::spawn failed");
+
+    let reader = ReaderThread::spawn_for(&session);
+    let (output, found) = reader.read_until("xterm-256color", Duration::from_secs(15));
+    drop(session);
+
+    assert!(
+        found,
+        "expected TERM from child environment but did not find it.\nOutput was:\n{:?}",
+        output
+    );
+}
+
 // ── Test 2: resize during active session ─────────────────────────────────────
 
 #[test]
@@ -197,6 +225,7 @@ fn test_resize_no_crash() {
         &["-NoLogo", "-NoExit"],
         None,
         PtySize::new(80, 24),
+        None,
         None,
     )
     .expect("PtySession::spawn failed");
@@ -222,6 +251,7 @@ fn test_close_terminates_child() {
         &["-NoLogo", "-NoExit"],
         None,
         PtySize::new(80, 24),
+        None,
         None,
     )
     .expect("PtySession::spawn failed");
@@ -256,6 +286,7 @@ fn test_job_object_kills_child() {
         &["-NoLogo", "-NoExit"],
         None,
         PtySize::new(80, 24),
+        None,
         Some(&job),
     )
     .expect("PtySession::spawn failed");

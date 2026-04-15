@@ -227,6 +227,7 @@ async fn streaming_output_to_ui_client() {
         .broadcast_to_ui(&Envelope::new(
             "evt-1",
             &SessionOutput {
+                workspace: "dev".to_owned(),
                 session_id: "s1".to_owned(),
                 data: "aGVsbG8=".to_owned(), // base64 "hello"
             },
@@ -238,6 +239,7 @@ async fn streaming_output_to_ui_client() {
     let output = read_frame(&mut ui).await.unwrap();
     assert_eq!(output.msg_type, "SessionOutput");
     let payload: SessionOutput = output.extract_payload().unwrap();
+    assert_eq!(payload.workspace, "dev");
     assert_eq!(payload.session_id, "s1");
     assert_eq!(payload.data, "aGVsbG8=");
 

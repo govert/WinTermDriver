@@ -5,7 +5,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 /// WinTermDriver controller CLI.
@@ -151,6 +151,39 @@ pub enum Command {
         key_specs: Vec<String>,
     },
 
+    /// Inject semantic mouse input into a session.
+    Mouse {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Mouse event kind.
+        #[arg(value_enum)]
+        kind: MouseKindArg,
+        /// 0-based cell column.
+        #[arg(long)]
+        col: u16,
+        /// 0-based cell row.
+        #[arg(long)]
+        row: u16,
+        /// Mouse button for press/release/click/move.
+        #[arg(long, value_enum)]
+        button: Option<MouseButtonArg>,
+        /// Repeat count (useful for wheel).
+        #[arg(long, default_value_t = 1)]
+        repeat: u16,
+        /// Include Shift modifier.
+        #[arg(long)]
+        shift: bool,
+        /// Include Alt modifier.
+        #[arg(long)]
+        alt: bool,
+        /// Include Ctrl modifier.
+        #[arg(long)]
+        ctrl: bool,
+        /// Inject even when the pane is not advertising VT mouse mode.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Send raw input bytes to a session.
     Input {
         /// Target path (e.g. workspace/pane).
@@ -275,6 +308,24 @@ pub enum HostCommand {
 
     /// Shut down the host process.
     Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MouseKindArg {
+    Press,
+    Release,
+    Click,
+    Move,
+    WheelUp,
+    WheelDown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MouseButtonArg {
+    Left,
+    Middle,
+    Right,
+    None,
 }
 
 /// Generate shell completions and write them to stdout.
@@ -629,6 +680,67 @@ mod tests {
     #[test]
     fn keys_missing_spec() {
         assert!(parse(&["keys", "dev/server"]).is_err());
+    }
+
+    #[test]
+    fn mouse_basic_click() {
+        let cli = parse(&["mouse", "dev/server", "click", "--col", "12", "--row", "7"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Mouse {
+                ref target,
+                kind: MouseKindArg::Click,
+                col: 12,
+                row: 7,
+                button: None,
+                repeat: 1,
+                shift: false,
+                alt: false,
+                ctrl: false,
+                force: false,
+            }) if target == "dev/server"
+        ));
+    }
+
+    #[test]
+    fn mouse_with_modifiers_and_button() {
+        let cli = parse(&[
+            "mouse",
+            "dev/server",
+            "move",
+            "--col",
+            "4",
+            "--row",
+            "9",
+            "--button",
+            "left",
+            "--shift",
+            "--ctrl",
+            "--repeat",
+            "3",
+            "--force",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Mouse {
+                kind: MouseKindArg::Move,
+                col: 4,
+                row: 9,
+                button: Some(MouseButtonArg::Left),
+                repeat: 3,
+                shift: true,
+                alt: false,
+                ctrl: true,
+                force: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn mouse_requires_coordinates() {
+        assert!(parse(&["mouse", "dev/server", "click"]).is_err());
     }
 
     #[test]

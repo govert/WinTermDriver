@@ -1,5 +1,6 @@
 //! ConPTY pseudo-console lifecycle: create, resize, I/O, and close.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::mem;
 use std::os::windows::ffi::OsStrExt;
@@ -12,9 +13,9 @@ use windows::Win32::System::Console::{
 use windows::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
-    STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT,
+    EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
 };
 
 use crate::error::PtyError;
@@ -62,12 +63,14 @@ impl PtySession {
     /// - `args`: additional command-line arguments
     /// - `cwd`: working directory for the child; `None` to inherit the host's cwd
     /// - `size`: initial terminal dimensions
+    /// - `env`: optional child environment block; `None` to inherit the host env
     /// - `job`: optional Job Object to add the child process to (§14.6)
     pub fn spawn(
         executable: &str,
         args: &[&str],
         cwd: Option<&str>,
         size: PtySize,
+        env: Option<&HashMap<String, String>>,
         job: Option<&JobObject>,
     ) -> Result<Self, PtyError> {
         // ── 1. Create anonymous pipes ────────────────────────────────────────
@@ -156,6 +159,11 @@ impl PtySession {
                 .as_ref()
                 .map(|v| windows::core::PCWSTR(v.as_ptr()))
                 .unwrap_or(windows::core::PCWSTR::null());
+            let env_wide = env.map(build_environment_block);
+            let env_ptr = env_wide
+                .as_ref()
+                .map(|v| v.as_ptr() as *const std::ffi::c_void)
+                .unwrap_or(std::ptr::null());
 
             // ── 6. CreateProcess ─────────────────────────────────────────────
             let mut pi = PROCESS_INFORMATION::default();
@@ -165,8 +173,13 @@ impl PtySession {
                 None,
                 None,
                 false,
-                EXTENDED_STARTUPINFO_PRESENT,
-                None,
+                EXTENDED_STARTUPINFO_PRESENT
+                    | if env_wide.is_some() {
+                        CREATE_UNICODE_ENVIRONMENT
+                    } else {
+                        Default::default()
+                    },
+                Some(env_ptr),
                 cwd_pcwstr,
                 // Cast STARTUPINFOEXW* → STARTUPINFOW* (layout-compatible; cb signals EX)
                 &si_ex.StartupInfo as *const STARTUPINFOW,
@@ -262,6 +275,20 @@ impl PtySession {
     pub fn process_handle(&self) -> HANDLE {
         self.process_handle.0
     }
+}
+
+fn build_environment_block(env: &HashMap<String, String>) -> Vec<u16> {
+    let mut pairs: Vec<(&String, &String)> = env.iter().collect();
+    pairs.sort_by(|(ka, _), (kb, _)| ka.to_ascii_uppercase().cmp(&kb.to_ascii_uppercase()));
+
+    let mut block = Vec::new();
+    for (key, value) in pairs {
+        let entry = format!("{key}={value}");
+        block.extend(OsStr::new(&entry).encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    block
 }
 
 impl Drop for PtySession {

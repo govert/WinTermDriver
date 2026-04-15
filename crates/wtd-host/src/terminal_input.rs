@@ -199,7 +199,7 @@ fn key_spec_to_bytes(spec: &KeySpec) -> Vec<u8> {
     }
 
     if let Some(bytes) = special_key_bytes(&spec.key, mods) {
-        if mods.alt() && !matches!(spec.key, KeyName::Escape) {
+        if mods.alt() && !matches!(spec.key, KeyName::Escape | KeyName::Enter) {
             let mut result = vec![0x1B];
             result.extend_from_slice(&bytes);
             return result;
@@ -254,7 +254,13 @@ fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
     let has_mods = mod_param > 1;
 
     match key {
-        KeyName::Enter => Some(vec![0x0D]),
+        KeyName::Enter => {
+            if has_mods {
+                Some(csi_u(13, mod_param))
+            } else {
+                Some(vec![0x0D])
+            }
+        }
         KeyName::Tab => {
             if mods.shift() {
                 Some(vec![0x1B, b'[', b'Z'])
@@ -327,6 +333,10 @@ fn ss3_or_csi(ch: u8, mod_param: u8, has_mods: bool) -> Vec<u8> {
     }
 }
 
+fn csi_u(codepoint: u32, mod_param: u8) -> Vec<u8> {
+    format!("\x1B[{codepoint};{mod_param}u").into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +344,21 @@ mod tests {
     #[test]
     fn enter_maps_to_cr() {
         assert_eq!(encode_key_spec("Enter").unwrap(), vec![0x0D]);
+    }
+
+    #[test]
+    fn shift_enter_uses_csi_u() {
+        assert_eq!(encode_key_spec("Shift+Enter").unwrap(), b"\x1B[13;2u");
+    }
+
+    #[test]
+    fn alt_enter_uses_csi_u_without_extra_escape_prefix() {
+        assert_eq!(encode_key_spec("Alt+Enter").unwrap(), b"\x1B[13;3u");
+    }
+
+    #[test]
+    fn ctrl_enter_uses_csi_u() {
+        assert_eq!(encode_key_spec("Ctrl+Enter").unwrap(), b"\x1B[13;5u");
     }
 
     #[test]

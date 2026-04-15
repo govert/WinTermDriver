@@ -23,17 +23,27 @@ pub enum HostEvent {
     /// Connection established and workspace state received.
     Connected { state: Value },
     /// Raw VT output for a session (already base64-decoded to bytes).
-    SessionOutput { session_id: String, data: Vec<u8> },
+    SessionOutput {
+        workspace: String,
+        session_id: String,
+        data: Vec<u8>,
+    },
     /// A session changed state (running → exited, etc.).
     SessionStateChanged {
+        workspace: String,
         session_id: String,
         new_state: String,
         exit_code: Option<i32>,
     },
     /// A session's title changed (from VT escape sequence).
-    TitleChanged { session_id: String, title: String },
+    TitleChanged {
+        workspace: String,
+        session_id: String,
+        title: String,
+    },
     /// A session's progress changed (from OSC 9;4).
     ProgressChanged {
+        workspace: String,
         session_id: String,
         progress: Option<ProgressInfo>,
     },
@@ -61,7 +71,11 @@ pub enum HostEvent {
 #[derive(Debug)]
 pub enum HostCommand {
     /// Forward raw keyboard input bytes to a session (base64-encoded by bridge).
-    SessionInput { session_id: String, data: Vec<u8> },
+    SessionInput {
+        workspace: String,
+        session_id: String,
+        data: Vec<u8>,
+    },
     /// Notify host of a pane resize.
     PaneResize {
         pane_id: String,
@@ -87,6 +101,7 @@ pub enum HostCommand {
 /// Create with [`HostBridge::connect`], then call [`try_recv`](Self::try_recv)
 /// each frame and [`send`](Self::send) to push commands.
 pub struct HostBridge {
+    workspace_name: String,
     event_rx: mpsc::Receiver<HostEvent>,
     cmd_tx: mpsc::Sender<HostCommand>,
 }
@@ -100,6 +115,7 @@ impl HostBridge {
     pub fn connect(workspace_name: String) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel();
+        let attached_workspace = workspace_name.clone();
 
         std::thread::Builder::new()
             .name("wtd-ui-ipc".into())
@@ -112,13 +128,18 @@ impl HostBridge {
             })
             .expect("failed to spawn IPC thread");
 
-        Self { event_rx, cmd_tx }
+        Self {
+            workspace_name: attached_workspace,
+            event_rx,
+            cmd_tx,
+        }
     }
 
     /// Connect to a specific pipe name (for testing).
     pub fn connect_to(pipe_name: String, workspace_name: String) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel();
+        let attached_workspace = workspace_name.clone();
 
         std::thread::Builder::new()
             .name("wtd-ui-ipc".into())
@@ -131,7 +152,11 @@ impl HostBridge {
             })
             .expect("failed to spawn IPC thread");
 
-        Self { event_rx, cmd_tx }
+        Self {
+            workspace_name: attached_workspace,
+            event_rx,
+            cmd_tx,
+        }
     }
 
     /// Poll for the next host event (non-blocking).
@@ -146,7 +171,11 @@ impl HostBridge {
 
     /// Send raw input bytes to a session.
     pub fn send_input(&self, session_id: String, data: Vec<u8>) {
-        self.send(HostCommand::SessionInput { session_id, data });
+        self.send(HostCommand::SessionInput {
+            workspace: self.workspace_name.clone(),
+            session_id,
+            data,
+        });
     }
 
     /// Notify the host of a pane resize.
@@ -301,7 +330,7 @@ async fn run_attached(
                                 continue;
                             }
                         }
-                        if let Some(event) = envelope_to_event(&envelope) {
+                        if let Some(event) = envelope_to_event(&workspace_name, &envelope) {
                             if event_tx.send(event).is_err() {
                                 break;
                             }
@@ -357,7 +386,7 @@ fn emit_connected_and_initial_screens(event_tx: &mpsc::Sender<HostEvent>, state:
 }
 
 /// Convert a host push envelope into a UI event.
-fn envelope_to_event(envelope: &Envelope) -> Option<HostEvent> {
+fn envelope_to_event(attached_workspace: &str, envelope: &Envelope) -> Option<HostEvent> {
     let msg = match parse_envelope(envelope) {
         Ok(m) => m,
         Err(_) => return None,
@@ -365,35 +394,67 @@ fn envelope_to_event(envelope: &Envelope) -> Option<HostEvent> {
 
     match msg {
         TypedMessage::SessionOutput(so) => {
+            if so.workspace != attached_workspace {
+                return None;
+            }
             let data = base64_decode(&so.data);
             Some(HostEvent::SessionOutput {
+                workspace: so.workspace,
                 session_id: so.session_id,
                 data,
             })
         }
-        TypedMessage::SessionStateChanged(sc) => Some(HostEvent::SessionStateChanged {
-            session_id: sc.session_id,
-            new_state: sc.new_state,
-            exit_code: sc.exit_code,
-        }),
-        TypedMessage::TitleChanged(tc) => Some(HostEvent::TitleChanged {
-            session_id: tc.session_id,
-            title: tc.title,
-        }),
-        TypedMessage::ProgressChanged(pc) => Some(HostEvent::ProgressChanged {
-            session_id: pc.session_id,
-            progress: pc.progress,
-        }),
-        TypedMessage::LayoutChanged(lc) => Some(HostEvent::LayoutChanged {
-            workspace: lc.workspace,
-            window: lc.window,
-            tab: lc.tab,
-            layout: lc.layout,
-        }),
-        TypedMessage::WorkspaceStateChanged(wsc) => Some(HostEvent::WorkspaceStateChanged {
-            workspace: wsc.workspace,
-            new_state: wsc.new_state,
-        }),
+        TypedMessage::SessionStateChanged(sc) => {
+            if sc.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::SessionStateChanged {
+                workspace: sc.workspace,
+                session_id: sc.session_id,
+                new_state: sc.new_state,
+                exit_code: sc.exit_code,
+            })
+        }
+        TypedMessage::TitleChanged(tc) => {
+            if tc.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::TitleChanged {
+                workspace: tc.workspace,
+                session_id: tc.session_id,
+                title: tc.title,
+            })
+        }
+        TypedMessage::ProgressChanged(pc) => {
+            if pc.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::ProgressChanged {
+                workspace: pc.workspace,
+                session_id: pc.session_id,
+                progress: pc.progress,
+            })
+        }
+        TypedMessage::LayoutChanged(lc) => {
+            if lc.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::LayoutChanged {
+                workspace: lc.workspace,
+                window: lc.window,
+                tab: lc.tab,
+                layout: lc.layout,
+            })
+        }
+        TypedMessage::WorkspaceStateChanged(wsc) => {
+            if wsc.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::WorkspaceStateChanged {
+                workspace: wsc.workspace,
+                new_state: wsc.new_state,
+            })
+        }
         TypedMessage::ErrorResponse(er) => Some(HostEvent::Error {
             message: er.message,
         }),
@@ -405,9 +466,14 @@ fn envelope_to_event(envelope: &Envelope) -> Option<HostEvent> {
 fn command_to_envelope(cmd: HostCommand, counter: u64) -> Envelope {
     let id = format!("ui-cmd-{counter}");
     match cmd {
-        HostCommand::SessionInput { session_id, data } => Envelope::new(
+        HostCommand::SessionInput {
+            workspace,
+            session_id,
+            data,
+        } => Envelope::new(
             id,
             &message::SessionInput {
+                workspace,
                 session_id,
                 data: base64_encode(&data),
             },
@@ -444,6 +510,7 @@ fn command_to_envelope(cmd: HostCommand, counter: u64) -> Envelope {
             Envelope::new(
                 id,
                 &message::SessionInput {
+                    workspace: String::new(),
                     session_id: String::new(),
                     data: String::new(),
                 },
@@ -572,13 +639,19 @@ mod tests {
         let envelope = Envelope::new(
             "test-1",
             &message::SessionOutput {
+                workspace: "dev".into(),
                 session_id: "s1".into(),
                 data: base64_encode(b"hello"),
             },
         );
-        let event = envelope_to_event(&envelope).unwrap();
+        let event = envelope_to_event("dev", &envelope).unwrap();
         match event {
-            HostEvent::SessionOutput { session_id, data } => {
+            HostEvent::SessionOutput {
+                workspace,
+                session_id,
+                data,
+            } => {
+                assert_eq!(workspace, "dev");
                 assert_eq!(session_id, "s1");
                 assert_eq!(data, b"hello");
             }
@@ -591,18 +664,21 @@ mod tests {
         let envelope = Envelope::new(
             "test-2",
             &message::SessionStateChanged {
+                workspace: "dev".into(),
                 session_id: "s1".into(),
                 new_state: "exited".into(),
                 exit_code: Some(0),
             },
         );
-        let event = envelope_to_event(&envelope).unwrap();
+        let event = envelope_to_event("dev", &envelope).unwrap();
         match event {
             HostEvent::SessionStateChanged {
+                workspace,
                 session_id,
                 new_state,
                 exit_code,
             } => {
+                assert_eq!(workspace, "dev");
                 assert_eq!(session_id, "s1");
                 assert_eq!(new_state, "exited");
                 assert_eq!(exit_code, Some(0));
@@ -616,18 +692,51 @@ mod tests {
         let envelope = Envelope::new(
             "test-3",
             &message::TitleChanged {
+                workspace: "dev".into(),
                 session_id: "s1".into(),
                 title: "bash".into(),
             },
         );
-        let event = envelope_to_event(&envelope).unwrap();
+        let event = envelope_to_event("dev", &envelope).unwrap();
         match event {
-            HostEvent::TitleChanged { session_id, title } => {
+            HostEvent::TitleChanged {
+                workspace,
+                session_id,
+                title,
+            } => {
+                assert_eq!(workspace, "dev");
                 assert_eq!(session_id, "s1");
                 assert_eq!(title, "bash");
             }
             _ => panic!("expected TitleChanged"),
         }
+    }
+
+    #[test]
+    fn envelope_to_event_ignores_foreign_workspace_session_output() {
+        let envelope = Envelope::new(
+            "test-foreign-output",
+            &message::SessionOutput {
+                workspace: "other".into(),
+                session_id: "s1".into(),
+                data: base64_encode(b"ignored"),
+            },
+        );
+        assert!(envelope_to_event("dev", &envelope).is_none());
+    }
+
+    #[test]
+    fn envelope_to_event_ignores_foreign_workspace_layout_changes() {
+        let envelope = Envelope::new(
+            "test-foreign-layout",
+            &message::LayoutChanged {
+                workspace: "other".into(),
+                window: "w1".into(),
+                tab: "tab1".into(),
+                layout: serde_json::json!({"type": "pane", "name": "main"}),
+            },
+        );
+        assert!(envelope_to_event("dev", &envelope).is_none());
     }
 
     #[test]
@@ -642,7 +751,7 @@ mod tests {
                 layout: layout_val.clone(),
             },
         );
-        let event = envelope_to_event(&envelope).unwrap();
+        let event = envelope_to_event("dev", &envelope).unwrap();
         match event {
             HostEvent::LayoutChanged {
                 workspace,
@@ -662,6 +771,7 @@ mod tests {
     fn command_to_envelope_session_input() {
         let env = command_to_envelope(
             HostCommand::SessionInput {
+                workspace: "dev".into(),
                 session_id: "s1".into(),
                 data: b"hello".to_vec(),
             },
@@ -669,6 +779,7 @@ mod tests {
         );
         assert_eq!(env.msg_type, SessionInput::TYPE_NAME);
         let payload: SessionInput = env.extract_payload().unwrap();
+        assert_eq!(payload.workspace, "dev");
         assert_eq!(payload.session_id, "s1");
         assert_eq!(base64_decode(&payload.data), b"hello");
     }
