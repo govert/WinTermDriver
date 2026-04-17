@@ -119,6 +119,27 @@ pub enum Command {
         new_name: String,
     },
 
+    /// Configure pane-local prompt driving behavior.
+    ConfigurePane {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Built-in driver profile to apply.
+        #[arg(long, value_enum)]
+        driver_profile: Option<DriverProfileArg>,
+        /// Key spec used to submit the prompt.
+        #[arg(long)]
+        submit_key: Option<String>,
+        /// Key spec used for soft line breaks in multiline prompts.
+        #[arg(long)]
+        soft_break_key: Option<String>,
+        /// Disable soft line breaks for this pane.
+        #[arg(long)]
+        clear_soft_break: bool,
+        /// Remove all pane-local driver config and fall back to the plain profile.
+        #[arg(long)]
+        clear_driver: bool,
+    },
+
     /// Invoke a named action on a target.
     Action {
         /// Target path (e.g. workspace/pane).
@@ -140,6 +161,14 @@ pub enum Command {
         /// Do not append newline.
         #[arg(long)]
         no_newline: bool,
+    },
+
+    /// Send a pane-configured prompt to a session.
+    Prompt {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Prompt text to send. Embedded newlines are expanded using the pane driver.
+        text: String,
     },
 
     /// Send key sequences to a session.
@@ -326,6 +355,15 @@ pub enum MouseButtonArg {
     Middle,
     Right,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DriverProfileArg {
+    Plain,
+    Codex,
+    ClaudeCode,
+    GeminiCli,
+    CopilotCli,
 }
 
 /// Generate shell completions and write them to stdout.
@@ -655,6 +693,42 @@ mod tests {
     #[test]
     fn send_missing_text() {
         assert!(parse(&["send", "dev/server"]).is_err());
+    }
+
+    #[test]
+    fn prompt_basic() {
+        let cli = parse(&["prompt", "dev/server", "Explain this"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Prompt {
+                ref target,
+                ref text,
+            }) if target == "dev/server" && text == "Explain this"
+        ));
+    }
+
+    #[test]
+    fn configure_pane_basic() {
+        let cli = parse(&[
+            "configure-pane",
+            "dev/server",
+            "--driver-profile",
+            "claude-code",
+            "--soft-break-key",
+            "Shift+Enter",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::ConfigurePane {
+                ref target,
+                driver_profile: Some(DriverProfileArg::ClaudeCode),
+                submit_key: None,
+                soft_break_key: Some(ref key),
+                clear_soft_break: false,
+                clear_driver: false,
+            }) if target == "dev/server" && key == "Shift+Enter"
+        ));
     }
 
     #[test]

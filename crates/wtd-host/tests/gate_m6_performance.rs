@@ -21,6 +21,7 @@ use wtd_core::ids::{SessionId, WorkspaceInstanceId};
 use wtd_core::load_workspace_definition;
 use wtd_core::GlobalSettings;
 use wtd_host::ipc_server::*;
+use wtd_host::prompt_driver::resolve_pane_driver;
 use wtd_host::session::{Session, SessionConfig, SessionState};
 use wtd_host::workspace_instance::{PaneState, WorkspaceInstance};
 use wtd_ipc::message::{
@@ -506,6 +507,7 @@ fn keystroke_to_echo_under_50ms() {
         size: PtySize { cols: 80, rows: 24 },
         name: "echo-test".to_string(),
         max_scrollback: 1000,
+        driver: resolve_pane_driver(None, None),
     };
 
     let mut session = Session::new(SessionId(100), config);
@@ -826,6 +828,7 @@ fn concurrent_sessions_20_plus() {
             size: PtySize { cols: 80, rows: 24 },
             name: format!("session-{}", i),
             max_scrollback: 1000,
+            driver: resolve_pane_driver(None, None),
         };
 
         let mut session = Session::new(SessionId(i as u64), config);

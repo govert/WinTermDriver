@@ -13,7 +13,8 @@ use wtd_core::ids::{PaneId, SessionId, WorkspaceInstanceId};
 use wtd_core::layout::Rect;
 use wtd_core::target::TargetPath;
 use wtd_core::workspace::{
-    PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
+    PaneDriverProfile, PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition,
+    WorkspaceDefinition,
 };
 use wtd_core::{find_workspace, list_workspaces, load_workspace_definition};
 
@@ -25,6 +26,10 @@ use crate::action::{v1_registry, ActionDispatcher};
 use crate::ipc_server::{ClientId, RequestHandler};
 use crate::output_broadcaster::progress_info_from_screen;
 use crate::output_broadcaster::BroadcastEvent;
+use crate::prompt_driver::{
+    build_prompt_input, encode_send_input, pane_driver_definition_from_effective,
+    resolve_pane_driver,
+};
 use crate::target_resolver::{resolve_by_id, resolve_target};
 use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
@@ -308,28 +313,6 @@ fn cursor_shape_name(screen: &wtd_pty::ScreenBuffer) -> &'static str {
     }
 }
 
-const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
-const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
-
-fn encode_send_input(text: &str, newline: bool, bracketed_paste_active: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(text.len() + 16);
-
-    if bracketed_paste_active && text.len() > 1 {
-        out.extend_from_slice(BRACKETED_PASTE_START);
-        out.extend_from_slice(text.as_bytes());
-        out.extend_from_slice(BRACKETED_PASTE_END);
-    } else {
-        out.extend_from_slice(text.as_bytes());
-    }
-
-    if newline {
-        // Match an actual Enter keypress rather than sending CRLF.
-        out.push(b'\r');
-    }
-
-    out
-}
-
 fn encode_mouse_modifiers(shift: bool, alt: bool, ctrl: bool) -> u8 {
     let mut bits = 0u8;
     if shift {
@@ -501,10 +484,22 @@ fn synthesize_default_workspace(
                     title: None,
                     args: None,
                     terminal_size: None,
+                    driver: None,
                 }),
             }),
             focus: None,
         }]),
+    }
+}
+
+fn parse_driver_profile(value: &str) -> Option<PaneDriverProfile> {
+    match value {
+        "plain" => Some(PaneDriverProfile::Plain),
+        "codex" => Some(PaneDriverProfile::Codex),
+        "claude-code" => Some(PaneDriverProfile::ClaudeCode),
+        "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
+        "copilot-cli" => Some(PaneDriverProfile::CopilotCli),
+        _ => None,
     }
 }
 
@@ -581,6 +576,8 @@ impl RequestHandler for HostRequestHandler {
 
             TypedMessage::Send(send) => self.handle_send(&envelope.id, send),
 
+            TypedMessage::Prompt(prompt) => self.handle_prompt(&envelope.id, prompt),
+
             TypedMessage::Keys(keys) => self.handle_keys(&envelope.id, keys),
 
             TypedMessage::Mouse(mouse) => self.handle_mouse(&envelope.id, mouse),
@@ -596,6 +593,10 @@ impl RequestHandler for HostRequestHandler {
             TypedMessage::Follow(follow) => self.handle_follow(&envelope.id, follow),
 
             TypedMessage::Inspect(inspect) => self.handle_inspect(&envelope.id, inspect),
+
+            TypedMessage::ConfigurePane(configure) => {
+                self.handle_configure_pane(&envelope.id, configure)
+            }
 
             TypedMessage::InvokeAction(action) => self.handle_invoke_action(&envelope.id, action),
 
@@ -995,6 +996,70 @@ impl HostRequestHandler {
         }
     }
 
+    fn handle_prompt(&self, id: &str, prompt: &message::Prompt) -> Option<Envelope> {
+        let state = self.state.lock().unwrap();
+        let (inst, pane_id) = match find_pane(&state.workspaces, &prompt.target) {
+            Some(r) => r,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::TargetNotFound,
+                    &format!("pane '{}' not found", prompt.target),
+                ));
+            }
+        };
+
+        let session_id = match inst.pane_state(&pane_id) {
+            Some(PaneState::Attached { session_id }) => session_id.clone(),
+            _ => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "pane not attached",
+                ));
+            }
+        };
+
+        let session = match inst.session(&session_id) {
+            Some(s) => s,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "session not found",
+                ));
+            }
+        };
+
+        let driver = inst
+            .pane_driver(&pane_id)
+            .cloned()
+            .unwrap_or_else(|| resolve_pane_driver(None, None));
+        let input = match build_prompt_input(
+            &prompt.text,
+            &driver,
+            session.screen().bracketed_paste(),
+        ) {
+            Ok(input) => input,
+            Err(e) => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    &e.to_string(),
+                ));
+            }
+        };
+
+        match session.write_input(&input) {
+            Ok(()) => Some(Envelope::new(id, &OkResponse {})),
+            Err(e) => Some(error_envelope(
+                id,
+                ErrorCode::SessionFailed,
+                &format!("write failed: {}", e),
+            )),
+        }
+    }
+
     fn handle_keys(&self, id: &str, keys: &Keys) -> Option<Envelope> {
         let state = self.state.lock().unwrap();
         let (inst, pane_id) = match find_pane(&state.workspaces, &keys.target) {
@@ -1377,9 +1442,129 @@ impl HostRequestHandler {
         };
         if let Some(obj) = data.as_object_mut() {
             obj.insert("sessionState".to_string(), Value::String(session_state));
+            if let Some(driver) = inst.pane_driver(&pane_id) {
+                obj.insert(
+                    "driverProfile".to_string(),
+                    Value::String(driver.profile.clone()),
+                );
+                obj.insert(
+                    "submitKey".to_string(),
+                    Value::String(driver.submit_key.clone()),
+                );
+                obj.insert(
+                    "softBreakKey".to_string(),
+                    driver
+                        .soft_break_key
+                        .as_ref()
+                        .map(|key| Value::String(key.clone()))
+                        .unwrap_or(Value::Null),
+                );
+            }
         }
 
         Some(Envelope::new(id, &InspectResult { data }))
+    }
+
+    fn handle_configure_pane(&self, id: &str, configure: &ConfigurePane) -> Option<Envelope> {
+        let mut state = self.state.lock().unwrap();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &configure.target) {
+                Some((workspace_name, pane_id)) => (workspace_name, pane_id),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", configure.target),
+                    ));
+                }
+            };
+
+        let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+
+        if !configure.clear_driver
+            && configure.driver_profile.is_none()
+            && configure.submit_key.is_none()
+            && configure.soft_break_key.is_none()
+            && !configure.clear_soft_break
+        {
+            return Some(error_envelope(
+                id,
+                ErrorCode::InvalidArgument,
+                "configure-pane requires at least one driver setting",
+            ));
+        }
+
+        if configure.clear_driver
+            && (configure.driver_profile.is_some()
+                || configure.submit_key.is_some()
+                || configure.soft_break_key.is_some()
+                || configure.clear_soft_break)
+        {
+            return Some(error_envelope(
+                id,
+                ErrorCode::InvalidArgument,
+                "--clear-driver cannot be combined with other pane driver settings",
+            ));
+        }
+
+        let driver_definition = if configure.clear_driver {
+            None
+        } else {
+            let current = inst
+                .pane_driver(&pane_id)
+                .cloned()
+                .unwrap_or_else(|| resolve_pane_driver(None, None));
+            let mut driver = pane_driver_definition_from_effective(&current);
+
+            if let Some(profile) = &configure.driver_profile {
+                let parsed = match parse_driver_profile(profile) {
+                    Some(parsed) => parsed,
+                    None => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::InvalidArgument,
+                            &format!(
+                                "unknown driver profile '{}'; expected plain, codex, claude-code, gemini-cli, or copilot-cli",
+                                profile
+                            ),
+                        ));
+                    }
+                };
+                driver.profile = Some(parsed);
+            }
+            if let Some(submit_key) = &configure.submit_key {
+                driver.submit_key = Some(submit_key.clone());
+            }
+            if let Some(soft_break_key) = &configure.soft_break_key {
+                driver.soft_break_key = Some(soft_break_key.clone());
+                driver.disable_soft_break = false;
+            }
+            if configure.clear_soft_break {
+                driver.soft_break_key = None;
+                driver.disable_soft_break = true;
+            }
+
+            Some(driver)
+        };
+
+        let effective_driver = if let Some(ref driver_definition) = driver_definition {
+            let session_def = SessionLaunchDefinition {
+                driver: Some(driver_definition.clone()),
+                ..Default::default()
+            };
+            resolve_pane_driver(Some(&session_def), None)
+        } else {
+            resolve_pane_driver(None, None)
+        };
+
+        match inst.set_pane_driver(&pane_id, driver_definition, effective_driver) {
+            Ok(()) => Some(Envelope::new(id, &OkResponse {})),
+            Err(e) => Some(error_envelope(
+                id,
+                ErrorCode::InternalError,
+                &format!("failed to configure pane: {}", e),
+            )),
+        }
     }
 
     fn handle_invoke_action(&self, id: &str, action: &InvokeAction) -> Option<Envelope> {
@@ -1588,7 +1773,7 @@ impl HostRequestHandler {
             },
         );
 
-        match dispatcher.dispatch(inst, &action.action, &action.args, target_pane) {
+        match dispatcher.dispatch(inst, &action.action, &action.args, target_pane.clone()) {
             Ok(result) => {
                 use crate::action::ActionResult;
 
@@ -1597,8 +1782,19 @@ impl HostRequestHandler {
                         // Spawn a session for the newly created pane.
                         let pane_name = format!("pane-{}", pane_id.0);
                         let env = host_env();
-                        inst.spawn_session_for_pane(
-                            &pane_id, pane_name, &settings, &env, &find_exe,
+                        let session_def = target_pane
+                            .as_ref()
+                            .and_then(|source_pane| inst.pane_original_def(source_pane))
+                            .cloned()
+                            .flatten()
+                            .unwrap_or_default();
+                        inst.spawn_session_for_pane_with_definition(
+                            &pane_id,
+                            pane_name,
+                            session_def,
+                            &settings,
+                            &env,
+                            &find_exe,
                         );
                         Some(Envelope::new(
                             id,

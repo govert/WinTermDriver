@@ -1096,20 +1096,20 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             );
 
                             let mut startup_sizes_match = false;
-                            if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
-                                let focused = active_tab.layout_tree.focus();
-                                if let Some(ps) = active_tab.pane_sessions.get(&focused) {
-                                    status_bar.set_pane_path(ps.pane_path.clone());
-                                } else {
-                                    status_bar.set_pane_path(format!("{}", focused.0));
-                                }
-                                pane_layout.update(
-                                    &active_tab.layout_tree,
-                                    0.0,
-                                    tab_strip.height(),
-                                    content_cols,
-                                    content_rows,
-                                );
+                            refresh_active_tab_ui(
+                                &mut tabs,
+                                active_tab_index,
+                                &mut pane_layout,
+                                &tab_strip,
+                                &mut status_bar,
+                                &mut mouse_modes,
+                                window_width,
+                                window_height,
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                            );
+                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                                 let pane_sizes = pane_sizes_for_layout(
                                     &pane_layout,
                                     &active_tab.layout_tree,
@@ -1119,8 +1119,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 );
                                 startup_sizes_match =
                                     pane_sessions_match_sizes(active_tab, &pane_sizes);
-                                sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
-                                refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
                                 send_active_pane_sizes(
                                     Some(bridge),
                                     connected,
@@ -1271,33 +1269,21 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             continue;
                         }
 
-                        let (content_cols, content_rows) = content_dims(
-                            window_width,
-                            window_height,
-                            &tab_strip,
-                            &status_bar,
-                            cell_w,
-                            cell_h,
-                        );
-
                         if target_tab == active_tab_index {
-                            if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
-                                pane_layout.update(
-                                    &active_tab.layout_tree,
-                                    0.0,
-                                    tab_strip.height(),
-                                    content_cols,
-                                    content_rows,
-                                );
-                                let pane_sizes = pane_sizes_for_layout(
-                                    &pane_layout,
-                                    &active_tab.layout_tree,
-                                    cell_w,
-                                    cell_h,
-                                    pane_viewport_insets,
-                                );
-                                sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
-                                refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
+                            refresh_active_tab_ui(
+                                &mut tabs,
+                                active_tab_index,
+                                &mut pane_layout,
+                                &tab_strip,
+                                &mut status_bar,
+                                &mut mouse_modes,
+                                window_width,
+                                window_height,
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                            );
+                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                                 send_active_pane_sizes(
                                     Some(bridge),
                                     connected,
@@ -1307,13 +1293,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     cell_h,
                                     pane_viewport_insets,
                                 );
-
-                                let focused = active_tab.layout_tree.focus();
-                                if let Some(ps) = active_tab.pane_sessions.get(&focused) {
-                                    status_bar.set_pane_path(ps.pane_path.clone());
-                                } else {
-                                    status_bar.set_pane_path(format!("{}", focused.0));
-                                }
                             }
                         }
 
@@ -2253,32 +2232,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         tab_strip.layout(window_width);
                         status_bar.layout(window_width);
 
-                        let (content_cols, content_rows) = content_dims(
+                        refresh_active_tab_ui(
+                            &mut tabs,
+                            active_tab_index,
+                            &mut pane_layout,
+                            &tab_strip,
+                            &mut status_bar,
+                            &mut mouse_modes,
                             window_width,
                             window_height,
-                            &tab_strip,
-                            &status_bar,
                             cell_w,
                             cell_h,
+                            pane_viewport_insets,
                         );
-                        pane_layout.update(
-                            &tabs[active_tab_index].layout_tree,
-                            0.0,
-                            tab_strip.height(),
-                            content_cols,
-                            content_rows,
-                        );
-                        if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
-                            let pane_sizes = pane_sizes_for_layout(
-                                &pane_layout,
-                                &active_tab.layout_tree,
-                                cell_w,
-                                cell_h,
-                                pane_viewport_insets,
-                            );
-                            sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
-                            refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
-                        }
                         send_active_pane_sizes(
                             bridge.as_ref(),
                             connected,

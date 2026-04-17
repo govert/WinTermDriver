@@ -10,13 +10,14 @@ use wtd_core::global_settings::GlobalSettings;
 use wtd_core::ids::{PaneId, SessionId, TabId, WorkspaceInstanceId};
 use wtd_core::layout::LayoutTree;
 use wtd_core::workspace::{
-    PaneLeaf, PaneNode, RestartPolicy, SessionLaunchDefinition, TabDefinition,
-    TerminalSizeDefinition, WorkspaceDefinition,
+    PaneDriverDefinition, PaneLeaf, PaneNode, RestartPolicy, SessionLaunchDefinition,
+    TabDefinition, TerminalSizeDefinition, WorkspaceDefinition,
 };
 use wtd_core::{resolve_launch_spec, ResolveError};
 use wtd_pty::PtySize;
 
 use crate::output_broadcaster::progress_info_from_screen;
+use crate::prompt_driver::{resolve_pane_driver, EffectivePaneDriver};
 use crate::session::{Session, SessionConfig, SessionState};
 
 #[cfg(windows)]
@@ -115,6 +116,7 @@ struct PaneRecord {
     name: String,
     state: PaneState,
     original_def: Option<SessionLaunchDefinition>,
+    driver: EffectivePaneDriver,
 }
 
 // ── WorkspaceInstance ───────────────────────────────────────────────────────
@@ -369,6 +371,14 @@ impl WorkspaceInstance {
         self.panes.get(id).map(|r| r.name.as_str())
     }
 
+    pub fn pane_driver(&self, id: &PaneId) -> Option<&EffectivePaneDriver> {
+        self.panes.get(id).map(|r| &r.driver)
+    }
+
+    pub fn pane_original_def(&self, id: &PaneId) -> Option<&Option<SessionLaunchDefinition>> {
+        self.panes.get(id).map(|r| &r.original_def)
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
@@ -419,6 +429,7 @@ impl WorkspaceInstance {
                     error: "pending session".to_string(),
                 },
                 original_def: None,
+                driver: resolve_pane_driver(None, None),
             },
         );
         self.tabs.push(TabInstance {
@@ -536,6 +547,49 @@ impl WorkspaceInstance {
         }
     }
 
+    pub fn set_pane_driver(
+        &mut self,
+        pane_id: &PaneId,
+        driver_definition: Option<PaneDriverDefinition>,
+        effective_driver: EffectivePaneDriver,
+    ) -> Result<(), WorkspaceError> {
+        let session_id = match self.panes.get_mut(pane_id) {
+            Some(rec) => {
+                rec.driver = effective_driver.clone();
+                let session_id = match &rec.state {
+                    PaneState::Attached { session_id } => Some(session_id.clone()),
+                    PaneState::Detached { .. } => None,
+                };
+                match (rec.original_def.as_mut(), driver_definition.clone()) {
+                    (Some(def), driver) => def.driver = driver,
+                    (None, Some(driver)) => {
+                        rec.original_def = Some(SessionLaunchDefinition {
+                            driver: Some(driver),
+                            ..Default::default()
+                        });
+                    }
+                    (None, None) => {}
+                }
+                if rec.original_def.as_ref() == Some(&SessionLaunchDefinition::default()) {
+                    rec.original_def = None;
+                }
+                session_id
+            }
+            None => {
+                return Err(WorkspaceError::PaneNotFound(format!("{}", pane_id.0)));
+            }
+        };
+
+        if let Some(session_id) = session_id {
+            let session = self.sessions.get_mut(&session_id).ok_or_else(|| {
+                WorkspaceError::SessionOperation("session not found".to_string())
+            })?;
+            session.config_mut().driver = effective_driver;
+        }
+
+        Ok(())
+    }
+
     /// Resize the PTY/screen associated with a pane.
     pub fn resize_pane_session(
         &mut self,
@@ -619,7 +673,26 @@ impl WorkspaceInstance {
         host_env: &HashMap<String, String>,
         find_exe: &impl Fn(&str) -> bool,
     ) {
-        let session_def = SessionLaunchDefinition::default();
+        self.spawn_session_for_pane_with_definition(
+            pane_id,
+            pane_name,
+            SessionLaunchDefinition::default(),
+            global_settings,
+            host_env,
+            find_exe,
+        );
+    }
+
+    /// Spawn a session for a pane using an explicit launch definition template.
+    pub fn spawn_session_for_pane_with_definition(
+        &mut self,
+        pane_id: &PaneId,
+        pane_name: String,
+        session_def: SessionLaunchDefinition,
+        global_settings: &GlobalSettings,
+        host_env: &HashMap<String, String>,
+        find_exe: &impl Fn(&str) -> bool,
+    ) {
         // Minimal workspace def — split panes use the global default profile.
         let workspace_def = WorkspaceDefinition {
             version: 1,
@@ -631,6 +704,7 @@ impl WorkspaceInstance {
             windows: None,
             tabs: None,
         };
+        let driver = resolve_pane_driver(Some(&session_def), Some(&workspace_def));
 
         let resolved = match resolve_launch_spec(
             &session_def,
@@ -648,7 +722,8 @@ impl WorkspaceInstance {
                         state: PaneState::Detached {
                             error: e.to_string(),
                         },
-                        original_def: None,
+                        original_def: Some(session_def),
+                        driver,
                     },
                 );
                 return;
@@ -668,6 +743,7 @@ impl WorkspaceInstance {
             size: self.default_size,
             name: pane_name.clone(),
             max_scrollback: 10_000,
+            driver: driver.clone(),
         };
 
         let mut session = Session::new(session_id.clone(), config);
@@ -685,7 +761,8 @@ impl WorkspaceInstance {
                         state: PaneState::Attached {
                             session_id: session_id.clone(),
                         },
-                        original_def: None,
+                        original_def: Some(session_def.clone()),
+                        driver,
                     },
                 );
             }
@@ -697,7 +774,8 @@ impl WorkspaceInstance {
                         state: PaneState::Detached {
                             error: e.to_string(),
                         },
-                        original_def: None,
+                        original_def: Some(session_def.clone()),
+                        driver,
                     },
                 );
             }
@@ -742,6 +820,7 @@ impl WorkspaceInstance {
                     error: "test mode".to_string(),
                 },
                 original_def: None,
+                driver: resolve_pane_driver(None, None),
             },
         );
 
@@ -800,6 +879,7 @@ impl WorkspaceInstance {
                         error: "test".to_string(),
                     },
                     original_def: None,
+                    driver: resolve_pane_driver(None, None),
                 },
             );
 
@@ -814,6 +894,7 @@ impl WorkspaceInstance {
                             error: "test".to_string(),
                         },
                         original_def: None,
+                        driver: resolve_pane_driver(None, None),
                     },
                 );
                 last_pane = new_pane;
@@ -903,6 +984,7 @@ impl WorkspaceInstance {
                 pane_mappings.iter().zip(pane_defs.iter())
             {
                 let session_launch = session_def.as_ref().cloned().unwrap_or_default();
+                let driver = resolve_pane_driver(Some(&session_launch), Some(workspace_def));
 
                 let resolved = match resolve_launch_spec(
                     &session_launch,
@@ -921,6 +1003,7 @@ impl WorkspaceInstance {
                                     error: e.to_string(),
                                 },
                                 original_def: session_def.clone(),
+                                driver,
                             },
                         );
                         continue;
@@ -944,6 +1027,7 @@ impl WorkspaceInstance {
                         .unwrap_or(self.default_size),
                     name: pane_name.clone(),
                     max_scrollback,
+                    driver: driver.clone(),
                 };
 
                 let mut session = Session::new(session_id.clone(), config);
@@ -962,6 +1046,7 @@ impl WorkspaceInstance {
                                     session_id: session_id.clone(),
                                 },
                                 original_def: session_def.clone(),
+                                driver,
                             },
                         );
                     }
@@ -974,6 +1059,7 @@ impl WorkspaceInstance {
                                     error: e.to_string(),
                                 },
                                 original_def: session_def.clone(),
+                                driver,
                             },
                         );
                     }

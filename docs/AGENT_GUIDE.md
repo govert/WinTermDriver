@@ -160,15 +160,33 @@ wtd close build-and-test --kill
 ### Sending commands
 
 ```bash
-# Send text followed by a newline (simulates pressing Enter)
+# Send raw text followed by a trailing carriage return
 wtd send build-and-test/tests "cargo test --lib"
 
 # Send text without a trailing newline
 wtd send build-and-test/tests "partial input" --no-newline
 
+# Configure a pane once for agent-style prompting
+wtd configure-pane build-and-test/tests --driver-profile claude-code
+
+# Send a pane-aware prompt
+wtd prompt build-and-test/tests "Summarize the failing tests"
+
 # Send key sequences (Ctrl+C, Enter, function keys, etc.)
 wtd keys build-and-test/server Ctrl+C
 ```
+
+Use `wtd prompt` for interactive agent CLIs such as Codex, Claude Code, Gemini CLI, and Copilot CLI. It expands multiline prompts using the pane's configured `softBreakKey` and then submits with the configured `submitKey`. Keep `wtd send` for low-level shell input and literal text injection.
+
+Built-in prompt driver profiles:
+
+| Profile | Submit key | Soft break key | Notes |
+|---------|------------|----------------|-------|
+| `plain` | `Enter` | none | Default shell-like behavior |
+| `codex` | `Enter` | none | Multiline prompts are rejected |
+| `claude-code` | `Enter` | `Shift+Enter` | Multiline supported |
+| `gemini-cli` | `Enter` | `Shift+Enter` | Multiline supported |
+| `copilot-cli` | `Enter` | `Shift+Enter` | Multiline supported |
 
 ### Capturing output
 
@@ -604,7 +622,7 @@ Available layout actions:
 
 11. **Use `restartPolicy: never`** in agent workspaces. Automatic restarts can mask failures. Let the agent decide when and whether to retry.
 
-12. **Avoid sending raw VT escapes** via `wtd send`. Use `wtd keys` for control characters and special keys. `send` is for text that a human would type.
+12. **Avoid sending raw VT escapes** via `wtd send`. Use `wtd keys` for control characters and special keys. `send` is for low-level text injection; `prompt` is for pane-aware agent prompting.
 
 ## Complete command reference
 
@@ -620,11 +638,13 @@ wtd list instances
 wtd list panes <workspace>
 wtd list sessions <workspace>
 wtd send <target> <text> [--no-newline]
+wtd prompt <target> <text>
 wtd keys <target> <key>...
 wtd capture <target>
 wtd scrollback <target> --tail <n>
 wtd follow <target> [--raw]
 wtd inspect <target>
+wtd configure-pane <target> [--driver-profile <profile>] [--submit-key <key>] [--soft-break-key <key>] [--clear-soft-break] [--clear-driver]
 wtd focus <target>
 wtd rename <target> <new-name>
 wtd action <target> <action> [key=value]...

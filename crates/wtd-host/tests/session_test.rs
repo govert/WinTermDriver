@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use wtd_core::ids::SessionId;
 use wtd_core::workspace::RestartPolicy;
+use wtd_host::prompt_driver::resolve_pane_driver;
 use wtd_host::session::{Session, SessionConfig, SessionState};
 use wtd_pty::PtySize;
 
@@ -24,6 +25,7 @@ fn default_config() -> SessionConfig {
         size: PtySize::new(80, 24),
         name: "test".into(),
         max_scrollback: 100,
+        driver: resolve_pane_driver(None, None),
     }
 }
 

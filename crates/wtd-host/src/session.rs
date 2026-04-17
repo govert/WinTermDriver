@@ -15,6 +15,7 @@ use wtd_core::workspace::RestartPolicy;
 use wtd_pty::{PtyError, PtySession, PtySize, ScreenBuffer};
 
 use crate::backoff::BackoffState;
+use crate::prompt_driver::EffectivePaneDriver;
 
 // ── Session state machine ────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ pub struct SessionConfig {
     pub size: PtySize,
     pub name: String,
     pub max_scrollback: usize,
+    pub driver: EffectivePaneDriver,
 }
 
 // ── Session error ────────────────────────────────────────────────────────────
@@ -161,6 +163,10 @@ impl Session {
 
     pub fn config(&self) -> &SessionConfig {
         &self.config
+    }
+
+    pub fn config_mut(&mut self) -> &mut SessionConfig {
+        &mut self.config
     }
 
     pub fn name(&self) -> &str {

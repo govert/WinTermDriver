@@ -88,6 +88,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         ListPanes           => ListPanes,
         ListSessions        => ListSessions,
         Send                => Send,
+        Prompt              => Prompt,
         Keys                => Keys,
         Mouse               => Mouse,
         PaneInput           => PaneInput,
@@ -96,6 +97,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         Follow              => Follow,
         CancelFollow        => CancelFollow,
         Inspect             => Inspect,
+        ConfigurePane       => ConfigurePane,
         InvokeAction        => InvokeAction,
         SessionInput        => SessionInput,
         PaneResize          => PaneResize,
@@ -151,6 +153,7 @@ pub enum TypedMessage {
     ListPanes(ListPanes),
     ListSessions(ListSessions),
     Send(Send),
+    Prompt(Prompt),
     Keys(Keys),
     Mouse(Mouse),
     PaneInput(PaneInput),
@@ -159,6 +162,7 @@ pub enum TypedMessage {
     Follow(Follow),
     CancelFollow(CancelFollow),
     Inspect(Inspect),
+    ConfigurePane(ConfigurePane),
     InvokeAction(InvokeAction),
     SessionInput(SessionInput),
     PaneResize(PaneResize),
@@ -316,6 +320,15 @@ fn default_true() -> bool {
     true
 }
 
+/// §13.14 — Send a pane-configured prompt to a target session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prompt {
+    pub target: String,
+    pub text: String,
+}
+impl_payload!(Prompt, "Prompt");
+
 /// §13.14 — Send key sequences to a target pane's session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -461,6 +474,24 @@ pub struct Inspect {
     pub target: String,
 }
 impl_payload!(Inspect, "Inspect");
+
+/// §13.14 — Update pane-local metadata such as prompt driver settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurePane {
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submit_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soft_break_key: Option<String>,
+    #[serde(default)]
+    pub clear_soft_break: bool,
+    #[serde(default)]
+    pub clear_driver: bool,
+}
+impl_payload!(ConfigurePane, "ConfigurePane");
 
 /// §13.12 — Invoke an action (from keybinding, chord, or command palette).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

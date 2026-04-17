@@ -105,8 +105,14 @@ The host process auto-starts in the background on first use. Two ConPTY sessions
 ### 4. Interact via CLI
 
 ```bash
-# Send a command to a pane
+# Low-level text injection
 wtd send dev/server "Get-Process | Select-Object -First 5"
+
+# Configure an agent-style pane once
+wtd configure-pane dev/server --driver-profile claude-code
+
+# Send a pane-aware prompt
+wtd prompt dev/server "Summarize the current repo status"
 
 # Read back what's on screen
 wtd capture dev/server
@@ -175,6 +181,8 @@ defaults:
   profile: pwsh
   restartPolicy: on-failure
   scrollbackLines: 20000
+  driver:
+    profile: claude-code
 
 profiles:
   pwsh:
@@ -258,6 +266,42 @@ tabs:
 | `ssh` | Remote SSH session (set `host`, `user`, optionally `port`, `identityFile`) |
 | `custom` | Arbitrary executable (requires `executable` field) |
 
+### Prompt driver profiles
+
+`wtd prompt` expands prompt text using pane-local driver settings. This is the reliable path for driving agent CLIs that need different soft-break and submit keys.
+
+Built-in profiles:
+
+| Profile | Submit key | Soft break key | Notes |
+|---------|------------|----------------|-------|
+| `plain` | `Enter` | none | Default shell-like behavior |
+| `codex` | `Enter` | none | Multiline prompts are rejected |
+| `claude-code` | `Enter` | `Shift+Enter` | Multiline supported |
+| `gemini-cli` | `Enter` | `Shift+Enter` | Multiline supported |
+| `copilot-cli` | `Enter` | `Shift+Enter` | Multiline supported |
+
+Configure a pane interactively:
+
+```bash
+wtd configure-pane dev/server --driver-profile claude-code
+wtd prompt dev/server "Line one
+Line two"
+```
+
+Or bake it into workspace YAML:
+
+```yaml
+tabs:
+  - name: agents
+    layout:
+      type: pane
+      name: codex
+      session:
+        profile: pwsh
+        driver:
+          profile: codex
+```
+
 ## CLI Reference
 
 ```
@@ -286,12 +330,14 @@ wtd <command> [options]
 | `wtd list instances` | List running workspace instances |
 | `wtd list panes <workspace>` | List panes in a workspace |
 | `wtd list sessions <workspace>` | List sessions in a workspace |
-| `wtd send <target> <text> [--no-newline]` | Send text to a pane (appends newline by default) |
+| `wtd send <target> <text> [--no-newline]` | Send raw text bytes to a pane (appends carriage return by default) |
+| `wtd prompt <target> <text>` | Send text using the pane's configured driver profile |
 | `wtd keys <target> <key>...` | Send key sequences (e.g. `Enter`, `Ctrl+C`, `F1`) |
 | `wtd capture <target> [--vt]` | Capture visible screen content as text, or a replayable VT snapshot with `--vt` |
 | `wtd scrollback <target> --tail <n>` | Capture last N scrollback lines |
 | `wtd follow <target> [--raw]` | Stream output until Ctrl+C |
 | `wtd inspect <target>` | Show full pane/session metadata |
+| `wtd configure-pane <target> [options]` | Update pane-local prompt driver settings |
 | `wtd focus <target>` | Focus a pane in the UI |
 | `wtd rename <target> <new-name>` | Rename a pane |
 | `wtd action <target> <action> [key=value]...` | Invoke a named action |
@@ -323,7 +369,9 @@ Processes communicate over a per-user Windows named pipe (`\\.\pipe\wtd-{SID}`),
 - **Workspace definitions** are human-editable YAML files that describe windows, tabs, panes, profiles, and keybindings. They are version-controllable and deterministically recreatable.
 - **Semantic naming** lets you address panes by role (`dev/server`, `ops/prod-logs`) rather than positional IDs.
 - **Controller CLI** (`wtd`) can send text, send keys, capture output, and invoke actions on any named pane — without interrupting interactive use.
+- `wtd prompt` builds on pane-local driver profiles so automation can submit prompts safely across Codex, Claude Code, Gemini CLI, Copilot CLI, and shell-style sessions without remembering per-tool key rules.
 - `wtd inspect --json` exposes live viewport state including `onAlternate`, mouse mode, cursor shape/visibility, title, and current cell size so external drivers can reason about full-screen TUIs deterministically.
+- `wtd inspect --json` also reports the pane's effective prompt driver as `driverProfile`, `submitKey`, and `softBreakKey`.
 - `wtd capture --vt` returns a replayable VT snapshot of the current visible screen, including alternate-screen and input-mode state, so a driver or helper pane can mirror a live TUI without waiting for fresh output.
 - **Prefix chords** provide tmux-like keyboard navigation (`Ctrl+B,%` to split, `Ctrl+B,o` to cycle focus).
 

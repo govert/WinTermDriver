@@ -80,6 +80,8 @@ pub struct DefaultsDefinition {
         rename = "terminalSize"
     )]
     pub terminal_size: Option<TerminalSizeDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<PaneDriverDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +177,41 @@ pub struct SessionLaunchDefinition {
         rename = "terminalSize"
     )]
     pub terminal_size: Option<TerminalSizeDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<PaneDriverDefinition>,
+}
+
+// ── PaneDriverDefinition ─────────────────────────────────────────────────────
+
+/// Per-pane input-driving behavior for `wtd prompt`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PaneDriverDefinition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<PaneDriverProfile>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "submitKey"
+    )]
+    pub submit_key: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "softBreakKey"
+    )]
+    pub soft_break_key: Option<String>,
+    #[serde(default, rename = "disableSoftBreak")]
+    pub disable_soft_break: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaneDriverProfile {
+    Plain,
+    Codex,
+    ClaudeCode,
+    GeminiCli,
+    CopilotCli,
 }
 
 // ── ProfileDefinition (§9.1.8) ────────────────────────────────────────────────

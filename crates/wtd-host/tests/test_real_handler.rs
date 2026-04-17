@@ -504,6 +504,185 @@ tabs:
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+#[tokio::test]
+async fn real_handler_prompt_configure_and_save_driver() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "wtd-test-handler-prompt-{}-{}",
+        std::process::id(),
+        PIPE_COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    let wtd_dir = tmp_dir.join(".wtd");
+    std::fs::create_dir_all(&wtd_dir).unwrap();
+
+    let yaml = r#"
+version: 1
+name: handler-prompt
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: shell
+      session:
+        profile: cmd
+        startupCommand: "echo PROMPT_READY"
+"#;
+    std::fs::write(wtd_dir.join("handler-prompt.yaml"), yaml).unwrap();
+
+    let original_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&tmp_dir).unwrap();
+
+    let pipe_name = unique_pipe_name();
+    let handler = HostRequestHandler::new(GlobalSettings::default());
+    let server = Arc::new(IpcServer::new(pipe_name.clone(), handler).unwrap());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let s = server.clone();
+    let server_task = tokio::spawn(async move { s.run(shutdown_rx).await });
+
+    let mut client = connect_client(&pipe_name).await;
+    do_handshake(&mut client).await;
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "open-prompt",
+            &OpenWorkspace {
+                name: Some("handler-prompt".to_string()),
+                file: None,
+                recreate: false,
+
+                profile: None,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let open_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(open_resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
+
+    let startup_found = poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.contains("PROMPT_READY"),
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(startup_found.contains("PROMPT_READY"));
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "cfg-prompt",
+            &ConfigurePane {
+                target: "shell".to_string(),
+                driver_profile: Some("codex".to_string()),
+                submit_key: None,
+                soft_break_key: None,
+                clear_soft_break: false,
+                clear_driver: false,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let cfg_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(cfg_resp.msg_type, OkResponse::TYPE_NAME);
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "inspect-prompt",
+            &Inspect {
+                target: "shell".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let inspect_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(inspect_resp.msg_type, InspectResult::TYPE_NAME);
+    let inspect: InspectResult = inspect_resp.extract_payload().unwrap();
+    assert_eq!(inspect.data["driverProfile"], "codex");
+    assert_eq!(inspect.data["submitKey"], "Enter");
+    assert!(inspect.data["softBreakKey"].is_null());
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "prompt-single",
+            &Prompt {
+                target: "shell".to_string(),
+                text: "echo PROMPT_OK".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let prompt_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(prompt_resp.msg_type, OkResponse::TYPE_NAME);
+
+    let prompted = poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.matches("PROMPT_OK").count() >= 2,
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(
+        prompted.matches("PROMPT_OK").count() >= 2,
+        "prompt should execute in cmd.exe, got:\n{}",
+        prompted
+    );
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "prompt-multi",
+            &Prompt {
+                target: "shell".to_string(),
+                text: "echo ONE\necho TWO".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let multi_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(multi_resp.msg_type, ErrorResponse::TYPE_NAME);
+    let multi_err: ErrorResponse = multi_resp.extract_payload().unwrap();
+    assert_eq!(multi_err.code, ErrorCode::InvalidArgument);
+    assert!(
+        multi_err.message.contains("does not support multiline prompts"),
+        "unexpected multiline error: {}",
+        multi_err.message
+    );
+
+    let save_path = tmp_dir.join("saved-driver.yaml");
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "save-driver",
+            &SaveWorkspace {
+                workspace: "handler-prompt".to_string(),
+                file: Some(save_path.to_string_lossy().to_string()),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let save_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(save_resp.msg_type, OkResponse::TYPE_NAME);
+
+    let saved = std::fs::read_to_string(&save_path).unwrap();
+    assert!(saved.contains("driver:"));
+    assert!(saved.contains("profile: codex"));
+
+    let _ = shutdown_tx.send(true);
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    std::env::set_current_dir(original_cwd).unwrap();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
 /// Verify error handling for non-existent workspace.
 #[tokio::test]
 async fn real_handler_open_nonexistent_workspace() {

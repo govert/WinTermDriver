@@ -8,16 +8,19 @@ use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use crate::cli::{Cli, Command, HostCommand, ListCommand, MouseButtonArg, MouseKindArg};
+use crate::cli::{
+    Cli, Command, DriverProfileArg, HostCommand, ListCommand, MouseButtonArg, MouseKindArg,
+};
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
 use crate::input_bytes::{encode_input_payload, InputEncoding};
 use crate::output::{self, OutputResult};
 use wtd_ipc::connect;
 use wtd_ipc::message::{
-    self, AttachWorkspace, CancelFollow, Capture, CloseWorkspace, ErrorResponse, FocusPane, Follow,
-    FollowEnd, Inspect, InvokeAction, ListInstances, ListPanes, ListSessions, ListWorkspaces,
-    MessagePayload, Mouse, OpenWorkspace, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback,
+    self, AttachWorkspace, CancelFollow, Capture, CloseWorkspace, ConfigurePane, ErrorResponse,
+    FocusPane, Follow, FollowEnd, Inspect, InvokeAction, ListInstances, ListPanes, ListSessions,
+    ListWorkspaces, MessagePayload, Mouse, OpenWorkspace, Prompt, RecreateWorkspace, RenamePane,
+    SaveWorkspace, Scrollback,
 };
 use wtd_ipc::Envelope;
 
@@ -70,6 +73,16 @@ fn map_mouse_button(button: MouseButtonArg) -> message::MouseButton {
         MouseButtonArg::Middle => message::MouseButton::Middle,
         MouseButtonArg::Right => message::MouseButton::Right,
         MouseButtonArg::None => message::MouseButton::None,
+    }
+}
+
+fn map_driver_profile(profile: DriverProfileArg) -> &'static str {
+    match profile {
+        DriverProfileArg::Plain => "plain",
+        DriverProfileArg::Codex => "codex",
+        DriverProfileArg::ClaudeCode => "claude-code",
+        DriverProfileArg::GeminiCli => "gemini-cli",
+        DriverProfileArg::CopilotCli => "copilot-cli",
     }
 }
 
@@ -240,6 +253,13 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 newline: !no_newline,
             },
         )),
+        Command::Prompt { target, text } => Some(Envelope::new(
+            &id,
+            &Prompt {
+                target: target.clone(),
+                text: text.clone(),
+            },
+        )),
         Command::Keys { target, key_specs } => Some(Envelope::new(
             &id,
             &message::Keys {
@@ -338,6 +358,24 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &id,
             &Inspect {
                 target: target.clone(),
+            },
+        )),
+        Command::ConfigurePane {
+            target,
+            driver_profile,
+            submit_key,
+            soft_break_key,
+            clear_soft_break,
+            clear_driver,
+        } => Some(Envelope::new(
+            &id,
+            &ConfigurePane {
+                target: target.clone(),
+                driver_profile: driver_profile.map(|profile| map_driver_profile(profile).to_string()),
+                submit_key: submit_key.clone(),
+                soft_break_key: soft_break_key.clone(),
+                clear_soft_break: *clear_soft_break,
+                clear_driver: *clear_driver,
             },
         )),
         Command::Focus { target } => Some(Envelope::new(

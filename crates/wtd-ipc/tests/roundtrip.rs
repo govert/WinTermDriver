@@ -150,6 +150,14 @@ fn send_no_newline_roundtrip() {
 }
 
 #[test]
+fn prompt_roundtrip() {
+    roundtrip(Prompt {
+        target: "dev/server".into(),
+        text: "Reply with exactly test".into(),
+    });
+}
+
+#[test]
 fn keys_roundtrip() {
     roundtrip(Keys {
         target: "dev/editor".into(),
@@ -332,6 +340,18 @@ fn session_input_roundtrip() {
         workspace: "dev".into(),
         session_id: "sess-1".into(),
         data: "aGVsbG8=".into(), // "hello" base64
+    });
+}
+
+#[test]
+fn configure_pane_roundtrip() {
+    roundtrip(ConfigurePane {
+        target: "dev/server".into(),
+        driver_profile: Some("claude-code".into()),
+        submit_key: Some("Enter".into()),
+        soft_break_key: Some("Shift+Enter".into()),
+        clear_soft_break: false,
+        clear_driver: false,
     });
 }
 
