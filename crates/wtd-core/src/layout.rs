@@ -377,36 +377,48 @@ impl LayoutTree {
     /// Move focus to the nearest pane in the given direction using geometric
     /// centres (§18.7). No-op if no pane exists in that direction.
     pub fn focus_direction(&mut self, dir: Direction, total: Rect) {
-        let rects = self.compute_rects(total);
-        let cur = match rects.get(&self.focus) {
-            Some(r) => *r,
-            None => return,
-        };
-        let (cx, cy) = (cur.center_x(), cur.center_y());
-
-        let mut best: Option<(PaneId, f64)> = None;
-        for (id, rect) in &rects {
-            if *id == self.focus {
-                continue;
-            }
-            let (px, py) = (rect.center_x(), rect.center_y());
-            let in_dir = match dir {
-                Direction::Up => py < cy,
-                Direction::Down => py > cy,
-                Direction::Left => px < cx,
-                Direction::Right => px > cx,
-            };
-            if !in_dir {
-                continue;
-            }
-            let dist = (px - cx).powi(2) + (py - cy).powi(2);
-            if best.as_ref().map_or(true, |(_, d)| dist < *d) {
-                best = Some((id.clone(), dist));
-            }
-        }
-        if let Some((id, _)) = best {
+        if let Some(id) = self.nearest_pane_in_direction(&self.focus, dir, total) {
             self.focus = id;
         }
+    }
+
+    /// Swap the target pane with its nearest spatial neighbor in the given
+    /// direction. Pane IDs are preserved and therefore move with their attached
+    /// sessions and focus.
+    pub fn swap_pane_with_neighbor(
+        &mut self,
+        target: PaneId,
+        dir: Direction,
+        total: Rect,
+    ) -> Result<(), LayoutError> {
+        let target_idx = self.pane_idx(target.clone())?;
+        let Some(other) = self.nearest_pane_in_direction(&target, dir, total) else {
+            return Ok(());
+        };
+        let other_idx = self.pane_idx(other.clone())?;
+
+        if target_idx == other_idx {
+            return Ok(());
+        }
+
+        {
+            let target_node = self.node_mut(target_idx);
+            match &mut target_node.kind {
+                NodeKind::Pane { id } => *id = other.clone(),
+                NodeKind::Split { .. } => unreachable!(),
+            }
+        }
+        {
+            let other_node = self.node_mut(other_idx);
+            match &mut other_node.kind {
+                NodeKind::Pane { id } => *id = target.clone(),
+                NodeKind::Split { .. } => unreachable!(),
+            }
+        }
+
+        self.pane_index.insert(target, other_idx);
+        self.pane_index.insert(other, target_idx);
+        Ok(())
     }
 
     // ── Zoom ──────────────────────────────────────────────────────────────────
@@ -550,6 +562,39 @@ impl LayoutTree {
             }
             cur = p;
         }
+    }
+
+    fn nearest_pane_in_direction(
+        &self,
+        target: &PaneId,
+        dir: Direction,
+        total: Rect,
+    ) -> Option<PaneId> {
+        let rects = self.compute_rects(total);
+        let cur = rects.get(target)?;
+        let (cx, cy) = (cur.center_x(), cur.center_y());
+
+        let mut best: Option<(PaneId, f64)> = None;
+        for (id, rect) in &rects {
+            if id == target {
+                continue;
+            }
+            let (px, py) = (rect.center_x(), rect.center_y());
+            let in_dir = match dir {
+                Direction::Up => py < cy,
+                Direction::Down => py > cy,
+                Direction::Left => px < cx,
+                Direction::Right => px > cx,
+            };
+            if !in_dir {
+                continue;
+            }
+            let dist = (px - cx).powi(2) + (py - cy).powi(2);
+            if best.as_ref().map_or(true, |(_, d)| dist < *d) {
+                best = Some((id.clone(), dist));
+            }
+        }
+        best.map(|(id, _)| id)
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────
@@ -1043,6 +1088,52 @@ mod tests {
         let p3 = tree.split_down(p1.clone()).unwrap();
         let p4 = tree.split_down(p2.clone()).unwrap();
         (tree, p1, p2, p3, p4)
+    }
+
+    #[test]
+    fn swap_pane_right_exchanges_positions_with_right_neighbor() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        let before = tree.compute_rects(area());
+
+        tree.set_focus(p1.clone()).unwrap();
+        tree.swap_pane_with_neighbor(p1.clone(), Direction::Right, area())
+            .unwrap();
+
+        let after = tree.compute_rects(area());
+        assert_eq!(after[&p1], before[&p2]);
+        assert_eq!(after[&p2], before[&p1]);
+        assert_eq!(after[&p3], before[&p3]);
+        assert_eq!(after[&p4], before[&p4]);
+        assert_eq!(tree.focus(), p1);
+    }
+
+    #[test]
+    fn swap_pane_down_exchanges_positions_with_lower_neighbor() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        let before = tree.compute_rects(area());
+
+        tree.set_focus(p2.clone()).unwrap();
+        tree.swap_pane_with_neighbor(p2.clone(), Direction::Down, area())
+            .unwrap();
+
+        let after = tree.compute_rects(area());
+        assert_eq!(after[&p2], before[&p4]);
+        assert_eq!(after[&p4], before[&p2]);
+        assert_eq!(after[&p1], before[&p1]);
+        assert_eq!(after[&p3], before[&p3]);
+        assert_eq!(tree.focus(), p2);
+    }
+
+    #[test]
+    fn swap_pane_noop_without_neighbor_in_direction() {
+        let (mut tree, p1, _p2, _p3, _p4) = four_pane_tree();
+        let before = tree.compute_rects(area());
+
+        tree.swap_pane_with_neighbor(p1.clone(), Direction::Up, area())
+            .unwrap();
+
+        assert_eq!(tree.compute_rects(area()), before);
+        assert_eq!(tree.focus(), p1);
     }
 
     #[test]

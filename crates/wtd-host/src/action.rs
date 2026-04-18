@@ -415,6 +415,30 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Toggle pane zoom",
     });
     r.register(ActionDef {
+        name: "swap-pane-up",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Swap pane with the nearest pane above",
+    });
+    r.register(ActionDef {
+        name: "swap-pane-down",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Swap pane with the nearest pane below",
+    });
+    r.register(ActionDef {
+        name: "swap-pane-left",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Swap pane with the nearest pane on the left",
+    });
+    r.register(ActionDef {
+        name: "swap-pane-right",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Swap pane with the nearest pane on the right",
+    });
+    r.register(ActionDef {
         name: "rename-pane",
         target_type: TargetType::Pane,
         args: RENAME_PANE_ARGS,
@@ -686,6 +710,43 @@ impl ActionDispatcher {
                 tab.layout_mut().toggle_zoom();
                 Ok(ActionResult::Ok)
             }
+            "swap-pane-up" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut()
+                    .swap_pane_with_neighbor(pane_id, Direction::Up, self.viewport)?;
+                Ok(ActionResult::Ok)
+            }
+            "swap-pane-down" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().swap_pane_with_neighbor(
+                    pane_id,
+                    Direction::Down,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
+            "swap-pane-left" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().swap_pane_with_neighbor(
+                    pane_id,
+                    Direction::Left,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
+            "swap-pane-right" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().swap_pane_with_neighbor(
+                    pane_id,
+                    Direction::Right,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
 
             // ── Resize ───────────────────────────────────────────────────
             "resize-pane-right" => {
@@ -889,8 +950,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases and change-profile totals 41 actions.
-        assert_eq!(r.len(), 41);
+        // §20.3 plus directional resize aliases, swap-pane actions, and change-profile totals 45 actions.
+        assert_eq!(r.len(), 45);
     }
 
     #[test]
@@ -1176,6 +1237,86 @@ mod tests {
             .compute_rects(Rect::new(0, 0, 120, 40));
         assert_eq!(rects[&left].width, 72);
         assert_eq!(rects[&right].width, 48);
+    }
+
+    #[test]
+    fn dispatch_swap_pane_right_exchanges_positions_and_preserves_focus_id() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let right = panes[1].clone();
+        let before = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "swap-pane-right",
+                &json!({}),
+                Some(left.clone()),
+            )
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let after = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(after[&left], before[&right]);
+        assert_eq!(after[&right], before[&left]);
+        assert_eq!(layout.focus(), left);
+    }
+
+    #[test]
+    fn dispatch_swap_pane_down_exchanges_positions_and_preserves_focus_id() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let bottom_right = panes[2].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(right.clone())
+            .unwrap();
+        let before = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "swap-pane-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let after = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(after[&right], before[&bottom_right]);
+        assert_eq!(after[&bottom_right], before[&right]);
+        assert_eq!(after[&left], before[&left]);
+        assert_eq!(layout.focus(), right);
     }
 
     #[test]
