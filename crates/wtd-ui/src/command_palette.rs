@@ -68,6 +68,50 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("focus-pane-right", "Move focus right"),
     ("focus-pane", "Move focus to named pane"),
     ("zoom-pane", "Toggle pane zoom"),
+    ("swap-pane-up", "Swap pane with the nearest pane above"),
+    ("swap-pane-down", "Swap pane with the nearest pane below"),
+    (
+        "swap-pane-left",
+        "Swap pane with the nearest pane on the left",
+    ),
+    (
+        "swap-pane-right",
+        "Swap pane with the nearest pane on the right",
+    ),
+    (
+        "toggle-split-orientation",
+        "Toggle the nearest ancestor split orientation",
+    ),
+    (
+        "equalize-pane-split",
+        "Reset the nearest ancestor split to an even ratio",
+    ),
+    ("equalize-tab", "Reset all tab splits to even ratios"),
+    (
+        "retile-even-horizontal",
+        "Retile panes into an even left-to-right layout",
+    ),
+    (
+        "retile-even-vertical",
+        "Retile panes into an even top-to-bottom layout",
+    ),
+    ("retile-grid", "Retile panes into a near-square grid"),
+    (
+        "retile-main-left",
+        "Retile panes with the focused pane as the main left pane",
+    ),
+    (
+        "retile-main-right",
+        "Retile panes with the focused pane as the main right pane",
+    ),
+    (
+        "retile-main-top",
+        "Retile panes with the focused pane as the main top pane",
+    ),
+    (
+        "retile-main-bottom",
+        "Retile panes with the focused pane as the main bottom pane",
+    ),
     ("rename-pane", "Rename pane"),
     ("change-profile", "Relaunch pane with a different profile"),
     ("resize-pane-right", "Move pane splitter to the right"),
@@ -1251,6 +1295,29 @@ mod tests {
         };
         let entries = build_palette_entries(&bindings);
         assert!(entries.iter().any(|e| e.name == "change-profile"));
+    }
+
+    #[test]
+    fn entries_include_rearrangement_and_retile_actions() {
+        let bindings = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        let entries = build_palette_entries(&bindings);
+        for action in [
+            "swap-pane-left",
+            "swap-pane-right",
+            "toggle-split-orientation",
+            "equalize-tab",
+            "retile-grid",
+            "retile-main-left",
+            "retile-main-top",
+        ] {
+            assert!(entries.iter().any(|e| e.name == action), "missing {action}");
+        }
     }
 
     #[test]

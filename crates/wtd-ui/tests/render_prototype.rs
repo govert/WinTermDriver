@@ -155,6 +155,8 @@ fn inverse_swaps_fg_and_bg() {
         fg: Color::Rgb(100, 200, 50),
         bg: Color::Rgb(10, 20, 30),
         attrs,
+        hyperlink_id: 0,
+        image_id: 0,
     };
     let (fg, bg) = resolve_cell_colors(&cell);
     assert_eq!(fg, (10, 20, 30), "Inverse should swap: fg becomes old bg");
@@ -170,6 +172,8 @@ fn dim_halves_foreground() {
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Default,
         attrs,
+        hyperlink_id: 0,
+        image_id: 0,
     };
     let (fg, _) = resolve_cell_colors(&cell);
     assert_eq!(fg, (100, 50, 25), "Dim should halve each fg component");
@@ -185,6 +189,8 @@ fn dim_plus_inverse() {
         fg: Color::Rgb(200, 100, 50),
         bg: Color::Rgb(80, 40, 20),
         attrs,
+        hyperlink_id: 0,
+        image_id: 0,
     };
     let (fg, bg) = resolve_cell_colors(&cell);
     // Inverse first: fg=(80,40,20), bg=(200,100,50)

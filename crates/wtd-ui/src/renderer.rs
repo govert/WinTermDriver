@@ -1187,6 +1187,8 @@ mod tests {
             fg: Color::Ansi(1),
             bg: Color::Default,
             attrs: CellAttrs::default(),
+            hyperlink_id: 0,
+            image_id: 0,
         };
         let (fg, bg) = resolve_cell_colors(&cell);
         assert_eq!(fg, (170, 0, 0));
@@ -1202,6 +1204,8 @@ mod tests {
             fg: Color::Ansi(1),
             bg: Color::Ansi(2),
             attrs,
+            hyperlink_id: 0,
+            image_id: 0,
         };
         let (fg, bg) = resolve_cell_colors(&cell);
         // Swapped
@@ -1218,6 +1222,8 @@ mod tests {
             fg: Color::Rgb(200, 100, 50),
             bg: Color::Default,
             attrs,
+            hyperlink_id: 0,
+            image_id: 0,
         };
         let (fg, _bg) = resolve_cell_colors(&cell);
         assert_eq!(fg, (100, 50, 25));

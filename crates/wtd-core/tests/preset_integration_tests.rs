@@ -90,6 +90,22 @@ bindings:
     expect_simple("Alt+Shift+Right", "resize-pane-right");
     expect_simple("Alt+Shift+Left", "resize-pane-left");
 
+    for action in [
+        "swap-pane-left",
+        "swap-pane-right",
+        "toggle-split-orientation",
+        "equalize-tab",
+        "retile-grid",
+        "retile-main-left",
+    ] {
+        assert!(
+            !keys.values().any(
+                |reference| matches!(reference, ActionReference::Simple(name) if name == action)
+            ),
+            "windows-terminal preset should not bind {action} by default"
+        );
+    }
+
     // Secondary clipboard bindings
     expect_simple("Ctrl+Insert", "copy");
     expect_simple("Shift+Insert", "paste");

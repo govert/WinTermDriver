@@ -111,8 +111,8 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 | `resizePane (up)` | `alt+shift+up` | `resize-pane-up` | (none) | `→` | Move the nearest horizontal splitter up |
 | `resizePane (right)` | `alt+shift+right` | `resize-pane-right` | (none) | `→` | Move the nearest vertical splitter right |
 | `resizePane (left)` | `alt+shift+left` | `resize-pane-left` | (none) | `→` | Move the nearest vertical splitter left |
-| `swapPane (direction)` | (none) | (none) | (none) | `✗` | No WTD equivalent |
-| `toggleSplitOrientation` | (none) | (none) | (none) | `✗` | No WTD equivalent |
+| `swapPane (direction)` | (none) | `swap-pane-{dir}` | (none) | `~` | Available in WTD command palette; no default binding yet |
+| `toggleSplitOrientation` | (none) | `toggle-split-orientation` | (none) | `~` | Available in WTD command palette; no default binding yet |
 | `toggleBroadcastInput` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `movePane (index)` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `movePaneToNewWindow` | (none) | (none) | (none) | `✗` | No WTD equivalent |
@@ -210,11 +210,16 @@ These WT actions have no corresponding WTD action. The WT preset would need to e
 - `resetFontSize` — Reset zoom (Ctrl+0)
 
 **Pane operations** (future beads):
-- `swapPane` — Swap pane positions
-- `toggleSplitOrientation` — Rotate split
 - `toggleBroadcastInput` — Input broadcasting
 - `movePane` / `movePaneToNewWindow` — Move pane between tabs/windows
 - `closeOtherPanes` — Close all but focused
+
+**Implemented without default bindings**:
+- `swap-pane-up` / `swap-pane-down` / `swap-pane-left` / `swap-pane-right`
+- `toggle-split-orientation`
+- `equalize-pane-split` / `equalize-tab`
+- `retile-even-horizontal` / `retile-even-vertical` / `retile-grid`
+- `retile-main-left` / `retile-main-right` / `retile-main-top` / `retile-main-bottom`
 
 **Tab operations** (future beads):
 - `duplicateTab` — Duplicate tab (Ctrl+Shift+D)

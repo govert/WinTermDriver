@@ -621,6 +621,20 @@ Available layout actions:
 | `focus-pane-down` | Focus the pane below |
 | `focus-pane-left` | Focus the pane to the left |
 | `focus-pane-right` | Focus the pane to the right |
+| `swap-pane-up` | Swap the focused pane with the nearest pane above |
+| `swap-pane-down` | Swap the focused pane with the nearest pane below |
+| `swap-pane-left` | Swap the focused pane with the nearest pane on the left |
+| `swap-pane-right` | Swap the focused pane with the nearest pane on the right |
+| `toggle-split-orientation` | Toggle the nearest ancestor split orientation |
+| `equalize-pane-split` | Reset the nearest ancestor split to an even ratio |
+| `equalize-tab` | Reset all tab splits to even ratios |
+| `retile-even-horizontal` | Retile the tab into an even left-to-right layout |
+| `retile-even-vertical` | Retile the tab into an even top-to-bottom layout |
+| `retile-grid` | Retile the tab into a near-square grid |
+| `retile-main-left` | Retile the tab with the focused pane as the main left pane |
+| `retile-main-right` | Retile the tab with the focused pane as the main right pane |
+| `retile-main-top` | Retile the tab with the focused pane as the main top pane |
+| `retile-main-bottom` | Retile the tab with the focused pane as the main bottom pane |
 | `resize-pane-right` | Move the nearest vertical splitter right (`cells=N`) |
 | `resize-pane-left` | Move the nearest vertical splitter left (`cells=N`) |
 | `resize-pane-down` | Move the nearest horizontal splitter down (`cells=N`) |
@@ -631,6 +645,8 @@ Available layout actions:
 | `resize-pane-shrink-down` | Shrink the focused pane from the bottom (`cells=N`) |
 | `rename-pane` | Rename a pane (`name=new-name`) |
 | `restart-session` | Restart the session in a pane |
+
+The initial rearrangement and retile rollout is **command-palette first**. No new default single-stroke bindings are assigned for swap/equalize/retile actions yet; users can bind them explicitly in workspace or global bindings if desired.
 
 ## Best practices
 
