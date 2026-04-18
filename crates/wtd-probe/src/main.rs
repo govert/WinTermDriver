@@ -18,6 +18,7 @@ enum KeyboardMode {
 
 fn main() -> io::Result<()> {
     let config = ProbeConfig::parse(env::args().skip(1))?;
+    enable_raw_vt_input()?;
 
     let mut stdout = io::stdout().lock();
     stdout.write_all(&startup_bytes(&config))?;
@@ -135,6 +136,35 @@ fn print_help() {
     eprintln!(
         "wtd-probe [--keyboard-mode csi-u|kitty] [--enable-bracketed-paste|--disable-bracketed-paste] [--alt-screen] [--hyperlink URL TEXT] [--request-image-probe]"
     );
+}
+
+#[cfg(windows)]
+fn enable_raw_vt_input() -> io::Result<()> {
+    use windows::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, CONSOLE_MODE,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, STD_INPUT_HANDLE,
+    };
+
+    unsafe {
+        let handle = GetStdHandle(STD_INPUT_HANDLE).map_err(windows_error_to_io)?;
+        let mut mode = CONSOLE_MODE(0);
+        GetConsoleMode(handle, &mut mode).map_err(windows_error_to_io)?;
+        const RAW_MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0020; // processed, line, echo, insert
+        let new_mode = CONSOLE_MODE((mode.0 | ENABLE_VIRTUAL_TERMINAL_INPUT.0) & !RAW_MASK);
+        SetConsoleMode(handle, new_mode).map_err(windows_error_to_io)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn enable_raw_vt_input() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_error_to_io(error: windows::core::Error) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, error.to_string())
 }
 
 #[cfg(test)]
