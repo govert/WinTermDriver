@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use wtd_core::workspace::ActionReference;
 
 use crate::input::{
-    key_event_to_bytes, InputAction, InputClassifier, KeyEvent, KeyName, KeySpec, Modifiers,
+    key_event_to_bytes, text_char_to_key_event, InputAction, InputClassifier, KeyEvent, KeyName,
+    KeySpec, Modifiers,
 };
 
 // ── Output ──────────────────────────────────────────────────────────────────
@@ -139,6 +140,27 @@ impl PrefixStateMachine {
     /// Access the inner classifier.
     pub fn classifier(&self) -> &InputClassifier {
         &self.classifier
+    }
+
+    /// Process committed text input under the same prefix semantics as key events.
+    pub fn process_text(&mut self, text: &str) -> Vec<PrefixOutput> {
+        let mut outputs = Vec::new();
+        for ch in text.chars() {
+            if let Some(event) = text_char_to_key_event(ch) {
+                outputs.push(self.process(&event));
+            } else {
+                let mut bytes = ch.to_string().into_bytes();
+                if self.active {
+                    self.deactivate();
+                    let mut prefixed = self.prefix_bytes.clone();
+                    prefixed.append(&mut bytes);
+                    outputs.push(PrefixOutput::SendToSession(prefixed));
+                } else {
+                    outputs.push(PrefixOutput::SendToSession(bytes));
+                }
+            }
+        }
+        outputs
     }
 
     // ── Internal ────────────────────────────────────────────────────────────
@@ -390,6 +412,38 @@ mod tests {
                 assert_eq!(bytes, vec![0x02, b'x']);
             }
             other => panic!("expected SendToSession, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn active_unmapped_text_sends_prefix_plus_utf8_text() {
+        let mut sm = make_sm(2000);
+        sm.process(&ctrl_b());
+
+        let outputs = sm.process_text("{");
+        assert!(!sm.is_prefix_active());
+        assert_eq!(outputs.len(), 1);
+        match &outputs[0] {
+            PrefixOutput::SendToSession(bytes) => {
+                assert_eq!(bytes, &vec![0x02, b'{']);
+            }
+            other => panic!("expected SendToSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_composed_text_sends_prefix_plus_utf8_text() {
+        let mut sm = make_sm(2000);
+        sm.process(&ctrl_b());
+
+        let outputs = sm.process_text("é");
+        assert!(!sm.is_prefix_active());
+        assert_eq!(outputs.len(), 1);
+        match &outputs[0] {
+            PrefixOutput::SendToSession(bytes) => {
+                assert_eq!(bytes, &vec![0x02, 0xC3, 0xA9]);
+            }
+            other => panic!("expected SendToSession, got {other:?}"),
         }
     }
 

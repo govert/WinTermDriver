@@ -153,6 +153,36 @@ impl KeyName {
     }
 }
 
+pub fn key_name_for_text_char(ch: char) -> Option<KeyName> {
+    Some(match ch {
+        'A'..='Z' | 'a'..='z' => KeyName::Char(ch.to_ascii_uppercase()),
+        '0'..='9' => KeyName::Digit((ch as u8) - b'0'),
+        ' ' => KeyName::Space,
+        '+' => KeyName::Plus,
+        '-' => KeyName::Minus,
+        '%' => KeyName::Percent,
+        '"' => KeyName::DoubleQuote,
+        ',' => KeyName::Comma,
+        '.' => KeyName::Period,
+        '/' => KeyName::Slash,
+        '\\' => KeyName::Backslash,
+        '[' => KeyName::LeftBracket,
+        ']' => KeyName::RightBracket,
+        ';' => KeyName::Semicolon,
+        '\'' => KeyName::Apostrophe,
+        '`' => KeyName::Backtick,
+        _ => return None,
+    })
+}
+
+pub fn text_char_to_key_event(ch: char) -> Option<KeyEvent> {
+    Some(KeyEvent {
+        key: key_name_for_text_char(ch)?,
+        modifiers: Modifiers::NONE,
+        character: Some(ch),
+    })
+}
+
 impl fmt::Display for KeyName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -478,38 +478,6 @@ fn bound_action_name(classifier: &InputClassifier, event: &KeyEvent) -> Option<S
     }
 }
 
-fn key_name_for_text_char(ch: char) -> Option<wtd_ui::input::KeyName> {
-    use wtd_ui::input::KeyName;
-
-    Some(match ch {
-        'A'..='Z' | 'a'..='z' => KeyName::Char(ch.to_ascii_uppercase()),
-        '0'..='9' => KeyName::Digit((ch as u8) - b'0'),
-        ' ' => KeyName::Space,
-        '+' => KeyName::Plus,
-        '-' => KeyName::Minus,
-        '%' => KeyName::Percent,
-        '"' => KeyName::DoubleQuote,
-        ',' => KeyName::Comma,
-        '.' => KeyName::Period,
-        '/' => KeyName::Slash,
-        '\\' => KeyName::Backslash,
-        '[' => KeyName::LeftBracket,
-        ']' => KeyName::RightBracket,
-        ';' => KeyName::Semicolon,
-        '\'' => KeyName::Apostrophe,
-        '`' => KeyName::Backtick,
-        _ => return None,
-    })
-}
-
-fn text_char_to_key_event(ch: char) -> Option<KeyEvent> {
-    Some(KeyEvent {
-        key: key_name_for_text_char(ch)?,
-        modifiers: Default::default(),
-        character: Some(ch),
-    })
-}
-
 fn text_input_bytes(text: &str) -> Vec<u8> {
     text.as_bytes().to_vec()
 }
@@ -1807,57 +1775,50 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     }
 
                     if prefix_sm.is_prefix_active() {
-                        for ch in text.chars() {
-                            if let Some(event) = text_char_to_key_event(ch) {
-                                let output = prefix_sm.process(&event);
-                                match output {
-                                    PrefixOutput::DispatchAction(action_ref) => {
-                                        if let Some(active_tab) =
-                                            active_tab_ref(&tabs, active_tab_index)
-                                        {
-                                            dispatch_action(
-                                                &action_ref,
-                                                &mut command_palette,
-                                                &mut tab_strip,
-                                                active_tab,
-                                                bridge.as_ref(),
-                                                connected,
-                                                &mut mouse_handler,
-                                            );
-                                        }
+                        for output in prefix_sm.process_text(&text) {
+                            match output {
+                                PrefixOutput::DispatchAction(action_ref) => {
+                                    if let Some(active_tab) =
+                                        active_tab_ref(&tabs, active_tab_index)
+                                    {
+                                        dispatch_action(
+                                            &action_ref,
+                                            &mut command_palette,
+                                            &mut tab_strip,
+                                            active_tab,
+                                            bridge.as_ref(),
+                                            connected,
+                                            &mut mouse_handler,
+                                        );
                                     }
-                                    PrefixOutput::SendToSession(bytes) => {
-                                        if let Some(ref bridge) = bridge {
-                                            if connected && !bytes.is_empty() {
-                                                if let Some(active_tab) =
-                                                    active_tab_ref(&tabs, active_tab_index)
+                                }
+                                PrefixOutput::SendToSession(bytes) => {
+                                    if let Some(ref bridge) = bridge {
+                                        if connected && !bytes.is_empty() {
+                                            if let Some(active_tab) =
+                                                active_tab_ref(&tabs, active_tab_index)
+                                            {
+                                                let focused = active_tab.layout_tree.focus();
+                                                let reset_live_view = prepare_pane_for_live_input(
+                                                    &mut mouse_handler,
+                                                    active_tab,
+                                                    &focused,
+                                                    true,
+                                                );
+                                                if let Some(ps) =
+                                                    active_tab.pane_sessions.get(&focused)
                                                 {
-                                                    let focused = active_tab.layout_tree.focus();
-                                                    let reset_live_view =
-                                                        prepare_pane_for_live_input(
-                                                            &mut mouse_handler,
-                                                            active_tab,
-                                                            &focused,
-                                                            true,
-                                                        );
-                                                    if let Some(ps) =
-                                                        active_tab.pane_sessions.get(&focused)
-                                                    {
-                                                        bridge.send_input(
-                                                            ps.session_id.clone(),
-                                                            bytes,
-                                                        );
-                                                    }
-                                                    if reset_live_view {
-                                                        force_immediate_paint = true;
-                                                        needs_paint = true;
-                                                    }
+                                                    bridge.send_input(ps.session_id.clone(), bytes);
+                                                }
+                                                if reset_live_view {
+                                                    force_immediate_paint = true;
+                                                    needs_paint = true;
                                                 }
                                             }
                                         }
                                     }
-                                    PrefixOutput::Consumed => {}
                                 }
+                                PrefixOutput::Consumed => {}
                             }
                         }
                         force_immediate_paint = true;
