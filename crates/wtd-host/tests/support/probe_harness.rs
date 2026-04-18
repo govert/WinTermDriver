@@ -137,9 +137,6 @@ fn workspace_root() -> PathBuf {
 fn probe_executable() -> PathBuf {
     let root = workspace_root();
     let probe = root.join("target").join("debug").join("wtd-probe.exe");
-    if probe.exists() {
-        return probe;
-    }
 
     let status = std::process::Command::new("cargo")
         .args(["build", "-p", "wtd-probe", "--bin", "wtd-probe"])

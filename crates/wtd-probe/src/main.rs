@@ -7,6 +7,9 @@ struct ProbeConfig {
     bracketed_paste: Option<bool>,
     alt_screen: bool,
     title: Option<String>,
+    cursor_hidden: bool,
+    cursor_style: Option<u8>,
+    mouse_mode: bool,
     hyperlink: Option<(String, String)>,
     request_image_probe: bool,
 }
@@ -70,6 +73,17 @@ impl ProbeConfig {
                 "--title" => {
                     config.title = Some(args.next().ok_or_else(|| invalid_input("missing title"))?);
                 }
+                "--cursor-hidden" => config.cursor_hidden = true,
+                "--cursor-style" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| invalid_input("missing cursor style"))?;
+                    let style = value
+                        .parse::<u8>()
+                        .map_err(|_| invalid_input("cursor style must be an integer"))?;
+                    config.cursor_style = Some(style);
+                }
+                "--mouse-mode" => config.mouse_mode = true,
                 "--hyperlink" => {
                     let url = args
                         .next()
@@ -115,6 +129,18 @@ fn startup_bytes(config: &ProbeConfig) -> Vec<u8> {
         out.extend_from_slice(format!("\x1b]2;{title}\x1b\\").as_bytes());
     }
 
+    if config.cursor_hidden {
+        out.extend_from_slice(b"\x1b[?25l");
+    }
+
+    if let Some(style) = config.cursor_style {
+        out.extend_from_slice(format!("\x1b[{style} q").as_bytes());
+    }
+
+    if config.mouse_mode {
+        out.extend_from_slice(b"\x1b[?1002h\x1b[?1006h");
+    }
+
     if let Some((url, text)) = &config.hyperlink {
         out.extend_from_slice(format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\\r\n").as_bytes());
     }
@@ -146,7 +172,7 @@ fn invalid_input(message: &str) -> io::Error {
 
 fn print_help() {
     eprintln!(
-        "wtd-probe [--keyboard-mode csi-u|kitty] [--enable-bracketed-paste|--disable-bracketed-paste] [--alt-screen] [--title TEXT] [--hyperlink URL TEXT] [--request-image-probe]"
+        "wtd-probe [--keyboard-mode csi-u|kitty] [--enable-bracketed-paste|--disable-bracketed-paste] [--alt-screen] [--title TEXT] [--cursor-hidden] [--cursor-style N] [--mouse-mode] [--hyperlink URL TEXT] [--request-image-probe]"
     );
 }
 
@@ -190,14 +216,21 @@ mod tests {
             bracketed_paste: Some(true),
             alt_screen: true,
             title: Some("pi host".to_string()),
+            cursor_hidden: true,
+            cursor_style: Some(5),
+            mouse_mode: true,
             hyperlink: Some(("https://example.com".to_string(), "docs".to_string())),
             request_image_probe: true,
         };
 
         let bytes = startup_bytes(&config);
         assert!(bytes.starts_with(b"\x1b[>31u\x1b[?2004h\x1b[?1049h"));
-        assert!(String::from_utf8_lossy(&bytes).contains("\x1b]2;pi host\x1b\\"));
-        assert!(String::from_utf8_lossy(&bytes).contains("https://example.com"));
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("\x1b]2;pi host\x1b\\"));
+        assert!(text.contains("\x1b[?25l"));
+        assert!(text.contains("\x1b[5 q"));
+        assert!(text.contains("\x1b[?1002h\x1b[?1006h"));
+        assert!(text.contains("https://example.com"));
         assert!(bytes
             .windows(11)
             .any(|window| window == b"docs\x1b]8;;\x1b\\"));
