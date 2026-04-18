@@ -531,6 +531,15 @@ fn action_args_to_value(args: &Option<HashMap<String, String>>) -> serde_json::V
         .unwrap_or(serde_json::Value::Null)
 }
 
+fn paste_bytes_for_pane(active_tab: &SnapshotTab, pane_id: &PaneId, text: &str) -> Vec<u8> {
+    let bracketed_paste_active = active_tab
+        .screens
+        .get(pane_id)
+        .map(|screen| screen.bracketed_paste())
+        .unwrap_or(false);
+    wtd_ui::clipboard::prepare_paste(text, bracketed_paste_active)
+}
+
 fn send_ui_action(
     bridge: &HostBridge,
     tab: &SnapshotTab,
@@ -1104,10 +1113,10 @@ fn dispatch_action(
         "paste" => {
             if let Ok(text) = wtd_ui::clipboard::read_from_clipboard() {
                 if !text.is_empty() {
-                    let bytes = wtd_ui::clipboard::prepare_paste(&text, false);
                     if let Some(bridge) = bridge {
                         if connected {
                             let focused = active_tab.layout_tree.focus();
+                            let bytes = paste_bytes_for_pane(active_tab, &focused, &text);
                             let _ = prepare_pane_for_live_input(
                                 mouse_handler,
                                 active_tab,
@@ -2232,12 +2241,13 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     MouseOutput::PasteClipboard(pane_id) => {
                         if let Ok(text) = wtd_ui::clipboard::read_from_clipboard() {
                             if !text.is_empty() {
-                                let bytes = wtd_ui::clipboard::prepare_paste(&text, false);
                                 if let Some(ref bridge) = bridge {
                                     if connected {
                                         if let Some(active_tab) =
                                             active_tab_ref(&tabs, active_tab_index)
                                         {
+                                            let bytes =
+                                                paste_bytes_for_pane(active_tab, &pane_id, &text);
                                             let reset_live_view = prepare_pane_for_live_input(
                                                 &mut mouse_handler,
                                                 active_tab,
@@ -2993,6 +3003,39 @@ mod tests {
         assert!(should_coalesce_primary_screen_output(
             b"\x1B[2J\x1B[H\x1B[12;3Hhello"
         ));
+    }
+
+    #[test]
+    fn paste_bytes_for_pane_wraps_when_bracketed_paste_enabled() {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let mut screen = ScreenBuffer::new(80, 24, 0);
+        screen.advance(b"\x1b[?2004h");
+
+        let tab = SnapshotTab {
+            layout_tree,
+            pane_sessions: HashMap::new(),
+            screens: HashMap::from([(pane_id.clone(), screen)]),
+        };
+
+        let bytes = paste_bytes_for_pane(&tab, &pane_id, "hello");
+        assert_eq!(bytes, b"\x1b[200~hello\x1b[201~");
+    }
+
+    #[test]
+    fn paste_bytes_for_pane_is_plain_when_bracketed_paste_disabled() {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let screen = ScreenBuffer::new(80, 24, 0);
+
+        let tab = SnapshotTab {
+            layout_tree,
+            pane_sessions: HashMap::new(),
+            screens: HashMap::from([(pane_id.clone(), screen)]),
+        };
+
+        let bytes = paste_bytes_for_pane(&tab, &pane_id, "hello");
+        assert_eq!(bytes, b"hello");
     }
 
     #[test]
