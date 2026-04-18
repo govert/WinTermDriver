@@ -585,6 +585,71 @@ mod tests {
     }
 
     #[test]
+    fn multiline_prompt_acceptance_matches_agent_profiles() {
+        let cases = [
+            (
+                PaneDriverProfile::Pi,
+                "pi",
+                b"\x1b[200~alpha\x1b[201~\x1b[13;2u\x1b[200~beta\x1b[201~".as_slice(),
+                b"\r".as_slice(),
+                0_u64,
+            ),
+            (
+                PaneDriverProfile::ClaudeCode,
+                "claude-code",
+                b"\x1b[200~alpha\x1b[201~\x1b[13;2u\x1b[200~beta\x1b[201~".as_slice(),
+                b"\r".as_slice(),
+                0_u64,
+            ),
+            (
+                PaneDriverProfile::GeminiCli,
+                "gemini-cli",
+                b"\x1b[200~alpha\x1b[201~\x1b[13;2u\x1b[200~beta\x1b[201~".as_slice(),
+                b"\r".as_slice(),
+                0_u64,
+            ),
+            (
+                PaneDriverProfile::CopilotCli,
+                "copilot-cli",
+                b"\x1b[200~alpha\x1b[201~\x1b[13;2u\x1b[200~beta\x1b[201~".as_slice(),
+                b"\r".as_slice(),
+                0_u64,
+            ),
+            (
+                PaneDriverProfile::Codex,
+                "codex",
+                b"\x01alpha\nbeta".as_slice(),
+                b"\r".as_slice(),
+                200_u64,
+            ),
+        ];
+
+        for (profile, expected_name, expected_body, expected_submit, expected_delay) in cases {
+            let driver = resolve_pane_driver(
+                Some(&SessionLaunchDefinition {
+                    driver: Some(PaneDriverDefinition {
+                        profile: Some(profile),
+                        submit_key: None,
+                        soft_break_key: None,
+                        disable_soft_break: false,
+                    }),
+                    ..Default::default()
+                }),
+                None,
+            );
+
+            let plan = build_prompt_input_plan("alpha\nbeta", &driver, true).unwrap();
+            assert_eq!(driver.profile, expected_name);
+            assert_eq!(plan.body, expected_body, "profile={expected_name}");
+            assert_eq!(plan.submit, expected_submit, "profile={expected_name}");
+            assert_eq!(
+                plan.submit_delay_ms, expected_delay,
+                "profile={expected_name}"
+            );
+        }
+    }
+
+    #[test]
     fn infer_driver_profile_prefers_startup_command() {
         assert_eq!(
             infer_pane_driver_profile(
