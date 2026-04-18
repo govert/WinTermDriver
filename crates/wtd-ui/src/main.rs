@@ -3048,6 +3048,13 @@ mod tests {
     }
 
     #[test]
+    fn text_input_bytes_preserves_composed_unicode_text_as_utf8() {
+        for text in ["é", "ü", "ñ"] {
+            assert_eq!(text_input_bytes(text), text.as_bytes());
+        }
+    }
+
+    #[test]
     fn plain_shell_output_is_not_coalesced() {
         assert!(!should_coalesce_primary_screen_output(
             b"PS C:\\Users\\me> dir\r\n"
