@@ -40,8 +40,13 @@ fn probe_harness_round_trips_exact_input_bytes() {
     harness.send_input(b"A\r");
 
     assert!(
-        harness.wait_for_text("input hex=41 0D", Duration::from_secs(5)),
-        "probe should log exact input bytes; screen was:\n{}",
+        harness.wait_for_text("input hex=41 text=A", Duration::from_secs(5)),
+        "probe should log the first byte; screen was:\n{}",
+        harness.capture_text()
+    );
+    assert!(
+        harness.wait_for_text("input hex=0D text=\\r", Duration::from_secs(5)),
+        "probe should log the carriage return; screen was:\n{}",
         harness.capture_text()
     );
 }

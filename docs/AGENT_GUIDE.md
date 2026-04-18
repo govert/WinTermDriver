@@ -199,6 +199,8 @@ For agent-aware panes, WTD also exports a capability-oriented contract:
 - `WTD_AGENT_HYPERLINKS` — hyperlink capability identifier, currently `osc8`
 - `WTD_AGENT_IMAGES` — inline image capability identifier, currently `kitty-placeholder`
 
+For full probe-driven compatibility diagnostics, see `docs/AGENT_HOST_COMPATIBILITY.md` and `tools/run-agent-host-diagnostics.ps1`.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |
