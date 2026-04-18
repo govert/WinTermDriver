@@ -502,6 +502,54 @@ impl LayoutTree {
         self.rebuild_from_plan(Self::build_grid_plan(&panes));
     }
 
+    /// Rebuild the layout with the focused pane as the main pane on the left.
+    pub fn retile_main_left(&mut self) {
+        let panes = self.panes_with_focus_first();
+        self.rebuild_from_plan(Self::build_main_plan(
+            &panes,
+            Orientation::Horizontal,
+            0.5,
+            true,
+            Orientation::Vertical,
+        ));
+    }
+
+    /// Rebuild the layout with the focused pane as the main pane on the right.
+    pub fn retile_main_right(&mut self) {
+        let panes = self.panes_with_focus_first();
+        self.rebuild_from_plan(Self::build_main_plan(
+            &panes,
+            Orientation::Horizontal,
+            0.5,
+            false,
+            Orientation::Vertical,
+        ));
+    }
+
+    /// Rebuild the layout with the focused pane as the main pane on the top.
+    pub fn retile_main_top(&mut self) {
+        let panes = self.panes_with_focus_first();
+        self.rebuild_from_plan(Self::build_main_plan(
+            &panes,
+            Orientation::Vertical,
+            0.5,
+            true,
+            Orientation::Horizontal,
+        ));
+    }
+
+    /// Rebuild the layout with the focused pane as the main pane on the bottom.
+    pub fn retile_main_bottom(&mut self) {
+        let panes = self.panes_with_focus_first();
+        self.rebuild_from_plan(Self::build_main_plan(
+            &panes,
+            Orientation::Vertical,
+            0.5,
+            false,
+            Orientation::Horizontal,
+        ));
+    }
+
     // ── Resize ────────────────────────────────────────────────────────────────
 
     /// Resize the target pane by `cells` character cells in the given direction
@@ -810,6 +858,38 @@ impl LayoutTree {
         }
     }
 
+    fn build_main_plan(
+        panes: &[PaneId],
+        primary_orientation: Orientation,
+        primary_ratio: f64,
+        main_first: bool,
+        stack_orientation: Orientation,
+    ) -> LayoutPlan {
+        match panes.len() {
+            0 => unreachable!("retile requires at least one pane"),
+            1 => LayoutPlan::Pane(panes[0].clone()),
+            _ => {
+                let main = LayoutPlan::Pane(panes[0].clone());
+                let stack = Self::build_even_plan(&panes[1..], stack_orientation);
+                if main_first {
+                    LayoutPlan::Split {
+                        orientation: primary_orientation,
+                        ratio: primary_ratio,
+                        first: Box::new(main),
+                        second: Box::new(stack),
+                    }
+                } else {
+                    LayoutPlan::Split {
+                        orientation: primary_orientation,
+                        ratio: 1.0 - primary_ratio,
+                        first: Box::new(stack),
+                        second: Box::new(main),
+                    }
+                }
+            }
+        }
+    }
+
     fn build_plan_from_nodes(nodes: &[LayoutPlan], orientation: Orientation) -> LayoutPlan {
         match nodes.len() {
             0 => unreachable!("retile requires at least one node"),
@@ -827,6 +907,15 @@ impl LayoutTree {
                 }
             }
         }
+    }
+
+    fn panes_with_focus_first(&self) -> Vec<PaneId> {
+        let mut panes = self.panes();
+        if let Some(pos) = panes.iter().position(|p| *p == self.focus) {
+            let focus = panes.remove(pos);
+            panes.insert(0, focus);
+        }
+        panes
     }
 
     fn alloc_pane_id(&mut self) -> PaneId {
@@ -1366,6 +1455,66 @@ mod tests {
         assert_eq!(rects[&p2], Rect::new(0, 12, 40, 12));
         assert_eq!(rects[&p4], Rect::new(40, 12, 40, 12));
         assert_eq!(tree.focus(), p4);
+    }
+
+    #[test]
+    fn retile_main_left_places_focused_pane_on_left() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p4.clone()).unwrap();
+
+        tree.retile_main_left();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p4], Rect::new(0, 0, 40, 24));
+        assert_eq!(rects[&p1], Rect::new(40, 0, 40, 8));
+        assert_eq!(rects[&p3], Rect::new(40, 8, 40, 8));
+        assert_eq!(rects[&p2], Rect::new(40, 16, 40, 8));
+        assert_eq!(tree.focus(), p4);
+    }
+
+    #[test]
+    fn retile_main_top_places_focused_pane_on_top() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p3.clone()).unwrap();
+
+        tree.retile_main_top();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p3], Rect::new(0, 0, 80, 12));
+        assert_eq!(rects[&p1], Rect::new(0, 12, 27, 12));
+        assert_eq!(rects[&p2], Rect::new(27, 12, 27, 12));
+        assert_eq!(rects[&p4], Rect::new(54, 12, 26, 12));
+        assert_eq!(tree.focus(), p3);
+    }
+
+    #[test]
+    fn retile_main_right_places_focused_pane_on_right() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p2.clone()).unwrap();
+
+        tree.retile_main_right();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p2], Rect::new(40, 0, 40, 24));
+        assert_eq!(rects[&p1], Rect::new(0, 0, 40, 8));
+        assert_eq!(rects[&p3], Rect::new(0, 8, 40, 8));
+        assert_eq!(rects[&p4], Rect::new(0, 16, 40, 8));
+        assert_eq!(tree.focus(), p2);
+    }
+
+    #[test]
+    fn retile_main_bottom_places_focused_pane_on_bottom() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p1.clone()).unwrap();
+
+        tree.retile_main_bottom();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p1], Rect::new(0, 12, 80, 12));
+        assert_eq!(rects[&p3], Rect::new(0, 0, 27, 12));
+        assert_eq!(rects[&p2], Rect::new(27, 0, 27, 12));
+        assert_eq!(rects[&p4], Rect::new(54, 0, 26, 12));
+        assert_eq!(tree.focus(), p1);
     }
 
     // -- Focus traversal tests ---------------------------------------------

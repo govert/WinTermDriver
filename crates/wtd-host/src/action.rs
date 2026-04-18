@@ -475,6 +475,30 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Retile all panes into a near-square grid",
     });
     r.register(ActionDef {
+        name: "retile-main-left",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile panes with the focused pane as the main left pane",
+    });
+    r.register(ActionDef {
+        name: "retile-main-right",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile panes with the focused pane as the main right pane",
+    });
+    r.register(ActionDef {
+        name: "retile-main-top",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile panes with the focused pane as the main top pane",
+    });
+    r.register(ActionDef {
+        name: "retile-main-bottom",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile panes with the focused pane as the main bottom pane",
+    });
+    r.register(ActionDef {
         name: "rename-pane",
         target_type: TargetType::Pane,
         args: RENAME_PANE_ARGS,
@@ -815,6 +839,26 @@ impl ActionDispatcher {
                 tab.layout_mut().retile_grid();
                 Ok(ActionResult::Ok)
             }
+            "retile-main-left" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_main_left();
+                Ok(ActionResult::Ok)
+            }
+            "retile-main-right" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_main_right();
+                Ok(ActionResult::Ok)
+            }
+            "retile-main-top" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_main_top();
+                Ok(ActionResult::Ok)
+            }
+            "retile-main-bottom" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_main_bottom();
+                Ok(ActionResult::Ok)
+            }
 
             // ── Resize ───────────────────────────────────────────────────
             "resize-pane-right" => {
@@ -1018,8 +1062,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, retile actions, and change-profile totals 51 actions.
-        assert_eq!(r.len(), 51);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, and change-profile totals 55 actions.
+        assert_eq!(r.len(), 55);
     }
 
     #[test]
@@ -1648,6 +1692,182 @@ mod tests {
         assert_eq!(rects[&p3], Rect::new(0, 20, 60, 20));
         assert_eq!(rects[&p4], Rect::new(60, 20, 60, 20));
         assert_eq!(layout.focus(), p4);
+    }
+
+    #[test]
+    fn dispatch_retile_main_left_places_focus_pane_on_left() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(left.clone()))
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        let p4 = panes[3].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p4.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-main-left", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p4], Rect::new(0, 0, 60, 40));
+        assert_eq!(rects[&p1], Rect::new(60, 0, 60, 13));
+        assert_eq!(rects[&p2], Rect::new(60, 13, 60, 14));
+        assert_eq!(rects[&p3], Rect::new(60, 27, 60, 13));
+        assert_eq!(layout.focus(), p4);
+    }
+
+    #[test]
+    fn dispatch_retile_main_top_places_focus_pane_on_top() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(left.clone()))
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        let p4 = panes[3].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p3.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-main-top", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p3], Rect::new(0, 0, 120, 20));
+        assert_eq!(rects[&p1], Rect::new(0, 20, 40, 20));
+        assert_eq!(rects[&p2], Rect::new(40, 20, 40, 20));
+        assert_eq!(rects[&p4], Rect::new(80, 20, 40, 20));
+        assert_eq!(layout.focus(), p3);
+    }
+
+    #[test]
+    fn dispatch_retile_main_right_places_focus_pane_on_right() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(left.clone()))
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        let p4 = panes[3].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p2.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-main-right", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p2], Rect::new(60, 0, 60, 40));
+        assert_eq!(rects[&p1], Rect::new(0, 0, 60, 13));
+        assert_eq!(rects[&p3], Rect::new(0, 13, 60, 14));
+        assert_eq!(rects[&p4], Rect::new(0, 27, 60, 13));
+        assert_eq!(layout.focus(), p2);
+    }
+
+    #[test]
+    fn dispatch_retile_main_bottom_places_focus_pane_on_bottom() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(left.clone()))
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        let p4 = panes[3].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p1.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-main-bottom", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p1], Rect::new(0, 20, 120, 20));
+        assert_eq!(rects[&p2], Rect::new(0, 0, 40, 20));
+        assert_eq!(rects[&p3], Rect::new(40, 0, 40, 20));
+        assert_eq!(rects[&p4], Rect::new(80, 0, 40, 20));
+        assert_eq!(layout.focus(), p1);
     }
 
     #[test]
