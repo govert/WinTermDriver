@@ -160,6 +160,8 @@ impl KeySpec {
     }
 }
 
+use wtd_pty::screen::KeyboardProtocolMode;
+
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum KeySpecError {
     #[error("empty key spec")]
@@ -173,19 +175,33 @@ pub enum KeySpecError {
 }
 
 pub fn encode_key_spec(spec: &str) -> Result<Vec<u8>, KeySpecError> {
+    encode_key_spec_with_protocol(spec, KeyboardProtocolMode::CsiU)
+}
+
+pub fn encode_key_spec_with_protocol(
+    spec: &str,
+    protocol: KeyboardProtocolMode,
+) -> Result<Vec<u8>, KeySpecError> {
     let spec = KeySpec::parse(spec)?;
-    Ok(key_spec_to_bytes(&spec))
+    Ok(key_spec_to_bytes(&spec, protocol))
 }
 
 pub fn encode_key_specs(specs: &[String]) -> Result<Vec<u8>, KeySpecError> {
+    encode_key_specs_with_protocol(specs, KeyboardProtocolMode::CsiU)
+}
+
+pub fn encode_key_specs_with_protocol(
+    specs: &[String],
+    protocol: KeyboardProtocolMode,
+) -> Result<Vec<u8>, KeySpecError> {
     let mut bytes = Vec::new();
     for spec in specs {
-        bytes.extend_from_slice(&encode_key_spec(spec)?);
+        bytes.extend_from_slice(&encode_key_spec_with_protocol(spec, protocol)?);
     }
     Ok(bytes)
 }
 
-fn key_spec_to_bytes(spec: &KeySpec) -> Vec<u8> {
+fn key_spec_to_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> {
     let mods = spec.modifiers;
 
     if mods.ctrl() {
@@ -198,7 +214,7 @@ fn key_spec_to_bytes(spec: &KeySpec) -> Vec<u8> {
         }
     }
 
-    if let Some(bytes) = special_key_bytes(&spec.key, mods) {
+    if let Some(bytes) = special_key_bytes(&spec.key, mods, protocol) {
         if mods.alt() && !matches!(spec.key, KeyName::Escape | KeyName::Enter) {
             let mut result = vec![0x1B];
             result.extend_from_slice(&bytes);
@@ -246,7 +262,11 @@ fn literal_key_bytes(key: &KeyName, mods: Modifiers) -> Vec<u8> {
     ch.encode_utf8(&mut buf).as_bytes().to_vec()
 }
 
-fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
+fn special_key_bytes(
+    key: &KeyName,
+    mods: Modifiers,
+    protocol: KeyboardProtocolMode,
+) -> Option<Vec<u8>> {
     let mod_param = 1
         + if mods.shift() { 1 } else { 0 }
         + if mods.alt() { 2 } else { 0 }
@@ -256,7 +276,12 @@ fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
     match key {
         KeyName::Enter => {
             if has_mods {
-                Some(csi_u(13, mod_param))
+                match protocol {
+                    KeyboardProtocolMode::Legacy => Some(vec![0x0D]),
+                    KeyboardProtocolMode::CsiU | KeyboardProtocolMode::Kitty => {
+                        Some(csi_u(13, mod_param))
+                    }
+                }
             } else {
                 Some(vec![0x0D])
             }
@@ -374,6 +399,87 @@ mod tests {
     #[test]
     fn shifted_arrow_uses_csi_modifier_encoding() {
         assert_eq!(encode_key_spec("Shift+Up").unwrap(), b"\x1B[1;2A");
+    }
+
+    #[test]
+    fn protocol_matrix_covers_modified_keys() {
+        let cases = [
+            (
+                KeyboardProtocolMode::Legacy,
+                "Shift+Enter",
+                b"\r".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::CsiU,
+                "Shift+Enter",
+                b"\x1B[13;2u".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Kitty,
+                "Shift+Enter",
+                b"\x1B[13;2u".as_slice(),
+            ),
+            (KeyboardProtocolMode::Legacy, "Alt+Enter", b"\r".as_slice()),
+            (
+                KeyboardProtocolMode::CsiU,
+                "Alt+Enter",
+                b"\x1B[13;3u".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Kitty,
+                "Alt+Enter",
+                b"\x1B[13;3u".as_slice(),
+            ),
+            (KeyboardProtocolMode::Legacy, "Ctrl+Enter", b"\r".as_slice()),
+            (
+                KeyboardProtocolMode::CsiU,
+                "Ctrl+Enter",
+                b"\x1B[13;5u".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Kitty,
+                "Ctrl+Enter",
+                b"\x1B[13;5u".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Legacy,
+                "Shift+Up",
+                b"\x1B[1;2A".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::CsiU,
+                "Shift+Up",
+                b"\x1B[1;2A".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Kitty,
+                "Shift+Up",
+                b"\x1B[1;2A".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Legacy,
+                "Ctrl+F5",
+                b"\x1B[15;5~".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::CsiU,
+                "Ctrl+F5",
+                b"\x1B[15;5~".as_slice(),
+            ),
+            (
+                KeyboardProtocolMode::Kitty,
+                "Ctrl+F5",
+                b"\x1B[15;5~".as_slice(),
+            ),
+        ];
+
+        for (protocol, spec, expected) in cases {
+            assert_eq!(
+                encode_key_spec_with_protocol(spec, protocol).unwrap(),
+                expected,
+                "protocol={protocol:?} spec={spec}"
+            );
+        }
     }
 
     #[test]
