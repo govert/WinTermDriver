@@ -54,6 +54,23 @@ enum PromptPasteMode {
     Plain,
 }
 
+impl EffectivePaneDriver {
+    pub fn multiline_mode_name(&self) -> &'static str {
+        match self.multiline_mode {
+            PromptMultilineMode::Reject => "reject",
+            PromptMultilineMode::SoftBreakKey => "soft-break-key",
+            PromptMultilineMode::LiteralPaste => "literal-paste",
+        }
+    }
+
+    pub fn paste_mode_name(&self) -> &'static str {
+        match self.paste_mode {
+            PromptPasteMode::BracketedIfEnabled => "bracketed-if-enabled",
+            PromptPasteMode::Plain => "plain",
+        }
+    }
+}
+
 pub fn encode_send_input(text: &str, newline: bool, bracketed_paste_active: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + 16);
 
@@ -491,6 +508,26 @@ mod tests {
         );
         assert_eq!(plan.submit, b"\r");
         assert_eq!(plan.submit_delay_ms, 0);
+    }
+
+    #[test]
+    fn driver_capability_names_are_exposed_for_agent_identity() {
+        let driver = resolve_pane_driver(
+            Some(&SessionLaunchDefinition {
+                driver: Some(PaneDriverDefinition {
+                    profile: Some(PaneDriverProfile::Pi),
+                    submit_key: None,
+                    soft_break_key: None,
+                    disable_soft_break: false,
+                }),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        assert_eq!(driver.multiline_mode_name(), "soft-break-key");
+        assert_eq!(driver.paste_mode_name(), "bracketed-if-enabled");
+        assert_eq!(driver.soft_break_key.as_deref(), Some("Shift+Enter"));
     }
 
     #[test]

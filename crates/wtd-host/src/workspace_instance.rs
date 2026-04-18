@@ -766,7 +766,13 @@ impl WorkspaceInstance {
         let session_id = SessionId(self.next_session_id);
         self.next_session_id += 1;
         let mut session_env = resolved.env;
-        apply_runtime_terminal_env(&mut session_env, &self.name, &pane_name, &session_id);
+        apply_runtime_terminal_env(
+            &mut session_env,
+            &self.name,
+            &pane_name,
+            &session_id,
+            &driver,
+        );
 
         let config = SessionConfig {
             executable: resolved.executable,
@@ -1066,7 +1072,13 @@ impl WorkspaceInstance {
                 let session_id = SessionId(self.next_session_id);
                 self.next_session_id += 1;
                 let mut session_env = resolved.env;
-                apply_runtime_terminal_env(&mut session_env, &self.name, pane_name, &session_id);
+                apply_runtime_terminal_env(
+                    &mut session_env,
+                    &self.name,
+                    pane_name,
+                    &session_id,
+                    &driver,
+                );
 
                 let config = SessionConfig {
                     executable: resolved.executable,
@@ -1267,6 +1279,7 @@ fn apply_runtime_terminal_env(
     workspace_name: &str,
     pane_name: &str,
     session_id: &SessionId,
+    driver: &crate::prompt_driver::EffectivePaneDriver,
 ) {
     let workspace_slug = terminal_identity_slug(workspace_name);
     let pane_slug = terminal_identity_slug(pane_name);
@@ -1291,6 +1304,29 @@ fn apply_runtime_terminal_env(
     env.insert("WTD_WORKSPACE".to_string(), workspace_name.to_string());
     env.insert("WTD_PANE".to_string(), pane_name.to_string());
     env.insert("WTD_SESSION_ID".to_string(), session_id.to_string());
+
+    env.insert("WTD_AGENT_HOST".to_string(), "1".to_string());
+    env.insert("WTD_AGENT_DRIVER".to_string(), driver.profile.clone());
+    env.insert(
+        "WTD_AGENT_MULTILINE_MODE".to_string(),
+        driver.multiline_mode_name().to_string(),
+    );
+    env.insert(
+        "WTD_AGENT_PASTE_MODE".to_string(),
+        driver.paste_mode_name().to_string(),
+    );
+    env.insert(
+        "WTD_AGENT_SUBMIT_KEY".to_string(),
+        driver.submit_key.clone(),
+    );
+    if let Some(soft_break_key) = &driver.soft_break_key {
+        env.insert(
+            "WTD_AGENT_SOFT_BREAK_KEY".to_string(),
+            soft_break_key.clone(),
+        );
+    } else {
+        env.remove("WTD_AGENT_SOFT_BREAK_KEY");
+    }
 }
 
 fn terminal_identity_slug(value: &str) -> String {
@@ -1841,11 +1877,18 @@ mod tests {
         env.insert("TERM_PROGRAM".to_string(), "stale".to_string());
         env.insert("WT_SESSION".to_string(), "stale".to_string());
 
+        let driver = resolve_pane_driver_with_inference(
+            None,
+            None,
+            Some(wtd_core::workspace::PaneDriverProfile::Pi),
+        );
+
         apply_runtime_terminal_env(
             &mut env,
             "DnaCalc Workspace",
             "Foundation Pane",
             &SessionId(42),
+            &driver,
         );
 
         assert_eq!(
@@ -1871,6 +1914,24 @@ mod tests {
             Some("Foundation Pane")
         );
         assert_eq!(env.get("WTD_SESSION_ID").map(String::as_str), Some("42"));
+        assert_eq!(env.get("WTD_AGENT_HOST").map(String::as_str), Some("1"));
+        assert_eq!(env.get("WTD_AGENT_DRIVER").map(String::as_str), Some("pi"));
+        assert_eq!(
+            env.get("WTD_AGENT_MULTILINE_MODE").map(String::as_str),
+            Some("soft-break-key")
+        );
+        assert_eq!(
+            env.get("WTD_AGENT_PASTE_MODE").map(String::as_str),
+            Some("bracketed-if-enabled")
+        );
+        assert_eq!(
+            env.get("WTD_AGENT_SUBMIT_KEY").map(String::as_str),
+            Some("Enter")
+        );
+        assert_eq!(
+            env.get("WTD_AGENT_SOFT_BREAK_KEY").map(String::as_str),
+            Some("Shift+Enter")
+        );
     }
 
     #[cfg(windows)]
@@ -1919,6 +1980,14 @@ mod tests {
         assert_eq!(
             session_env.get("WTD_SESSION_ID").map(String::as_str),
             Some("1")
+        );
+        assert_eq!(
+            session_env.get("WTD_AGENT_HOST").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            session_env.get("WTD_AGENT_DRIVER").map(String::as_str),
+            Some("plain")
         );
     }
 

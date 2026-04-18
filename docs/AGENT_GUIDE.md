@@ -189,6 +189,14 @@ For launch profiles, `wtd-ui` now keeps the path simple: creating a new tab or s
 
 WTD-launched sessions also advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
 
+For agent-aware panes, WTD also exports a capability-oriented contract:
+- `WTD_AGENT_HOST=1` — session is hosted by WTD in agent-aware mode
+- `WTD_AGENT_DRIVER` — resolved built-in driver profile such as `plain`, `pi`, `codex`, `claude-code`, `gemini-cli`, or `copilot-cli`
+- `WTD_AGENT_MULTILINE_MODE` — prompt multiline strategy (`reject`, `soft-break-key`, or `literal-paste`)
+- `WTD_AGENT_PASTE_MODE` — prompt paste strategy (`plain` or `bracketed-if-enabled`)
+- `WTD_AGENT_SUBMIT_KEY` — key used to submit the composed prompt
+- `WTD_AGENT_SOFT_BREAK_KEY` — optional soft-break key when multiline entry is supported without submission
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |
