@@ -173,7 +173,7 @@ wtd prompt build-and-test/tests "Summarize the failing tests"
 wtd keys build-and-test/server Ctrl+C
 ```
 
-Use `wtd prompt` for interactive agent CLIs such as Codex, Claude Code, Gemini CLI, and Copilot CLI. It expands multiline prompts using the pane's configured `softBreakKey` and then submits with the configured `submitKey`. Keep `wtd send` for low-level shell input and literal text injection.
+Use `wtd prompt` for interactive agent CLIs such as Codex, Claude Code, Gemini CLI, and Copilot CLI. It uses the pane's driver profile to prepare the composer, expand multiline input, and submit safely. Keep `wtd send` for low-level shell input and literal text injection.
 
 The shortest agent-safe workflow to remember is:
 

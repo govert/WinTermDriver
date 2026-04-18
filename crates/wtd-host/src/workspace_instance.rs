@@ -756,8 +756,12 @@ impl WorkspaceInstance {
             cwd: resolved.cwd,
             env: session_env,
             restart_policy: RestartPolicy::Never,
-            startup_command: None,
-            size: self.default_size,
+            startup_command: session_def.startup_command.clone(),
+            size: session_def
+                .terminal_size
+                .as_ref()
+                .map(pty_size_from_definition)
+                .unwrap_or(self.default_size),
             name: pane_name.clone(),
             max_scrollback: 10_000,
             driver: driver.clone(),
@@ -1904,6 +1908,61 @@ mod tests {
         assert_eq!(driver.profile, "codex");
         assert_eq!(driver.submit_key, "Enter");
         assert_eq!(driver.soft_break_key, None);
+
+        inst.close();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn split_spawn_preserves_inherited_startup_command() {
+        let marker = "WTD_SPLIT_STARTUP_MARKER_Q07";
+        let def = startup_command_workspace_def(&format!("echo {marker}"));
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(11), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
+
+        let source_pane = inst.find_pane_by_name("agent").expect("source pane");
+        let session_def = inst
+            .pane_original_def(&source_pane)
+            .cloned()
+            .flatten()
+            .expect("source session definition");
+        let child_pane = inst.alloc_workspace_pane_id();
+        inst.spawn_session_for_pane_with_definition(
+            &child_pane,
+            "child".to_string(),
+            session_def.clone(),
+            &gs,
+            &env,
+            &find_exe_windows,
+        );
+
+        let child_session_id = match inst.pane_state(&child_pane) {
+            Some(PaneState::Attached { session_id }) => session_id.clone(),
+            other => panic!("expected attached child pane, got {other:?}"),
+        };
+        let child_session = inst
+            .session(&child_session_id)
+            .expect("child session should exist");
+        assert_eq!(
+            child_session.config().startup_command.as_deref(),
+            session_def.startup_command.as_deref()
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let child_session = inst
+            .session_mut(&child_session_id)
+            .expect("child session should exist");
+        child_session.process_pending_output();
+        let visible = child_session.screen().visible_text();
+        assert!(
+            visible.contains(marker),
+            "split-spawned session should execute inherited startup command, got:\n{}",
+            visible
+        );
 
         inst.close();
     }

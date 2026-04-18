@@ -268,7 +268,7 @@ tabs:
 
 ### Prompt driver profiles
 
-`wtd prompt` expands prompt text using pane-local driver settings. This is the reliable path for driving agent CLIs that need different soft-break and submit keys.
+`wtd prompt` uses pane-local driver settings to prepare the composer, expand multiline input, and submit safely. This is the reliable path for driving agent CLIs with different input behaviors.
 
 For coding agents, the intended pattern is:
 
