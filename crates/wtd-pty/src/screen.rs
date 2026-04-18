@@ -192,6 +192,8 @@ pub struct Cell {
     pub attrs: CellAttrs,
     /// Hyperlink identifier associated with this cell (0 = none).
     pub hyperlink_id: u16,
+    /// Inline image identifier associated with this cell (0 = none).
+    pub image_id: u16,
 }
 
 // Cell is derived Copy — if the derive fails, the struct has a non-Copy field.
@@ -205,6 +207,7 @@ impl Cell {
             bg: Color::Default,
             attrs: CellAttrs::default(),
             hyperlink_id: 0,
+            image_id: 0,
         }
     }
 
@@ -243,6 +246,17 @@ pub enum KeyboardProtocolMode {
     CsiU,
     /// Kitty keyboard protocol.
     Kitty,
+}
+
+/// Stored inline image record parsed from a terminal graphics protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImage {
+    /// Protocol identifier, currently `kitty`.
+    pub protocol: String,
+    /// Parameter string before the payload separator.
+    pub params: String,
+    /// Raw payload body after the separator.
+    pub payload: String,
 }
 
 /// Progress indicator requested by the application via OSC 9;4.
@@ -650,6 +664,9 @@ pub struct ScreenBuffer {
     /// Active OSC 8 hyperlink identifier while printing text.
     active_hyperlink_id: Option<u16>,
 
+    /// Inline images referenced by visible cells (index + 1 = image_id).
+    inline_images: Vec<InlineImage>,
+
     /// Progress indicator state from OSC 9;4.
     progress: Option<TerminalProgress>,
 
@@ -698,6 +715,7 @@ impl ScreenBuffer {
             title: String::new(),
             hyperlinks: Vec::new(),
             active_hyperlink_id: None,
+            inline_images: Vec::new(),
             progress: None,
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
@@ -711,10 +729,11 @@ impl ScreenBuffer {
 
     /// Feed raw bytes from the PTY output into the screen buffer.
     pub fn advance(&mut self, bytes: &[u8]) {
+        let bytes = self.preprocess_inline_graphics(bytes);
         // vte::Perform requires a mutable reference to self, but Parser::advance
         // also takes &mut self.  We swap the parser out, advance, swap back.
         let mut parser = std::mem::replace(&mut self.parser, vte::Parser::new());
-        for &b in bytes {
+        for &b in &bytes {
             parser.advance(self, b);
         }
         self.parser = parser;
@@ -780,6 +799,16 @@ impl ScreenBuffer {
             self.hyperlinks
                 .get((cell.hyperlink_id - 1) as usize)
                 .map(String::as_str)
+        }
+    }
+
+    /// Inline image record at (row, col) in the visible screen, if present.
+    pub fn inline_image_at(&self, row: usize, col: usize) -> Option<&InlineImage> {
+        let cell = self.cell(row, col)?;
+        if cell.image_id == 0 {
+            None
+        } else {
+            self.inline_images.get((cell.image_id - 1) as usize)
         }
     }
 
@@ -1164,6 +1193,63 @@ impl ScreenBuffer {
         } else {
             self.cursor.col += 1;
         }
+    }
+
+    fn preprocess_inline_graphics(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + 3 < bytes.len()
+                && bytes[i] == 0x1B
+                && bytes[i + 1] == b'_'
+                && bytes[i + 2] == b'G'
+            {
+                let start = i + 3;
+                if let Some(relative_end) = bytes[start..]
+                    .windows(2)
+                    .position(|window| window == [0x1B, b'\\'])
+                {
+                    let body = &bytes[start..start + relative_end];
+                    self.handle_kitty_graphics(body);
+                    i = start + relative_end + 2;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        out
+    }
+
+    fn handle_kitty_graphics(&mut self, body: &[u8]) {
+        let Ok(body_str) = std::str::from_utf8(body) else {
+            return;
+        };
+        let mut parts = body_str.splitn(2, ';');
+        let params = parts.next().unwrap_or("");
+        let payload = parts.next().unwrap_or("");
+
+        let image = InlineImage {
+            protocol: "kitty".to_string(),
+            params: params.to_string(),
+            payload: payload.to_string(),
+        };
+        self.inline_images.push(image);
+        let image_id = self.inline_images.len() as u16;
+
+        let row = self.cursor.row.min(self.rows.saturating_sub(1));
+        let col = self.cursor.col.min(self.cols.saturating_sub(1));
+        let fg = self.pen_fg;
+        let bg = self.pen_bg;
+        let attrs = self.pen_attrs;
+        let cell = self.active_grid_mut().cell_mut(row, col);
+        cell.text = CompactText::new("▣");
+        cell.fg = fg;
+        cell.bg = bg;
+        cell.attrs = attrs;
+        cell.hyperlink_id = 0;
+        cell.image_id = image_id;
+        self.cursor.col = (col + 1).min(self.cols.saturating_sub(1));
     }
 
     fn flush_pending_print(&mut self, final_flush: bool) {
@@ -1789,6 +1875,7 @@ impl Perform for ScreenBuffer {
                 self.title.clear();
                 self.hyperlinks.clear();
                 self.active_hyperlink_id = None;
+                self.inline_images.clear();
                 self.progress = None;
                 self.mouse_mode = MouseMode::None;
                 self.sgr_mouse = false;
@@ -2133,6 +2220,28 @@ mod tests {
 
         feed(&mut b, "\x1bc");
         assert_eq!(b.hyperlink_at(0, 0), None);
+    }
+
+    #[test]
+    fn kitty_inline_image_sequence_creates_placeholder_cell() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b_Gi=1,a=t,f=100;payload\x1b\\");
+
+        let image = b.inline_image_at(0, 0).expect("inline image record");
+        assert_eq!(image.protocol, "kitty");
+        assert_eq!(image.params, "i=1,a=t,f=100");
+        assert_eq!(image.payload, "payload");
+        assert_eq!(b.cell(0, 0).unwrap().text.as_str(), "▣");
+    }
+
+    #[test]
+    fn kitty_inline_images_reset_on_ris() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b_Gi=1,a=t,f=100;payload\x1b\\");
+        assert!(b.inline_image_at(0, 0).is_some());
+
+        feed(&mut b, "\x1bc");
+        assert!(b.inline_image_at(0, 0).is_none());
     }
 
     #[test]

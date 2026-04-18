@@ -27,6 +27,9 @@ fn main() -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(&startup_bytes(&config))?;
     stdout.write_all(b"[wtd-probe] ready\r\n")?;
+    if config.request_image_probe {
+        stdout.write_all(image_probe_bytes())?;
+    }
     stdout.flush()?;
 
     let mut stdin = io::stdin().lock();
@@ -146,10 +149,14 @@ fn startup_bytes(config: &ProbeConfig) -> Vec<u8> {
     }
 
     if config.request_image_probe {
-        out.extend_from_slice(b"\x1b_Gi=1,a=q,t=d,f=100;wtd-probe\x1b\\");
+        out.extend_from_slice(image_probe_bytes());
     }
 
     out
+}
+
+fn image_probe_bytes() -> &'static [u8] {
+    b"\x1b_Gi=1,a=q,t=d,f=100;wtd-probe\x1b\\"
 }
 
 fn format_input_log(bytes: &[u8]) -> String {
