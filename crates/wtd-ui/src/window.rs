@@ -159,9 +159,14 @@ pub enum InputEvent {
 }
 
 static INPUT_EVENTS: OnceLock<Mutex<Vec<InputEvent>>> = OnceLock::new();
+static PENDING_HIGH_SURROGATE: OnceLock<Mutex<Option<u16>>> = OnceLock::new();
 
 fn input_queue() -> &'static Mutex<Vec<InputEvent>> {
     INPUT_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn pending_high_surrogate() -> &'static Mutex<Option<u16>> {
+    PENDING_HIGH_SURROGATE.get_or_init(|| Mutex::new(None))
 }
 
 /// Drain all pending keyboard/text input events from the queue.
@@ -200,13 +205,32 @@ fn push_key_event(wparam: WPARAM, _lparam: LPARAM) {
 }
 
 fn push_text_event(wparam: WPARAM) {
-    let codepoint = wparam.0 as u32;
-    if let Some(ch) = char::from_u32(codepoint) {
-        if !ch.is_control() {
-            input_queue()
-                .lock()
-                .unwrap()
-                .push(InputEvent::Text(ch.to_string()));
+    let code_unit = (wparam.0 & 0xFFFF) as u16;
+
+    if (0xD800..=0xDBFF).contains(&code_unit) {
+        *pending_high_surrogate().lock().unwrap() = Some(code_unit);
+        return;
+    }
+
+    let mut pending = pending_high_surrogate().lock().unwrap();
+    let text = if (0xDC00..=0xDFFF).contains(&code_unit) {
+        if let Some(high) = pending.take() {
+            let mut buf = [0u16; 2];
+            buf[0] = high;
+            buf[1] = code_unit;
+            String::from_utf16(&buf).ok()
+        } else {
+            None
+        }
+    } else {
+        pending.take();
+        char::from_u32(code_unit as u32).map(|ch| ch.to_string())
+    };
+    drop(pending);
+
+    if let Some(text) = text {
+        if !text.chars().all(char::is_control) {
+            input_queue().lock().unwrap().push(InputEvent::Text(text));
         }
     }
 }
@@ -598,6 +622,7 @@ mod tests {
 
     fn reset_input_queue() {
         input_queue().lock().unwrap().clear();
+        *pending_high_surrogate().lock().unwrap() = None;
     }
 
     #[test]
@@ -647,6 +672,30 @@ mod tests {
 
         push_text_event(WPARAM('\r' as usize));
         push_text_event(WPARAM('\t' as usize));
+
+        assert!(drain_input_events().is_empty());
+    }
+
+    #[test]
+    fn push_text_event_combines_surrogate_pairs() {
+        reset_input_queue();
+
+        push_text_event(WPARAM(0xD842));
+        push_text_event(WPARAM(0xDFB7));
+
+        let events = drain_input_events();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            InputEvent::Text(text) => assert_eq!(text, "𠮷"),
+            other => panic!("expected text event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_text_event_ignores_orphan_low_surrogate() {
+        reset_input_queue();
+
+        push_text_event(WPARAM(0xDFB7));
 
         assert!(drain_input_events().is_empty());
     }

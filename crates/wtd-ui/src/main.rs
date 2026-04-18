@@ -3016,6 +3016,13 @@ mod tests {
     }
 
     #[test]
+    fn text_input_bytes_preserves_cjk_text_as_utf8() {
+        for text in ["漢字", "かな", "한글"] {
+            assert_eq!(text_input_bytes(text), text.as_bytes());
+        }
+    }
+
+    #[test]
     fn plain_shell_output_is_not_coalesced() {
         assert!(!should_coalesce_primary_screen_output(
             b"PS C:\\Users\\me> dir\r\n"
