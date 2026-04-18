@@ -10,6 +10,7 @@ use wtd_core::ids::WorkspaceInstanceId;
 use wtd_core::load_workspace_definition;
 use wtd_core::GlobalSettings;
 use wtd_host::workspace_instance::{PaneState, WorkspaceInstance, WorkspaceState};
+use wtd_pty::screen::KeyboardProtocolMode;
 
 static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(5000);
 
@@ -57,6 +58,11 @@ impl ProbeHarness {
 
     pub fn session_env(&self) -> &HashMap<String, String> {
         &self.session().config().env
+    }
+
+    pub fn keyboard_protocol(&mut self) -> KeyboardProtocolMode {
+        self.drain_output();
+        self.session().screen().keyboard_protocol()
     }
 
     fn drain_output(&mut self) {
@@ -135,13 +141,21 @@ fn probe_executable() -> PathBuf {
 }
 
 fn probe_workspace_yaml(args: &[&str]) -> String {
-    let exe = probe_executable().display().to_string().replace('\\', "\\\\");
+    let exe = probe_executable()
+        .display()
+        .to_string()
+        .replace('\\', "\\\\");
     let args_yaml = if args.is_empty() {
         String::new()
     } else {
         let items = args
             .iter()
-            .map(|arg| format!("      - \"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\"")))
+            .map(|arg| {
+                format!(
+                    "      - \"{}\"",
+                    arg.replace('\\', "\\\\").replace('"', "\\\"")
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         format!("\n    args:\n{items}")

@@ -230,6 +230,18 @@ pub enum MouseMode {
     AnyEvent,
 }
 
+/// Keyboard input protocol negotiated by the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardProtocolMode {
+    /// Legacy xterm-compatible keyboard behavior.
+    #[default]
+    Legacy,
+    /// CSI-u enhanced keyboard reporting.
+    CsiU,
+    /// Kitty keyboard protocol.
+    Kitty,
+}
+
 /// Progress indicator requested by the application via OSC 9;4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalProgress {
@@ -641,6 +653,9 @@ pub struct ScreenBuffer {
     /// Bracketed paste mode (DECSET 2004).
     bracketed_paste: bool,
 
+    /// Negotiated keyboard input protocol.
+    keyboard_protocol: KeyboardProtocolMode,
+
     /// VT parser.
     parser: vte::Parser,
 
@@ -677,6 +692,7 @@ impl ScreenBuffer {
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
             bracketed_paste: false,
+            keyboard_protocol: KeyboardProtocolMode::Legacy,
             parser: vte::Parser::new(),
             _wide_pending: false,
             pending_print: String::new(),
@@ -730,6 +746,11 @@ impl ScreenBuffer {
     /// Whether bracketed paste mode (DECSET 2004) is active.
     pub fn bracketed_paste(&self) -> bool {
         self.bracketed_paste
+    }
+
+    /// Negotiated keyboard input protocol.
+    pub fn keyboard_protocol(&self) -> KeyboardProtocolMode {
+        self.keyboard_protocol
     }
 
     /// Cell at (row, col) in the visible screen (0-based).
@@ -1675,6 +1696,14 @@ impl Perform for ScreenBuffer {
                     _ => CursorShape::Block,
                 };
             }
+            // Keyboard protocol negotiation
+            ([b'>'], 'u') => {
+                self.keyboard_protocol = match p0(0, 0) {
+                    1 => KeyboardProtocolMode::CsiU,
+                    31 => KeyboardProtocolMode::Kitty,
+                    _ => KeyboardProtocolMode::Legacy,
+                };
+            }
             // DEC private modes
             ([b'?'], 'h') => {
                 for sub in params.iter() {
@@ -1737,6 +1766,7 @@ impl Perform for ScreenBuffer {
                 self.mouse_mode = MouseMode::None;
                 self.sgr_mouse = false;
                 self.bracketed_paste = false;
+                self.keyboard_protocol = KeyboardProtocolMode::Legacy;
             }
             _ => {}
         }
@@ -2286,8 +2316,14 @@ mod tests {
             CursorShape::from_config_name("underline"),
             Some(CursorShape::Underline)
         );
-        assert_eq!(CursorShape::from_config_name("line"), Some(CursorShape::Bar));
-        assert_eq!(CursorShape::from_config_name("beam"), Some(CursorShape::Bar));
+        assert_eq!(
+            CursorShape::from_config_name("line"),
+            Some(CursorShape::Bar)
+        );
+        assert_eq!(
+            CursorShape::from_config_name("beam"),
+            Some(CursorShape::Bar)
+        );
         assert_eq!(CursorShape::from_config_name("unknown"), None);
     }
 
@@ -2308,6 +2344,31 @@ mod tests {
         assert!(b.bracketed_paste());
         feed(&mut b, "\x1bc"); // RIS
         assert!(!b.bracketed_paste());
+    }
+
+    #[test]
+    fn keyboard_protocol_negotiates_csi_u_and_kitty_modes() {
+        let mut b = buf(80, 24);
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::Legacy);
+
+        feed(&mut b, "\x1b[>1u");
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::CsiU);
+
+        feed(&mut b, "\x1b[>31u");
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::Kitty);
+
+        feed(&mut b, "\x1b[>0u");
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::Legacy);
+    }
+
+    #[test]
+    fn keyboard_protocol_resets_on_ris() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b[>31u");
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::Kitty);
+
+        feed(&mut b, "\x1bc");
+        assert_eq!(b.keyboard_protocol(), KeyboardProtocolMode::Legacy);
     }
 
     #[test]
