@@ -9,7 +9,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::input::{current_modifiers, vk_to_char, vk_to_key_name, KeyEvent, Modifiers};
+use crate::input::{current_modifiers, vk_to_key_name, KeyEvent, Modifiers};
 
 // ── Paint / resize signals (atomics) ─────────────────────────────────────────
 
@@ -173,9 +173,8 @@ pub fn drain_input_events() -> Vec<InputEvent> {
 /// Build a `KeyEvent` from a Win32 WM_KEYDOWN / WM_SYSKEYDOWN message and
 /// push it to the input queue. Modifier-only keys (Shift, Ctrl, Alt) are
 /// ignored.
-fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
+fn push_key_event(wparam: WPARAM, _lparam: LPARAM) {
     let vk = (wparam.0 & 0xFFFF) as u16;
-    let scan_code = ((lparam.0 >> 16) & 0xFF) as u16;
 
     // Ignore modifier-only keys
     match vk {
@@ -188,7 +187,6 @@ fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
 
     if let Some(key) = vk_to_key_name(vk) {
         let modifiers = current_modifiers();
-        let character = vk_to_char(vk, scan_code);
 
         input_queue()
             .lock()
@@ -196,7 +194,7 @@ fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
             .push(InputEvent::Key(KeyEvent {
                 key,
                 modifiers,
-                character,
+                character: None,
             }));
     }
 }
@@ -651,5 +649,22 @@ mod tests {
         push_text_event(WPARAM('\t' as usize));
 
         assert!(drain_input_events().is_empty());
+    }
+
+    #[test]
+    fn push_key_event_does_not_synthesize_printable_character() {
+        reset_input_queue();
+
+        push_key_event(WPARAM(0x41), LPARAM(0)); // 'A'
+
+        let events = drain_input_events();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            InputEvent::Key(event) => {
+                assert!(matches!(event.key, crate::input::KeyName::Char('A')));
+                assert_eq!(event.character, None);
+            }
+            other => panic!("expected key event, got {other:?}"),
+        }
     }
 }
