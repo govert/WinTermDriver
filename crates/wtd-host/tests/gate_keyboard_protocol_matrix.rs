@@ -4,6 +4,18 @@ use wtd_host::terminal_input::{encode_key_spec, encode_key_spec_with_protocol};
 use wtd_pty::screen::KeyboardProtocolMode;
 
 #[test]
+fn kitty_protocol_emits_csi_u_for_modified_printable_keys() {
+    assert_eq!(
+        encode_key_spec_with_protocol("Alt+X", KeyboardProtocolMode::Kitty).unwrap(),
+        b"\x1b[120;3u"
+    );
+    assert_eq!(
+        encode_key_spec_with_protocol("Ctrl+C", KeyboardProtocolMode::Kitty).unwrap(),
+        b"\x1b[99;5u"
+    );
+}
+
+#[test]
 fn enhanced_protocols_preserve_modified_enter_sequences() {
     assert_eq!(encode_key_spec("Shift+Enter").unwrap(), b"\x1b[13;2u");
     assert_eq!(

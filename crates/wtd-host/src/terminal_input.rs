@@ -204,6 +204,16 @@ pub fn encode_key_specs_with_protocol(
 fn key_spec_to_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> {
     let mods = spec.modifiers;
 
+    if protocol == KeyboardProtocolMode::Kitty && (mods.ctrl() || mods.alt() || mods.shift()) {
+        if let Some(codepoint) = literal_key_codepoint(&spec.key, mods) {
+            let mod_param = 1
+                + if mods.shift() { 1 } else { 0 }
+                + if mods.alt() { 2 } else { 0 }
+                + if mods.ctrl() { 4 } else { 0 };
+            return csi_u(codepoint, mod_param);
+        }
+    }
+
     if mods.ctrl() {
         if let KeyName::Char(c) = spec.key {
             let code = c as u8 - b'A' + 1;
@@ -232,7 +242,7 @@ fn key_spec_to_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> 
     bytes
 }
 
-fn literal_key_bytes(key: &KeyName, mods: Modifiers) -> Vec<u8> {
+fn literal_key_codepoint(key: &KeyName, mods: Modifiers) -> Option<u32> {
     let ch = match key {
         KeyName::Char(c) => {
             if mods.shift() {
@@ -242,6 +252,7 @@ fn literal_key_bytes(key: &KeyName, mods: Modifiers) -> Vec<u8> {
             }
         }
         KeyName::Digit(d) => (b'0' + d) as char,
+        KeyName::Space => ' ',
         KeyName::Plus => '+',
         KeyName::Minus => '-',
         KeyName::Percent => '%',
@@ -255,8 +266,16 @@ fn literal_key_bytes(key: &KeyName, mods: Modifiers) -> Vec<u8> {
         KeyName::Semicolon => ';',
         KeyName::Apostrophe => '\'',
         KeyName::Backtick => '`',
-        _ => return Vec::new(),
+        _ => return None,
     };
+    Some(ch as u32)
+}
+
+fn literal_key_bytes(key: &KeyName, mods: Modifiers) -> Vec<u8> {
+    let Some(codepoint) = literal_key_codepoint(key, mods) else {
+        return Vec::new();
+    };
+    let ch = char::from_u32(codepoint).unwrap_or(' ');
 
     let mut buf = [0u8; 4];
     ch.encode_utf8(&mut buf).as_bytes().to_vec()
@@ -399,6 +418,22 @@ mod tests {
     #[test]
     fn shifted_arrow_uses_csi_modifier_encoding() {
         assert_eq!(encode_key_spec("Shift+Up").unwrap(), b"\x1B[1;2A");
+    }
+
+    #[test]
+    fn kitty_protocol_uses_csi_u_for_modified_printable_keys() {
+        assert_eq!(
+            encode_key_spec_with_protocol("Alt+X", KeyboardProtocolMode::Kitty).unwrap(),
+            b"\x1B[120;3u"
+        );
+        assert_eq!(
+            encode_key_spec_with_protocol("Ctrl+C", KeyboardProtocolMode::Kitty).unwrap(),
+            b"\x1B[99;5u"
+        );
+        assert_eq!(
+            encode_key_spec_with_protocol("Shift+A", KeyboardProtocolMode::Kitty).unwrap(),
+            b"\x1B[65;2u"
+        );
     }
 
     #[test]
