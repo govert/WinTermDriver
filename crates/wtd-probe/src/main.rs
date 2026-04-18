@@ -6,6 +6,7 @@ struct ProbeConfig {
     keyboard_mode: Option<KeyboardMode>,
     bracketed_paste: Option<bool>,
     alt_screen: bool,
+    title: Option<String>,
     hyperlink: Option<(String, String)>,
     request_image_probe: bool,
 }
@@ -52,23 +53,30 @@ impl ProbeConfig {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--keyboard-mode" => {
-                    let value = args.next().ok_or_else(|| invalid_input("missing keyboard mode"))?;
+                    let value = args
+                        .next()
+                        .ok_or_else(|| invalid_input("missing keyboard mode"))?;
                     config.keyboard_mode = Some(match value.as_str() {
                         "csi-u" => KeyboardMode::CsiU,
                         "kitty" => KeyboardMode::Kitty,
                         other => {
-                            return Err(invalid_input(&format!(
-                                "unknown keyboard mode '{other}'"
-                            )))
+                            return Err(invalid_input(&format!("unknown keyboard mode '{other}'")))
                         }
                     });
                 }
                 "--enable-bracketed-paste" => config.bracketed_paste = Some(true),
                 "--disable-bracketed-paste" => config.bracketed_paste = Some(false),
                 "--alt-screen" => config.alt_screen = true,
+                "--title" => {
+                    config.title = Some(args.next().ok_or_else(|| invalid_input("missing title"))?);
+                }
                 "--hyperlink" => {
-                    let url = args.next().ok_or_else(|| invalid_input("missing hyperlink URL"))?;
-                    let text = args.next().ok_or_else(|| invalid_input("missing hyperlink text"))?;
+                    let url = args
+                        .next()
+                        .ok_or_else(|| invalid_input("missing hyperlink URL"))?;
+                    let text = args
+                        .next()
+                        .ok_or_else(|| invalid_input("missing hyperlink text"))?;
                     config.hyperlink = Some((url, text));
                 }
                 "--request-image-probe" => config.request_image_probe = true,
@@ -103,6 +111,10 @@ fn startup_bytes(config: &ProbeConfig) -> Vec<u8> {
         out.extend_from_slice(b"\x1b[?1049h");
     }
 
+    if let Some(title) = &config.title {
+        out.extend_from_slice(format!("\x1b]2;{title}\x1b\\").as_bytes());
+    }
+
     if let Some((url, text)) = &config.hyperlink {
         out.extend_from_slice(format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\\r\n").as_bytes());
     }
@@ -134,15 +146,15 @@ fn invalid_input(message: &str) -> io::Error {
 
 fn print_help() {
     eprintln!(
-        "wtd-probe [--keyboard-mode csi-u|kitty] [--enable-bracketed-paste|--disable-bracketed-paste] [--alt-screen] [--hyperlink URL TEXT] [--request-image-probe]"
+        "wtd-probe [--keyboard-mode csi-u|kitty] [--enable-bracketed-paste|--disable-bracketed-paste] [--alt-screen] [--title TEXT] [--hyperlink URL TEXT] [--request-image-probe]"
     );
 }
 
 #[cfg(windows)]
 fn enable_raw_vt_input() -> io::Result<()> {
     use windows::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, CONSOLE_MODE,
-        ENABLE_VIRTUAL_TERMINAL_INPUT, STD_INPUT_HANDLE,
+        GetConsoleMode, GetStdHandle, SetConsoleMode, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_INPUT,
+        STD_INPUT_HANDLE,
     };
 
     unsafe {
@@ -177,14 +189,18 @@ mod tests {
             keyboard_mode: Some(KeyboardMode::Kitty),
             bracketed_paste: Some(true),
             alt_screen: true,
+            title: Some("pi host".to_string()),
             hyperlink: Some(("https://example.com".to_string(), "docs".to_string())),
             request_image_probe: true,
         };
 
         let bytes = startup_bytes(&config);
         assert!(bytes.starts_with(b"\x1b[>31u\x1b[?2004h\x1b[?1049h"));
+        assert!(String::from_utf8_lossy(&bytes).contains("\x1b]2;pi host\x1b\\"));
         assert!(String::from_utf8_lossy(&bytes).contains("https://example.com"));
-        assert!(bytes.windows(11).any(|window| window == b"docs\x1b]8;;\x1b\\"));
+        assert!(bytes
+            .windows(11)
+            .any(|window| window == b"docs\x1b]8;;\x1b\\"));
         assert!(bytes.ends_with(b"\x1b_Gi=1,a=q,t=d,f=100;wtd-probe\x1b\\"));
     }
 

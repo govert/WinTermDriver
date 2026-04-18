@@ -65,6 +65,21 @@ impl ProbeHarness {
         self.session().screen().keyboard_protocol()
     }
 
+    pub fn bracketed_paste(&mut self) -> bool {
+        self.drain_output();
+        self.session().screen().bracketed_paste()
+    }
+
+    pub fn on_alternate(&mut self) -> bool {
+        self.drain_output();
+        self.session().screen().on_alternate()
+    }
+
+    pub fn title(&mut self) -> String {
+        self.drain_output();
+        self.session().screen().title.clone()
+    }
+
     fn drain_output(&mut self) {
         for session in self.instance.sessions_mut().values_mut() {
             session.process_pending_output();
