@@ -1319,6 +1319,11 @@ fn apply_runtime_terminal_env(
         "WTD_AGENT_SUBMIT_KEY".to_string(),
         driver.submit_key.clone(),
     );
+    env.insert("WTD_AGENT_HYPERLINKS".to_string(), "osc8".to_string());
+    env.insert(
+        "WTD_AGENT_IMAGES".to_string(),
+        "kitty-placeholder".to_string(),
+    );
     if let Some(soft_break_key) = &driver.soft_break_key {
         env.insert(
             "WTD_AGENT_SOFT_BREAK_KEY".to_string(),
@@ -1929,6 +1934,14 @@ mod tests {
             Some("Enter")
         );
         assert_eq!(
+            env.get("WTD_AGENT_HYPERLINKS").map(String::as_str),
+            Some("osc8")
+        );
+        assert_eq!(
+            env.get("WTD_AGENT_IMAGES").map(String::as_str),
+            Some("kitty-placeholder")
+        );
+        assert_eq!(
             env.get("WTD_AGENT_SOFT_BREAK_KEY").map(String::as_str),
             Some("Shift+Enter")
         );
@@ -1988,6 +2001,14 @@ mod tests {
         assert_eq!(
             session_env.get("WTD_AGENT_DRIVER").map(String::as_str),
             Some("plain")
+        );
+        assert_eq!(
+            session_env.get("WTD_AGENT_HYPERLINKS").map(String::as_str),
+            Some("osc8")
+        );
+        assert_eq!(
+            session_env.get("WTD_AGENT_IMAGES").map(String::as_str),
+            Some("kitty-placeholder")
         );
     }
 

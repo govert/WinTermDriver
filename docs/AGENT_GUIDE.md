@@ -196,6 +196,8 @@ For agent-aware panes, WTD also exports a capability-oriented contract:
 - `WTD_AGENT_PASTE_MODE` — prompt paste strategy (`plain` or `bracketed-if-enabled`)
 - `WTD_AGENT_SUBMIT_KEY` — key used to submit the composed prompt
 - `WTD_AGENT_SOFT_BREAK_KEY` — optional soft-break key when multiline entry is supported without submission
+- `WTD_AGENT_HYPERLINKS` — hyperlink capability identifier, currently `osc8`
+- `WTD_AGENT_IMAGES` — inline image capability identifier, currently `kitty-placeholder`
 
 Built-in prompt driver profiles:
 
