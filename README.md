@@ -266,6 +266,8 @@ tabs:
 | `ssh` | Remote SSH session (set `host`, `user`, optionally `port`, `identityFile`) |
 | `custom` | Arbitrary executable (requires `executable` field) |
 
+In `wtd-ui`, creating a new tab or split opens a profile selector. This applies to the command palette actions and the default split shortcuts. Use the `change-profile` action from the command palette to relaunch the focused pane with a different launch profile.
+
 ### Prompt driver profiles
 
 `wtd prompt` uses pane-local driver settings to prepare the composer, expand multiline input, and submit safely. This is the reliable path for driving agent CLIs with different input behaviors.
@@ -359,6 +361,12 @@ Panes are addressed by semantic path: `workspace/tab/pane`. Shorter forms work w
 - `server` — pane name (requires exactly one running workspace)
 - `dev/server` — workspace/pane
 - `dev/backend/server` — workspace/tab/pane
+
+Useful profile-aware actions:
+
+- `wtd action dev/server split-right profile=cmd`
+- `wtd action dev/server split-down profile=wsl`
+- `wtd action dev/server change-profile profile=powershell`
 
 ## Architecture
 

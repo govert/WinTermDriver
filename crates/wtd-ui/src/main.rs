@@ -5,6 +5,8 @@
 //! demo mode with hardcoded content.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
@@ -288,7 +290,11 @@ fn rebuild_renderer_resources(
     *status_bar = rebuilt_status_bar;
 
     let palette_was_visible = command_palette.is_visible();
-    *command_palette = CommandPalette::new(renderer.dw_factory(), bindings)?;
+    *command_palette = CommandPalette::new(
+        renderer.dw_factory(),
+        bindings,
+        command_palette.profile_entries().to_vec(),
+    )?;
     if palette_was_visible {
         command_palette.show();
     }
@@ -512,6 +518,200 @@ fn send_workspace_action(bridge: &HostBridge, action: &str, args: serde_json::Va
     bridge.refresh_workspace();
 }
 
+fn wtd_data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("WTD_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
+        format!(r"{}\AppData\Roaming", home)
+    });
+    PathBuf::from(appdata).join("WinTermDriver")
+}
+
+fn settings_path() -> PathBuf {
+    wtd_data_dir().join("settings.yaml")
+}
+
+fn profile_kind(profile_type: &wtd_core::workspace::ProfileType) -> &'static str {
+    match profile_type {
+        wtd_core::workspace::ProfileType::Powershell => "PowerShell",
+        wtd_core::workspace::ProfileType::Cmd => "cmd",
+        wtd_core::workspace::ProfileType::Wsl => "WSL",
+        wtd_core::workspace::ProfileType::Ssh => "SSH",
+        wtd_core::workspace::ProfileType::Custom => "custom",
+    }
+}
+
+fn builtin_profile_entries() -> Vec<wtd_ui::command_palette::PaletteEntry> {
+    vec![
+        wtd_ui::command_palette::PaletteEntry {
+            name: "powershell".to_string(),
+            description: "Built-in PowerShell profile".to_string(),
+            keybinding: None,
+        },
+        wtd_ui::command_palette::PaletteEntry {
+            name: "cmd".to_string(),
+            description: "Built-in Command Prompt profile".to_string(),
+            keybinding: None,
+        },
+        wtd_ui::command_palette::PaletteEntry {
+            name: "wsl".to_string(),
+            description: "Built-in Windows Subsystem for Linux profile".to_string(),
+            keybinding: None,
+        },
+        wtd_ui::command_palette::PaletteEntry {
+            name: "ssh".to_string(),
+            description: "Built-in SSH profile".to_string(),
+            keybinding: None,
+        },
+    ]
+}
+
+fn insert_profile_entry(
+    entries: &mut Vec<wtd_ui::command_palette::PaletteEntry>,
+    seen: &mut HashSet<String>,
+    name: &str,
+    description: String,
+) {
+    if seen.insert(name.to_string()) {
+        entries.push(wtd_ui::command_palette::PaletteEntry {
+            name: name.to_string(),
+            description,
+            keybinding: None,
+        });
+    }
+}
+
+fn load_workspace_profile_entries(
+    workspace_name: Option<&str>,
+) -> Vec<wtd_ui::command_palette::PaletteEntry> {
+    let mut entries = builtin_profile_entries();
+    let mut seen: HashSet<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+    let mut preferred_profile: Option<String> = None;
+
+    if let Ok(settings) = wtd_core::load_global_settings(&settings_path()) {
+        preferred_profile = Some(settings.default_profile.clone());
+        let mut global_profiles: Vec<_> = settings.profiles.into_iter().collect();
+        global_profiles.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, profile) in global_profiles {
+            insert_profile_entry(
+                &mut entries,
+                &mut seen,
+                &name,
+                format!("Global {} profile", profile_kind(&profile.profile_type)),
+            );
+        }
+    }
+
+    if let Some(workspace_name) = workspace_name {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(found) = wtd_core::find_workspace(workspace_name, None, &cwd) {
+                if let Ok(content) = fs::read_to_string(&found.path) {
+                    let file_name = found
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(workspace_name);
+                    if let Ok(workspace) = wtd_core::load_workspace_definition(file_name, &content)
+                    {
+                        if let Some(profile) = workspace
+                            .defaults
+                            .as_ref()
+                            .and_then(|defaults| defaults.profile.as_ref())
+                        {
+                            preferred_profile = Some(profile.clone());
+                        }
+                        if let Some(mut workspace_profiles) = workspace.profiles {
+                            let mut workspace_profiles: Vec<_> =
+                                workspace_profiles.drain().collect();
+                            workspace_profiles.sort_by(|a, b| a.0.cmp(&b.0));
+                            for (name, profile) in workspace_profiles {
+                                insert_profile_entry(
+                                    &mut entries,
+                                    &mut seen,
+                                    &name,
+                                    format!(
+                                        "Workspace {} profile",
+                                        profile_kind(&profile.profile_type)
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(profile) = preferred_profile {
+        if let Some(index) = entries.iter().position(|entry| entry.name == profile) {
+            if index > 0 {
+                let entry = entries.remove(index);
+                entries.insert(0, entry);
+            }
+        }
+    }
+
+    entries
+}
+
+fn should_prompt_for_profile(
+    action_name: &str,
+    args: &Option<HashMap<String, String>>,
+    connected: bool,
+    bridge_present: bool,
+) -> bool {
+    bridge_present
+        && connected
+        && args.is_none()
+        && matches!(
+            action_name,
+            "new-tab" | "split-right" | "split-down" | "change-profile"
+        )
+}
+
+fn show_profile_selector_for_action(
+    command_palette: &mut CommandPalette,
+    action_name: &str,
+) -> bool {
+    match action_name {
+        "new-tab" => {
+            command_palette.show_profile_selector(
+                "new-tab",
+                "Create a new tab with profile",
+                "Select a profile or type one manually",
+            );
+            true
+        }
+        "split-right" => {
+            command_palette.show_profile_selector(
+                "split-right",
+                "Split right using profile",
+                "Select a profile or type one manually",
+            );
+            true
+        }
+        "split-down" => {
+            command_palette.show_profile_selector(
+                "split-down",
+                "Split down using profile",
+                "Select a profile or type one manually",
+            );
+            true
+        }
+        "change-profile" => {
+            command_palette.show_profile_selector(
+                "change-profile",
+                "Change focused pane profile",
+                "Select a profile or type one manually",
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
 fn focused_pane_name(tab: &SnapshotTab) -> String {
     let focused = tab.layout_tree.focus();
     tab.pane_sessions
@@ -706,6 +906,10 @@ fn dispatch_action(
         _ => None,
     };
 
+    if should_prompt_for_profile(name, &args, connected, bridge.is_some()) {
+        return show_profile_selector_for_action(command_palette, name);
+    }
+
     match name {
         "toggle-command-palette" => {
             command_palette.toggle();
@@ -780,7 +984,7 @@ fn dispatch_action(
         "new-tab" => {
             if let Some(bridge) = bridge {
                 if connected {
-                    send_workspace_action(bridge, "new-tab", serde_json::json!({}));
+                    send_workspace_action(bridge, "new-tab", action_args_to_value(&args));
                 } else {
                     let tab_name = format!("tab-{}", tab_strip.tab_count() + 1);
                     tab_strip.add_tab(tab_name);
@@ -872,8 +1076,12 @@ fn dispatch_action(
                     if let Some(bridge) = bridge {
                         if connected {
                             let focused = active_tab.layout_tree.focus();
-                            let _ =
-                                prepare_pane_for_live_input(mouse_handler, active_tab, &focused, true);
+                            let _ = prepare_pane_for_live_input(
+                                mouse_handler,
+                                active_tab,
+                                &focused,
+                                true,
+                            );
                             if let Some(ps) = active_tab.pane_sessions.get(&focused) {
                                 bridge.send_input(ps.session_id.clone(), bytes);
                             }
@@ -966,7 +1174,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     // Create the command palette and input state machine.
     let bindings = wtd_core::global_settings::default_bindings();
     let input_classifier = InputClassifier::from_bindings(&bindings)?;
-    let mut command_palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
+    let profile_entries = load_workspace_profile_entries(workspace_name.as_deref());
+    let mut command_palette =
+        CommandPalette::new(renderer.dw_factory(), &bindings, profile_entries)?;
     let mut prefix_sm = PrefixStateMachine::new(input_classifier);
 
     let (initial_window_width, initial_window_height) =
@@ -1877,8 +2087,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 &pane_id,
                                                 true,
                                             );
-                                            if let Some(ps) =
-                                                active_tab.pane_sessions.get(&pane_id)
+                                            if let Some(ps) = active_tab.pane_sessions.get(&pane_id)
                                             {
                                                 bridge.send_input(ps.session_id.clone(), bytes);
                                             }
@@ -2634,5 +2843,27 @@ mod tests {
         assert!(!should_coalesce_primary_screen_output(
             b"PS C:\\Users\\me> dir\r\n"
         ));
+    }
+
+    #[test]
+    fn profile_actions_prompt_when_connected_without_args() {
+        assert!(should_prompt_for_profile("new-tab", &None, true, true));
+        assert!(should_prompt_for_profile("split-right", &None, true, true));
+        assert!(should_prompt_for_profile("split-down", &None, true, true));
+        assert!(should_prompt_for_profile(
+            "change-profile",
+            &None,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn profile_actions_do_not_prompt_with_args_or_without_host_connection() {
+        let args = Some(HashMap::from([("profile".to_string(), "cmd".to_string())]));
+        assert!(!should_prompt_for_profile("new-tab", &args, true, true));
+        assert!(!should_prompt_for_profile("new-tab", &None, false, true));
+        assert!(!should_prompt_for_profile("new-tab", &None, true, false));
+        assert!(!should_prompt_for_profile("rename-pane", &None, true, true));
     }
 }

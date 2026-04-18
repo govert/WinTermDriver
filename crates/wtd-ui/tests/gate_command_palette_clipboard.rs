@@ -135,7 +135,7 @@ fn palette_opens_searches_and_dispatches_action() {
     let dw = renderer.dw_factory().clone();
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
 
     // Initially not visible.
     assert!(!palette.is_visible());
@@ -198,7 +198,7 @@ fn palette_keyboard_navigation() {
     let dw = renderer.dw_factory().clone();
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
     palette.show();
 
     // Initially selected index is 0.
@@ -240,7 +240,7 @@ fn palette_click_interactions() {
     let dw = renderer.dw_factory().clone();
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
     palette.show();
 
     let window_w = 800.0_f32;
@@ -286,7 +286,7 @@ fn palette_fuzzy_search_targets_specific_actions() {
     let dw = renderer.dw_factory().clone();
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
 
     // Search for "zoom" — should find "zoom-pane".
     palette.show();
@@ -567,7 +567,7 @@ fn palette_toggle_show_hide() {
     let dw = renderer.dw_factory().clone();
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
 
     assert!(!palette.is_visible());
 
@@ -614,7 +614,7 @@ fn palette_renders_in_composited_frame() {
     tab_strip.layout(800.0);
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
     palette.show();
 
     // Type a search query so we have filtered results.

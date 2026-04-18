@@ -69,6 +69,7 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("focus-pane", "Move focus to named pane"),
     ("zoom-pane", "Toggle pane zoom"),
     ("rename-pane", "Rename pane"),
+    ("change-profile", "Relaunch pane with a different profile"),
     ("resize-pane-grow-right", "Grow pane to the right"),
     ("resize-pane-grow-down", "Grow pane downward"),
     ("resize-pane-shrink-right", "Shrink pane from the right"),
@@ -116,8 +117,17 @@ enum PaletteMode {
     Search,
     Prompt {
         action: String,
+        arg_name: String,
         label: String,
         placeholder: String,
+    },
+    Selector {
+        action: String,
+        arg_name: String,
+        _label: String,
+        placeholder: String,
+        allow_custom: bool,
+        entries: Vec<PaletteEntry>,
     },
 }
 
@@ -127,6 +137,7 @@ pub struct CommandPalette {
     mode: PaletteMode,
     query: String,
     entries: Vec<PaletteEntry>,
+    profile_entries: Vec<PaletteEntry>,
     filtered: Vec<FilteredEntry>,
     selected: usize,
     scroll_offset: usize,
@@ -141,7 +152,11 @@ pub struct CommandPalette {
 impl CommandPalette {
     /// Create a new command palette. Builds the action catalog and keybinding
     /// hints from the provided bindings.
-    pub fn new(dw_factory: &IDWriteFactory, bindings: &BindingsDefinition) -> Result<Self> {
+    pub fn new(
+        dw_factory: &IDWriteFactory,
+        bindings: &BindingsDefinition,
+        profile_entries: Vec<PaletteEntry>,
+    ) -> Result<Self> {
         let font_wide: Vec<u16> = "Segoe UI"
             .encode_utf16()
             .chain(std::iter::once(0))
@@ -205,6 +220,7 @@ impl CommandPalette {
             mode: PaletteMode::Search,
             query: String::new(),
             entries,
+            profile_entries,
             filtered,
             selected: 0,
             scroll_offset: 0,
@@ -240,6 +256,7 @@ impl CommandPalette {
         self.visible = true;
         self.mode = PaletteMode::Prompt {
             action: action.into(),
+            arg_name: "name".to_string(),
             label: label.into(),
             placeholder: placeholder.into(),
         };
@@ -267,13 +284,62 @@ impl CommandPalette {
         self.entries.iter().any(|entry| entry.name == action_name)
     }
 
+    pub fn profile_entries(&self) -> &[PaletteEntry] {
+        &self.profile_entries
+    }
+
+    pub fn show_profile_selector(
+        &mut self,
+        action: impl Into<String>,
+        label: impl Into<String>,
+        placeholder: impl Into<String>,
+    ) {
+        self.show_selector(
+            action,
+            "profile",
+            label,
+            placeholder,
+            String::new(),
+            self.profile_entries.clone(),
+            true,
+        );
+    }
+
+    pub fn show_selector(
+        &mut self,
+        action: impl Into<String>,
+        arg_name: impl Into<String>,
+        label: impl Into<String>,
+        placeholder: impl Into<String>,
+        initial_value: impl Into<String>,
+        entries: Vec<PaletteEntry>,
+        allow_custom: bool,
+    ) {
+        self.visible = true;
+        self.mode = PaletteMode::Selector {
+            action: action.into(),
+            arg_name: arg_name.into(),
+            _label: label.into(),
+            placeholder: placeholder.into(),
+            allow_custom,
+            entries,
+        };
+        self.query = initial_value.into();
+        self.selected = 0;
+        self.scroll_offset = 0;
+        self.refilter();
+    }
+
     /// Process a keyboard event while the palette is visible.
     pub fn on_key_event(&mut self, event: &KeyEvent) -> PaletteResult {
         if !self.visible {
             return PaletteResult::Consumed;
         }
 
-        if let PaletteMode::Prompt { action, .. } = &self.mode {
+        if let PaletteMode::Prompt {
+            action, arg_name, ..
+        } = &self.mode
+        {
             match event.key {
                 KeyName::Escape => {
                     self.hide();
@@ -281,11 +347,12 @@ impl CommandPalette {
                 }
                 KeyName::Enter => {
                     let action = action.clone();
+                    let arg_name = arg_name.clone();
                     let name = self.query.trim().to_string();
                     self.hide();
                     return PaletteResult::Action(ActionReference::WithArgs {
                         action,
-                        args: Some(HashMap::from([("name".to_string(), name)])),
+                        args: Some(HashMap::from([(arg_name, name)])),
                     });
                 }
                 KeyName::Backspace => {
@@ -297,6 +364,76 @@ impl CommandPalette {
                         if let Some(ch) = event.character {
                             if !ch.is_control() {
                                 self.query.push(ch);
+                            }
+                        }
+                    }
+                    return PaletteResult::Consumed;
+                }
+            }
+        }
+
+        if let PaletteMode::Selector {
+            action,
+            arg_name,
+            allow_custom,
+            ..
+        } = &self.mode
+        {
+            match event.key {
+                KeyName::Escape => {
+                    self.hide();
+                    return PaletteResult::Dismissed;
+                }
+                KeyName::Enter => {
+                    let action = action.clone();
+                    let arg_name = arg_name.clone();
+                    let selected = self
+                        .filtered
+                        .get(self.selected)
+                        .and_then(|fe| self.mode_entries().get(fe.index))
+                        .map(|entry| entry.name.clone());
+                    let value = selected.or_else(|| {
+                        if *allow_custom {
+                            let query = self.query.trim();
+                            (!query.is_empty()).then(|| query.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                    self.hide();
+                    return match value {
+                        Some(value) => PaletteResult::Action(ActionReference::WithArgs {
+                            action,
+                            args: Some(HashMap::from([(arg_name, value)])),
+                        }),
+                        None => PaletteResult::Dismissed,
+                    };
+                }
+                KeyName::Up => {
+                    if self.selected > 0 {
+                        self.selected -= 1;
+                        self.ensure_visible();
+                    }
+                    return PaletteResult::Consumed;
+                }
+                KeyName::Down => {
+                    if self.selected + 1 < self.filtered.len() {
+                        self.selected += 1;
+                        self.ensure_visible();
+                    }
+                    return PaletteResult::Consumed;
+                }
+                KeyName::Backspace => {
+                    self.query.pop();
+                    self.refilter();
+                    return PaletteResult::Consumed;
+                }
+                _ => {
+                    if !event.modifiers.ctrl() && !event.modifiers.alt() {
+                        if let Some(ch) = event.character {
+                            if !ch.is_control() {
+                                self.query.push(ch);
+                                self.refilter();
                             }
                         }
                     }
@@ -384,7 +521,21 @@ impl CommandPalette {
         if y >= items_y {
             let item_idx = ((y - items_y) / ITEM_HEIGHT) as usize + self.scroll_offset;
             if item_idx < self.filtered.len() {
-                let name = self.entries[self.filtered[item_idx].index].name.clone();
+                let name = self.mode_entries()[self.filtered[item_idx].index]
+                    .name
+                    .clone();
+                if let PaletteMode::Selector {
+                    action, arg_name, ..
+                } = &self.mode
+                {
+                    let action = action.clone();
+                    let arg_name = arg_name.clone();
+                    self.hide();
+                    return Some(PaletteResult::Action(ActionReference::WithArgs {
+                        action,
+                        args: Some(HashMap::from([(arg_name, name)])),
+                    }));
+                }
                 self.hide();
                 return Some(PaletteResult::Action(ActionReference::Simple(name)));
             }
@@ -513,6 +664,10 @@ impl CommandPalette {
                 let visible_items = self.filtered.len().min(MAX_VISIBLE_ITEMS);
                 INPUT_HEIGHT + PADDING + (visible_items as f32 * ITEM_HEIGHT) + PADDING
             }
+            PaletteMode::Selector { .. } => {
+                let visible_items = self.filtered.len().min(MAX_VISIBLE_ITEMS).max(1);
+                INPUT_HEIGHT + PADDING + (visible_items as f32 * ITEM_HEIGHT) + PADDING
+            }
             PaletteMode::Prompt { .. } => INPUT_HEIGHT + PADDING + ITEM_HEIGHT + PADDING,
         };
         let x = (window_w - w) / 2.0;
@@ -520,13 +675,14 @@ impl CommandPalette {
     }
 
     fn refilter(&mut self) {
+        let entries = self.mode_entries();
         if self.query.is_empty() {
-            self.filtered = (0..self.entries.len())
+            self.filtered = (0..entries.len())
                 .map(|i| FilteredEntry { index: i, score: 0 })
                 .collect();
         } else {
             let mut results: Vec<FilteredEntry> = Vec::new();
-            for (i, entry) in self.entries.iter().enumerate() {
+            for (i, entry) in entries.iter().enumerate() {
                 let target = format!("{} {}", entry.name, entry.description);
                 if let Some(score) = fuzzy_score(&self.query, &target) {
                     results.push(FilteredEntry { index: i, score });
@@ -573,6 +729,7 @@ impl CommandPalette {
 
         let placeholder = match &self.mode {
             PaletteMode::Search => "Type to search actions…",
+            PaletteMode::Selector { placeholder, .. } => placeholder.as_str(),
             PaletteMode::Prompt { placeholder, .. } => placeholder.as_str(),
         };
 
@@ -653,7 +810,7 @@ impl CommandPalette {
             }
 
             let fe = &self.filtered[fi];
-            let entry = &self.entries[fe.index];
+            let entry = &self.mode_entries()[fe.index];
             let item_y = items_y + (vi as f32 * ITEM_HEIGHT);
 
             let item_rect = D2D_RECT_F {
@@ -712,6 +869,14 @@ impl CommandPalette {
         }
 
         Ok(())
+    }
+
+    fn mode_entries(&self) -> &[PaletteEntry] {
+        match &self.mode {
+            PaletteMode::Search => &self.entries,
+            PaletteMode::Prompt { .. } => &[],
+            PaletteMode::Selector { entries, .. } => entries.as_slice(),
+        }
     }
 }
 
@@ -1034,6 +1199,19 @@ mod tests {
         };
         let entries = build_palette_entries(&bindings);
         assert!(entries.iter().any(|e| e.name == "toggle-command-palette"));
+    }
+
+    #[test]
+    fn entries_include_change_profile() {
+        let bindings = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        let entries = build_palette_entries(&bindings);
+        assert!(entries.iter().any(|e| e.name == "change-profile"));
     }
 
     #[test]

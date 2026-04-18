@@ -209,6 +209,11 @@ const ARG_PROFILE_OPT: ArgDef = ArgDef {
     arg_type: ArgType::String,
     required: false,
 };
+const ARG_PROFILE_STRING: ArgDef = ArgDef {
+    name: "profile",
+    arg_type: ArgType::String,
+    required: true,
+};
 const ARG_AMOUNT_OPT: ArgDef = ArgDef {
     name: "amount",
     arg_type: ArgType::Int,
@@ -243,6 +248,7 @@ static GOTO_TAB_ARGS: &[ArgDef] = &[
 ];
 static RENAME_TAB_ARGS: &[ArgDef] = &[ARG_NAME_STRING];
 static SPLIT_ARGS: &[ArgDef] = &[ARG_PROFILE_OPT];
+static CHANGE_PROFILE_ARGS: &[ArgDef] = &[ARG_PROFILE_STRING];
 static FOCUS_PANE_BY_NAME_ARGS: &[ArgDef] = &[ARG_NAME_STRING];
 static RENAME_PANE_ARGS: &[ArgDef] = &[ARG_NAME_STRING];
 static RESIZE_ARGS: &[ArgDef] = &[ARG_AMOUNT_OPT];
@@ -413,6 +419,12 @@ pub fn v1_registry() -> ActionRegistry {
         target_type: TargetType::Pane,
         args: RENAME_PANE_ARGS,
         description: "Rename pane",
+    });
+    r.register(ActionDef {
+        name: "change-profile",
+        target_type: TargetType::Pane,
+        args: CHANGE_PROFILE_ARGS,
+        description: "Relaunch pane using the selected profile",
     });
     r.register(ActionDef {
         name: "resize-pane-grow-right",
@@ -805,8 +817,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 lists exactly 36 actions (4 workspace + 2 window + 8 tab + 16 pane + 1 session + 2 clipboard + 3 UI)
-        assert_eq!(r.len(), 36);
+        // §20.3 plus change-profile totals 37 actions.
+        assert_eq!(r.len(), 37);
     }
 
     #[test]
@@ -843,6 +855,26 @@ mod tests {
         assert!(r
             .validate_args("split-right", &json!({"profile": "cmd"}))
             .is_ok());
+        assert!(r
+            .validate_args("new-tab", &json!({"profile": "powershell"}))
+            .is_ok());
+    }
+
+    #[test]
+    fn validate_change_profile_requires_profile_arg() {
+        let r = v1_registry();
+        assert!(r
+            .validate_args("change-profile", &json!({"profile": "cmd"}))
+            .is_ok());
+        let err = r
+            .validate_args("change-profile", &json!({}))
+            .expect_err("missing profile should fail");
+        assert!(
+            err.to_string()
+                .contains("missing required argument 'profile'"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

@@ -895,7 +895,7 @@ async fn m5_interactive_workspace_acceptance() {
         .expect("M5: TerminalRenderer must initialise D2D/DWrite resources");
     let dw = renderer.dw_factory().clone();
 
-    let mut palette = CommandPalette::new(&dw, &bindings).unwrap();
+    let mut palette = CommandPalette::new(&dw, &bindings, vec![]).unwrap();
 
     // Initially not visible
     assert!(

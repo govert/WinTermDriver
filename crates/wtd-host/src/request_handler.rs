@@ -504,6 +504,13 @@ fn parse_driver_profile(value: &str) -> Option<PaneDriverProfile> {
     }
 }
 
+fn session_def_with_profile(profile: &str) -> SessionLaunchDefinition {
+    SessionLaunchDefinition {
+        profile: Some(profile.to_string()),
+        ..Default::default()
+    }
+}
+
 /// Load a workspace definition from disk by name (with optional explicit file).
 fn load_workspace_from_disk(
     name: &str,
@@ -1063,10 +1070,9 @@ impl HostRequestHandler {
         }
 
         if plan.submit_delay_ms > 0 {
-            match session.schedule_write_input(
-                plan.submit,
-                Duration::from_millis(plan.submit_delay_ms),
-            ) {
+            match session
+                .schedule_write_input(plan.submit, Duration::from_millis(plan.submit_delay_ms))
+            {
                 Ok(()) => Some(Envelope::new(id, &OkResponse {})),
                 Err(e) => Some(error_envelope(
                     id,
@@ -1627,6 +1633,11 @@ impl HostRequestHandler {
 
         let settings = state.settings.clone();
         let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+        let active_pane = || {
+            inst.tabs()
+                .get(inst.active_tab_index())
+                .map(|tab| tab.layout().focus())
+        };
 
         // Handle tab lifecycle actions at this level (they need settings/env for session spawn).
         match action.action.as_str() {
@@ -1641,7 +1652,18 @@ impl HostRequestHandler {
                 let pane_id = tab.layout().focus();
                 let pane_name = format!("pane-{}", pane_id.0);
                 let env = host_env();
-                inst.spawn_session_for_pane(&pane_id, pane_name, &settings, &env, &find_exe);
+                if let Some(profile) = action.args.get("profile").and_then(|v| v.as_str()) {
+                    inst.spawn_session_for_pane_with_definition(
+                        &pane_id,
+                        pane_name,
+                        session_def_with_profile(profile),
+                        &settings,
+                        &env,
+                        &find_exe,
+                    );
+                } else {
+                    inst.spawn_session_for_pane(&pane_id, pane_name, &settings, &env, &find_exe);
+                }
                 return Some(Envelope::new(
                     id,
                     &InvokeActionResult {
@@ -1784,6 +1806,55 @@ impl HostRequestHandler {
                     ));
                 }
             }
+            "change-profile" => {
+                let profile = match action.args.get("profile").and_then(|v| v.as_str()) {
+                    Some(profile) => profile,
+                    None => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::InvalidArgument,
+                            "missing change-profile profile",
+                        ));
+                    }
+                };
+                let pane_id = match target_pane.clone().or_else(active_pane) {
+                    Some(pane_id) => pane_id,
+                    None => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::TargetNotFound,
+                            "no pane available for change-profile",
+                        ));
+                    }
+                };
+                let pane_name = inst
+                    .pane_name(&pane_id)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("pane-{}", pane_id.0));
+                let mut session_def = inst
+                    .pane_original_def(&pane_id)
+                    .cloned()
+                    .flatten()
+                    .unwrap_or_default();
+                session_def.profile = Some(profile.to_string());
+                let env = host_env();
+                inst.stop_pane_session(&pane_id);
+                inst.spawn_session_for_pane_with_definition(
+                    &pane_id,
+                    pane_name,
+                    session_def,
+                    &settings,
+                    &env,
+                    &find_exe,
+                );
+                return Some(Envelope::new(
+                    id,
+                    &InvokeActionResult {
+                        result: "pane-profile-changed".to_string(),
+                        pane_id: Some(format!("{}", pane_id.0)),
+                    },
+                ));
+            }
             _ => {} // Fall through to dispatcher
         }
 
@@ -1808,12 +1879,16 @@ impl HostRequestHandler {
                         // Spawn a session for the newly created pane.
                         let pane_name = format!("pane-{}", pane_id.0);
                         let env = host_env();
-                        let session_def = target_pane
-                            .as_ref()
-                            .and_then(|source_pane| inst.pane_original_def(source_pane))
-                            .cloned()
-                            .flatten()
-                            .unwrap_or_default();
+                        let session_def = match action.args.get("profile").and_then(|v| v.as_str())
+                        {
+                            Some(profile) => session_def_with_profile(profile),
+                            None => target_pane
+                                .as_ref()
+                                .and_then(|source_pane| inst.pane_original_def(source_pane))
+                                .cloned()
+                                .flatten()
+                                .unwrap_or_default(),
+                        };
                         inst.spawn_session_for_pane_with_definition(
                             &pane_id,
                             pane_name,
@@ -2024,8 +2099,11 @@ mod tests {
     use super::{encode_mouse_input, encode_send_input, scoped_session_key, HostRequestHandler};
     use crate::output_broadcaster::BroadcastEvent;
     use crate::workspace_instance::WorkspaceInstance;
+    use serde_json::json;
     use wtd_core::global_settings::GlobalSettings;
-    use wtd_core::workspace::{PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition};
+    use wtd_core::workspace::{
+        PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
+    };
     use wtd_ipc::message::{Mouse, MouseButton, MouseKind};
 
     fn encode_b64(input: &[u8]) -> String {
@@ -2150,6 +2228,167 @@ mod tests {
         assert_eq!(scoped_session_key("ops", "1"), "ops:1");
     }
 
+    fn single_session_workspace(
+        name: &str,
+        session: SessionLaunchDefinition,
+    ) -> WorkspaceDefinition {
+        WorkspaceDefinition {
+            version: 1,
+            name: name.to_string(),
+            description: None,
+            defaults: None,
+            profiles: None,
+            bindings: None,
+            windows: None,
+            tabs: Some(vec![TabDefinition {
+                name: "main".to_string(),
+                layout: PaneNode::Pane(PaneLeaf {
+                    name: "shell".to_string(),
+                    session: Some(session),
+                }),
+                focus: None,
+            }]),
+        }
+    }
+
+    fn add_workspace(handler: &HostRequestHandler, workspace: WorkspaceDefinition) {
+        let settings = GlobalSettings::default();
+        let env: HashMap<String, String> = std::env::vars().collect();
+        let instance = WorkspaceInstance::open(
+            wtd_core::ids::WorkspaceInstanceId(1),
+            &workspace,
+            &settings,
+            &env,
+            super::find_exe,
+        )
+        .expect("workspace should open");
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .workspaces
+            .insert(workspace.name.clone(), instance);
+    }
+
+    fn invoke_action(
+        handler: &HostRequestHandler,
+        action: &str,
+        target_pane_id: Option<&str>,
+        args: serde_json::Value,
+    ) {
+        let request = wtd_ipc::message::InvokeAction {
+            action: action.to_string(),
+            target_pane_id: target_pane_id.map(str::to_string),
+            args,
+        };
+        let response = handler.handle_invoke_action("test", &request);
+        assert!(response.is_some(), "expected action response");
+    }
+
+    #[test]
+    fn new_tab_with_profile_spawns_selected_profile() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        add_workspace(
+            &handler,
+            single_session_workspace(
+                "alpha",
+                SessionLaunchDefinition {
+                    profile: Some("powershell".to_string()),
+                    ..Default::default()
+                },
+            ),
+        );
+
+        invoke_action(&handler, "new-tab", None, json!({"profile": "cmd"}));
+
+        let state = handler.state.lock().unwrap();
+        let inst = state.workspaces.get("alpha").expect("workspace");
+        assert_eq!(inst.tabs().len(), 2);
+        let pane_id = inst.tabs()[1].layout().focus();
+        let def = inst
+            .pane_original_def(&pane_id)
+            .cloned()
+            .flatten()
+            .expect("pane definition");
+        assert_eq!(def.profile.as_deref(), Some("cmd"));
+    }
+
+    #[test]
+    fn split_with_profile_does_not_inherit_source_startup_command() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        add_workspace(
+            &handler,
+            single_session_workspace(
+                "alpha",
+                SessionLaunchDefinition {
+                    profile: Some("powershell".to_string()),
+                    startup_command: Some("codex".to_string()),
+                    ..Default::default()
+                },
+            ),
+        );
+
+        invoke_action(
+            &handler,
+            "split-right",
+            Some("alpha/main/shell"),
+            json!({"profile": "cmd"}),
+        );
+
+        let state = handler.state.lock().unwrap();
+        let inst = state.workspaces.get("alpha").expect("workspace");
+        let source = inst.find_pane_by_name("shell").expect("source pane");
+        let new_pane = inst.tabs()[0]
+            .layout()
+            .panes()
+            .into_iter()
+            .find(|pane_id| *pane_id != source)
+            .expect("new pane");
+        let def = inst
+            .pane_original_def(&new_pane)
+            .cloned()
+            .flatten()
+            .expect("new pane definition");
+        assert_eq!(def.profile.as_deref(), Some("cmd"));
+        assert_eq!(def.startup_command, None);
+    }
+
+    #[test]
+    fn change_profile_preserves_existing_launch_overrides() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        add_workspace(
+            &handler,
+            single_session_workspace(
+                "alpha",
+                SessionLaunchDefinition {
+                    profile: Some("powershell".to_string()),
+                    cwd: Some("C:/Work/WinTermDriver".to_string()),
+                    startup_command: Some("codex".to_string()),
+                    ..Default::default()
+                },
+            ),
+        );
+
+        invoke_action(
+            &handler,
+            "change-profile",
+            Some("alpha/main/shell"),
+            json!({"profile": "cmd"}),
+        );
+
+        let state = handler.state.lock().unwrap();
+        let inst = state.workspaces.get("alpha").expect("workspace");
+        let pane_id = inst.find_pane_by_name("shell").expect("pane");
+        let def = inst
+            .pane_original_def(&pane_id)
+            .cloned()
+            .flatten()
+            .expect("pane definition");
+        assert_eq!(def.profile.as_deref(), Some("cmd"));
+        assert_eq!(def.cwd.as_deref(), Some("C:/Work/WinTermDriver"));
+        assert_eq!(def.startup_command.as_deref(), Some("codex"));
+    }
+
     #[test]
     fn session_input_routes_within_named_workspace() {
         fn single_cmd_workspace(name: &str) -> WorkspaceDefinition {
@@ -2177,7 +2416,7 @@ mod tests {
 
         let settings = GlobalSettings::default();
         let env: HashMap<String, String> = std::env::vars().collect();
-        let mut alpha = WorkspaceInstance::open(
+        let alpha = WorkspaceInstance::open(
             wtd_core::ids::WorkspaceInstanceId(1),
             &single_cmd_workspace("alpha"),
             &settings,
@@ -2185,7 +2424,7 @@ mod tests {
             super::find_exe,
         )
         .expect("alpha workspace should open");
-        let mut beta = WorkspaceInstance::open(
+        let beta = WorkspaceInstance::open(
             wtd_core::ids::WorkspaceInstanceId(2),
             &single_cmd_workspace("beta"),
             &settings,
@@ -2194,18 +2433,8 @@ mod tests {
         )
         .expect("beta workspace should open");
 
-        let alpha_session = alpha
-            .sessions()
-            .keys()
-            .next()
-            .expect("alpha session id")
-            .0;
-        let beta_session = beta
-            .sessions()
-            .keys()
-            .next()
-            .expect("beta session id")
-            .0;
+        let alpha_session = alpha.sessions().keys().next().expect("alpha session id").0;
+        let beta_session = beta.sessions().keys().next().expect("beta session id").0;
         assert_eq!(alpha_session, 1, "expected overlapping test session ids");
         assert_eq!(beta_session, 1, "expected overlapping test session ids");
 
@@ -2250,7 +2479,10 @@ mod tests {
             }
         }
 
-        assert!(saw_beta_marker, "expected scoped input output in beta workspace");
+        assert!(
+            saw_beta_marker,
+            "expected scoped input output in beta workspace"
+        );
         assert!(!saw_alpha_marker, "input leaked into alpha workspace");
     }
 }

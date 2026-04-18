@@ -185,6 +185,8 @@ If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` a
 
 Agent panes launched directly as `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` and `capture`.
 
+For launch profiles, `wtd-ui` now keeps the path simple: creating a new tab or split opens a profile selector, and the command palette exposes `change-profile` to relaunch the focused pane with a different launch profile.
+
 WTD-launched sessions also advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
 
 Built-in prompt driver profiles:
@@ -235,8 +237,14 @@ wtd inspect build-and-test/tests
 # Split the focused pane
 wtd action build-and-test/server split-right
 
+# Split the focused pane using an explicit launch profile
+wtd action build-and-test/server split-right profile=cmd
+
 # Close a specific pane
 wtd action build-and-test/tests close-pane
+
+# Relaunch a pane with a different launch profile
+wtd action build-and-test/server change-profile profile=wsl
 
 # Resize a pane
 wtd action build-and-test/server resize-pane-grow-right cells=5
