@@ -102,7 +102,12 @@ impl Session {
     pub fn start(&mut self) -> Result<(), SessionError> {
         self.state = SessionState::Creating;
 
-        let args: Vec<&str> = self.config.args.iter().map(|s| s.as_str()).collect();
+        let (spawn_args, startup_injected_via_shell) = spawn_args_with_startup_command(
+            &self.config.executable,
+            &self.config.args,
+            self.config.startup_command.as_deref(),
+        );
+        let args: Vec<&str> = spawn_args.iter().map(|s| s.as_str()).collect();
 
         let pty = match PtySession::spawn(
             &self.config.executable,
@@ -129,13 +134,15 @@ impl Session {
         let reader = thread::spawn(move || reader_thread_fn(output_handle_raw, tx));
 
         // Schedule startup command delivery after 100ms (&sect;17.4).
-        if let Some(ref cmd) = self.config.startup_command {
+        if !startup_injected_via_shell {
+            if let Some(ref cmd) = self.config.startup_command {
             let input_handle_raw = pty.input_write_handle().0 as usize;
-            let payload = format!("{}\r\n", cmd).into_bytes();
+                let payload = startup_command_payload(cmd);
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
                 write_raw(input_handle_raw, &payload);
             });
+        }
         }
 
         self.pty = Some(pty);
@@ -410,3 +417,99 @@ fn write_raw(handle_raw: usize, data: &[u8]) {
 
 #[cfg(not(windows))]
 fn write_raw(_handle_raw: usize, _data: &[u8]) {}
+
+fn startup_command_payload(command: &str) -> Vec<u8> {
+    format!("{}\r\n", command).into_bytes()
+}
+
+fn spawn_args_with_startup_command(
+    executable: &str,
+    args: &[String],
+    startup_command: Option<&str>,
+) -> (Vec<String>, bool) {
+    let Some(command) = startup_command else {
+        return (args.to_vec(), false);
+    };
+
+    if executable_looks_like_powershell(executable) {
+        let mut shell_args = args.to_vec();
+        if !shell_args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-NoExit"))
+        {
+            shell_args.push("-NoExit".to_string());
+        }
+        shell_args.push("-Command".to_string());
+        shell_args.push(command.to_string());
+        return (shell_args, true);
+    }
+
+    if executable_looks_like_cmd(executable)
+        && !args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("/c") || arg.eq_ignore_ascii_case("/k"))
+    {
+        let mut shell_args = args.to_vec();
+        shell_args.push("/K".to_string());
+        shell_args.push(command.to_string());
+        return (shell_args, true);
+    }
+
+    (args.to_vec(), false)
+}
+
+fn executable_looks_like_powershell(executable: &str) -> bool {
+    let lower = executable.to_ascii_lowercase();
+    lower.ends_with("\\pwsh.exe")
+        || lower.ends_with("\\powershell.exe")
+        || lower == "pwsh.exe"
+        || lower == "powershell.exe"
+}
+
+fn executable_looks_like_cmd(executable: &str) -> bool {
+    let lower = executable.to_ascii_lowercase();
+    lower.ends_with("\\cmd.exe") || lower == "cmd.exe"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        executable_looks_like_powershell, spawn_args_with_startup_command, startup_command_payload,
+    };
+
+    #[test]
+    fn startup_command_payload_uses_plain_crlf_for_non_powershell() {
+        assert_eq!(startup_command_payload("echo hello"), b"echo hello\r\n");
+    }
+
+    #[test]
+    fn powershell_startup_command_uses_spawn_args() {
+        let (args, handled) = spawn_args_with_startup_command(
+            "pwsh.exe",
+            &["-NoLogo".to_string()],
+            Some("Write-Output hello"),
+        );
+        assert!(handled);
+        assert_eq!(
+            args,
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                "Write-Output hello".to_string()
+            ]
+        );
+        assert!(executable_looks_like_powershell(
+            r"C:\Program Files\PowerShell\7\pwsh.exe"
+        ));
+        assert!(executable_looks_like_powershell("powershell.exe"));
+    }
+
+    #[test]
+    fn cmd_startup_command_uses_spawn_args() {
+        let (args, handled) =
+            spawn_args_with_startup_command("cmd.exe", &[], Some("echo hello"));
+        assert!(handled);
+        assert_eq!(args, vec!["/K".to_string(), "echo hello".to_string()]);
+    }
+}
