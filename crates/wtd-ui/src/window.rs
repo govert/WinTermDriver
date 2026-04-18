@@ -21,6 +21,7 @@ static NEEDS_PAINT: AtomicBool = AtomicBool::new(true);
 static RESIZED: AtomicBool = AtomicBool::new(false);
 static RESIZE_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RESIZE_HEIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static WINDOW_MINIMIZED: AtomicBool = AtomicBool::new(false);
 
 /// Check and clear the "needs paint" flag.
 pub fn take_needs_paint() -> bool {
@@ -45,8 +46,18 @@ pub fn request_repaint(hwnd: HWND) {
     }
 }
 
+fn clear_resize_signal() {
+    RESIZED.store(false, Ordering::Relaxed);
+    RESIZE_WIDTH.store(0, Ordering::Relaxed);
+    RESIZE_HEIGHT.store(0, Ordering::Relaxed);
+}
+
+fn should_record_resize(width: u32, height: u32, minimized: bool) -> bool {
+    !minimized && width > 0 && height > 0
+}
+
 fn record_resize(width: u32, height: u32) {
-    if width == 0 || height == 0 {
+    if !should_record_resize(width, height, WINDOW_MINIMIZED.load(Ordering::Relaxed)) {
         return;
     }
     RESIZE_WIDTH.store(width, Ordering::Relaxed);
@@ -74,6 +85,12 @@ pub fn client_size(hwnd: HWND) -> Option<(u32, u32)> {
 }
 
 fn record_resize_from_client(hwnd: HWND) -> bool {
+    if is_minimized(hwnd) {
+        WINDOW_MINIMIZED.store(true, Ordering::Relaxed);
+        clear_resize_signal();
+        return false;
+    }
+
     if let Some((width, height)) = client_size(hwnd) {
         record_resize(width, height);
         true
@@ -214,6 +231,10 @@ pub fn toggle_maximize_window(hwnd: HWND) {
 
 pub fn is_maximized(hwnd: HWND) -> bool {
     unsafe { IsZoomed(hwnd).as_bool() }
+}
+
+pub fn is_minimized(hwnd: HWND) -> bool {
+    unsafe { IsIconic(hwnd).as_bool() }
 }
 
 /// Create a top-level window for the terminal UI.
@@ -367,6 +388,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_SIZE => {
+            if wparam.0 == SIZE_MINIMIZED as usize {
+                WINDOW_MINIMIZED.store(true, Ordering::Relaxed);
+                clear_resize_signal();
+                return LRESULT(0);
+            }
+
+            WINDOW_MINIMIZED.store(false, Ordering::Relaxed);
             let mut width = (lparam.0 & 0xFFFF) as u32;
             let mut height = ((lparam.0 >> 16) & 0xFFFF) as u32;
 
@@ -524,5 +552,43 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset_resize_state() {
+        WINDOW_MINIMIZED.store(false, Ordering::Relaxed);
+        NEEDS_PAINT.store(false, Ordering::Relaxed);
+        clear_resize_signal();
+    }
+
+    #[test]
+    fn should_record_resize_ignores_zero_or_minimized_sizes() {
+        assert!(!should_record_resize(0, 600, false));
+        assert!(!should_record_resize(800, 0, false));
+        assert!(!should_record_resize(800, 600, true));
+        assert!(should_record_resize(800, 600, false));
+    }
+
+    #[test]
+    fn record_resize_drops_updates_while_minimized() {
+        reset_resize_state();
+        WINDOW_MINIMIZED.store(true, Ordering::Relaxed);
+
+        record_resize(800, 600);
+
+        assert_eq!(take_resize(), None);
+    }
+
+    #[test]
+    fn record_resize_queues_updates_when_restored() {
+        reset_resize_state();
+
+        record_resize(800, 600);
+
+        assert_eq!(take_resize(), Some((800, 600)));
     }
 }

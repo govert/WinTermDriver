@@ -1341,7 +1341,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // ── Handle resize ────────────────────────────────────────
         if let Some((w, h)) = window::take_resize() {
-            if w > 0 && h > 0 {
+            if !window::is_minimized(hwnd) && w > 0 && h > 0 {
                 window_width = w as f32;
                 window_height = h as f32;
                 if let Err(error) = renderer.resize(w, h) {
