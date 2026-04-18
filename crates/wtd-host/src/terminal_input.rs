@@ -186,6 +186,14 @@ pub fn encode_key_spec_with_protocol(
     Ok(key_spec_to_bytes(&spec, protocol))
 }
 
+pub fn encode_key_release_spec_with_protocol(
+    spec: &str,
+    protocol: KeyboardProtocolMode,
+) -> Result<Vec<u8>, KeySpecError> {
+    let spec = KeySpec::parse(spec)?;
+    Ok(key_spec_release_bytes(&spec, protocol))
+}
+
 pub fn encode_key_specs(specs: &[String]) -> Result<Vec<u8>, KeySpecError> {
     encode_key_specs_with_protocol(specs, KeyboardProtocolMode::CsiU)
 }
@@ -240,6 +248,27 @@ fn key_spec_to_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> 
         return result;
     }
     bytes
+}
+
+fn key_spec_release_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> {
+    if protocol != KeyboardProtocolMode::Kitty {
+        return Vec::new();
+    }
+
+    let mods = spec.modifiers;
+    let mod_param = 1
+        + if mods.shift() { 1 } else { 0 }
+        + if mods.alt() { 2 } else { 0 }
+        + if mods.ctrl() { 4 } else { 0 };
+
+    if let Some(codepoint) = literal_key_codepoint(&spec.key, mods) {
+        return csi_u_release(codepoint, mod_param);
+    }
+
+    match spec.key {
+        KeyName::Enter => csi_u_release(13, mod_param),
+        _ => Vec::new(),
+    }
 }
 
 fn literal_key_codepoint(key: &KeyName, mods: Modifiers) -> Option<u32> {
@@ -381,6 +410,10 @@ fn csi_u(codepoint: u32, mod_param: u8) -> Vec<u8> {
     format!("\x1B[{codepoint};{mod_param}u").into_bytes()
 }
 
+fn csi_u_release(codepoint: u32, mod_param: u8) -> Vec<u8> {
+    format!("\x1B[{codepoint};{mod_param}:3u").into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +451,23 @@ mod tests {
     #[test]
     fn shifted_arrow_uses_csi_modifier_encoding() {
         assert_eq!(encode_key_spec("Shift+Up").unwrap(), b"\x1B[1;2A");
+    }
+
+    #[test]
+    fn kitty_protocol_emits_key_release_events_only_when_negotiated() {
+        assert_eq!(
+            encode_key_release_spec_with_protocol("Alt+X", KeyboardProtocolMode::Kitty).unwrap(),
+            b"\x1B[120;3:3u"
+        );
+        assert_eq!(
+            encode_key_release_spec_with_protocol("Enter", KeyboardProtocolMode::Kitty).unwrap(),
+            b"\x1B[13;1:3u"
+        );
+        assert!(
+            encode_key_release_spec_with_protocol("Alt+X", KeyboardProtocolMode::Legacy)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

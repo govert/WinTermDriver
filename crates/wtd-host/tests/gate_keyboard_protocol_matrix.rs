@@ -1,7 +1,26 @@
 #![cfg(windows)]
 
-use wtd_host::terminal_input::{encode_key_spec, encode_key_spec_with_protocol};
+use wtd_host::terminal_input::{
+    encode_key_release_spec_with_protocol, encode_key_spec, encode_key_spec_with_protocol,
+};
 use wtd_pty::screen::KeyboardProtocolMode;
+
+#[test]
+fn kitty_protocol_emits_release_sequences_only_when_negotiated() {
+    assert_eq!(
+        encode_key_release_spec_with_protocol("Alt+X", KeyboardProtocolMode::Kitty).unwrap(),
+        b"\x1b[120;3:3u"
+    );
+    assert_eq!(
+        encode_key_release_spec_with_protocol("Enter", KeyboardProtocolMode::Kitty).unwrap(),
+        b"\x1b[13;1:3u"
+    );
+    assert!(
+        encode_key_release_spec_with_protocol("Alt+X", KeyboardProtocolMode::Legacy)
+            .unwrap()
+            .is_empty()
+    );
+}
 
 #[test]
 fn kitty_protocol_emits_csi_u_for_modified_printable_keys() {
