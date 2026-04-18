@@ -190,6 +190,8 @@ pub struct Cell {
     pub bg: Color,
     /// Visual attributes (includes wide-character flags).
     pub attrs: CellAttrs,
+    /// Hyperlink identifier associated with this cell (0 = none).
+    pub hyperlink_id: u16,
 }
 
 // Cell is derived Copy — if the derive fails, the struct has a non-Copy field.
@@ -202,6 +204,7 @@ impl Cell {
             fg: Color::Default,
             bg: Color::Default,
             attrs: CellAttrs::default(),
+            hyperlink_id: 0,
         }
     }
 
@@ -642,6 +645,11 @@ pub struct ScreenBuffer {
     /// Window title from OSC sequences.
     pub title: String,
 
+    /// Hyperlink targets referenced by visible cells (index + 1 = hyperlink_id).
+    hyperlinks: Vec<String>,
+    /// Active OSC 8 hyperlink identifier while printing text.
+    active_hyperlink_id: Option<u16>,
+
     /// Progress indicator state from OSC 9;4.
     progress: Option<TerminalProgress>,
 
@@ -688,6 +696,8 @@ impl ScreenBuffer {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             title: String::new(),
+            hyperlinks: Vec::new(),
+            active_hyperlink_id: None,
             progress: None,
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
@@ -759,6 +769,18 @@ impl ScreenBuffer {
             return None;
         }
         Some(self.active_grid().cell(row, col))
+    }
+
+    /// Hyperlink target at (row, col) in the visible screen, if present.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<&str> {
+        let cell = self.cell(row, col)?;
+        if cell.hyperlink_id == 0 {
+            None
+        } else {
+            self.hyperlinks
+                .get((cell.hyperlink_id - 1) as usize)
+                .map(String::as_str)
+        }
     }
 
     /// Read the visible screen as plain text (newline-separated rows).
@@ -1112,6 +1134,7 @@ impl ScreenBuffer {
         let fg = self.pen_fg;
         let bg = self.pen_bg;
         let attrs = self.pen_attrs;
+        let hyperlink_id = self.active_hyperlink_id.unwrap_or(0);
 
         {
             let grid = self.active_grid_mut();
@@ -1120,6 +1143,7 @@ impl ScreenBuffer {
             cell.fg = fg;
             cell.bg = bg;
             cell.attrs = attrs;
+            cell.hyperlink_id = hyperlink_id;
             if is_wide {
                 cell.attrs.set_wide();
             } else {
@@ -1762,6 +1786,9 @@ impl Perform for ScreenBuffer {
                 self.reset_sgr();
                 self.scroll_top = 0;
                 self.scroll_bottom = self.rows.saturating_sub(1);
+                self.title.clear();
+                self.hyperlinks.clear();
+                self.active_hyperlink_id = None;
                 self.progress = None;
                 self.mouse_mode = MouseMode::None;
                 self.sgr_mouse = false;
@@ -1776,6 +1803,26 @@ impl Perform for ScreenBuffer {
         self.flush_pending_print(true);
         if let Some(&code_bytes) = params.first() {
             let code_str = std::str::from_utf8(code_bytes).unwrap_or("");
+            if code_str == "8" && params.len() >= 3 {
+                let uri = std::str::from_utf8(params[2]).unwrap_or("");
+                if uri.is_empty() {
+                    self.active_hyperlink_id = None;
+                } else {
+                    let hyperlink_id = if let Some((index, _)) = self
+                        .hyperlinks
+                        .iter()
+                        .enumerate()
+                        .find(|(_, existing)| existing.as_str() == uri)
+                    {
+                        (index + 1) as u16
+                    } else {
+                        self.hyperlinks.push(uri.to_owned());
+                        self.hyperlinks.len() as u16
+                    };
+                    self.active_hyperlink_id = Some(hyperlink_id);
+                }
+                return;
+            }
             if (code_str == "0" || code_str == "2") && params.len() >= 2 {
                 if let Ok(title) = std::str::from_utf8(params[1]) {
                     self.title = title.to_owned();
@@ -2061,6 +2108,31 @@ mod tests {
         let mut b = buf(80, 24);
         feed(&mut b, "\x1b]2;Window Name\x07");
         assert_eq!(b.title, "Window Name");
+    }
+
+    #[test]
+    fn osc8_hyperlink_tracks_cells_and_closing_sequence() {
+        let mut b = buf(80, 24);
+        feed(
+            &mut b,
+            "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\",
+        );
+
+        assert_eq!(b.hyperlink_at(0, 0), Some("https://example.com"));
+        assert_eq!(b.hyperlink_at(0, 1), Some("https://example.com"));
+        assert_eq!(b.hyperlink_at(0, 2), Some("https://example.com"));
+        assert_eq!(b.hyperlink_at(0, 3), Some("https://example.com"));
+        assert_eq!(b.hyperlink_at(0, 4), None);
+    }
+
+    #[test]
+    fn osc8_hyperlinks_reset_on_ris() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]8;;https://example.com\x1b\\x\x1b]8;;\x1b\\");
+        assert_eq!(b.hyperlink_at(0, 0), Some("https://example.com"));
+
+        feed(&mut b, "\x1bc");
+        assert_eq!(b.hyperlink_at(0, 0), None);
     }
 
     #[test]
