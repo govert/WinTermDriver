@@ -16,7 +16,7 @@ use clap_complete::Shell;
     name = "wtd",
     version,
     about,
-    after_long_help = "Coding-agent quick path:\n  1. `wtd configure-pane <target> --driver-profile <tool>` once\n  2. `wtd prompt <target> \"<text>\"` to write\n  3. `wtd capture <target>` to read what is on screen now\n\nUse `wtd send` only for low-level shell/text input and `wtd keys` when you need an explicit keypress."
+    after_long_help = "Coding-agent quick path:\n  1. `wtd prompt <target> \"<text>\"` to write\n  2. `wtd capture <target>` to read what is on screen now\n  3. `wtd configure-pane <target> ...` only when you need to override the inferred driver\n\nAgent panes launched as `codex`, `claude`, `gemini`, or `copilot` are auto-detected. Use `wtd send` only for low-level shell/text input and `wtd keys` when you need an explicit keypress."
 )]
 pub struct Cli {
     /// Output in JSON format instead of human-readable text.
@@ -126,8 +126,8 @@ pub enum Command {
 
     /// Configure pane-local prompt driving behavior.
     ///
-    /// For coding-agent panes, run this once per pane and then use
-    /// `wtd prompt` for every prompt you send.
+    /// WTD auto-detects common agent panes. Use this when you want to
+    /// override or pin the driver behavior for a pane.
     ConfigurePane {
         /// Target path (e.g. workspace/pane).
         target: String,
@@ -177,9 +177,9 @@ pub enum Command {
     /// Send a prompt using the pane's configured driver profile.
     ///
     /// Recommended agent flow:
-    /// 1. `wtd configure-pane <target> --driver-profile <tool>` once
-    /// 2. `wtd prompt <target> "<text>"` to write
-    /// 3. `wtd capture <target>` to read what the agent is showing now
+    /// 1. `wtd prompt <target> "<text>"` to write
+    /// 2. `wtd capture <target>` to read what the agent is showing now
+    /// 3. `wtd configure-pane <target> ...` only if you need to override the inferred driver
     Prompt {
         /// Target path (e.g. workspace/pane).
         target: String,
@@ -756,8 +756,9 @@ mod tests {
         sub.write_long_help(&mut help).unwrap();
         let text = String::from_utf8(help).unwrap();
         assert!(text.contains("Recommended agent flow"));
-        assert!(text.contains("wtd configure-pane <target> --driver-profile <tool>"));
+        assert!(text.contains("wtd prompt <target> \"<text>\""));
         assert!(text.contains("wtd capture <target>"));
+        assert!(text.contains("override the inferred driver"));
     }
 
     #[test]
@@ -767,8 +768,8 @@ mod tests {
         let mut help = Vec::new();
         sub.write_long_help(&mut help).unwrap();
         let text = String::from_utf8(help).unwrap();
-        assert!(text.contains("run this once per pane"));
-        assert!(text.contains("use `wtd prompt`"));
+        assert!(text.contains("auto-detects common agent panes"));
+        assert!(text.contains("override or pin the driver behavior"));
     }
 
     #[test]
@@ -778,9 +779,10 @@ mod tests {
         cmd.write_long_help(&mut help).unwrap();
         let text = String::from_utf8(help).unwrap();
         assert!(text.contains("Coding-agent quick path"));
-        assert!(text.contains("wtd configure-pane <target> --driver-profile <tool>"));
         assert!(text.contains("wtd prompt <target> \"<text>\""));
         assert!(text.contains("wtd capture <target>"));
+        assert!(text.contains("configure-pane <target> ..."));
+        assert!(text.contains("auto-detected"));
     }
 
     #[test]

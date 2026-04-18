@@ -17,7 +17,10 @@ use wtd_core::{resolve_launch_spec, ResolveError};
 use wtd_pty::PtySize;
 
 use crate::output_broadcaster::progress_info_from_screen;
-use crate::prompt_driver::{resolve_pane_driver, EffectivePaneDriver};
+use crate::prompt_driver::{
+    infer_pane_driver_profile, resolve_pane_driver, resolve_pane_driver_with_inference,
+    EffectivePaneDriver,
+};
 use crate::session::{Session, SessionConfig, SessionState};
 
 #[cfg(windows)]
@@ -581,9 +584,10 @@ impl WorkspaceInstance {
         };
 
         if let Some(session_id) = session_id {
-            let session = self.sessions.get_mut(&session_id).ok_or_else(|| {
-                WorkspaceError::SessionOperation("session not found".to_string())
-            })?;
+            let session = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| WorkspaceError::SessionOperation("session not found".to_string()))?;
             session.config_mut().driver = effective_driver;
         }
 
@@ -704,8 +708,6 @@ impl WorkspaceInstance {
             windows: None,
             tabs: None,
         };
-        let driver = resolve_pane_driver(Some(&session_def), Some(&workspace_def));
-
         let resolved = match resolve_launch_spec(
             &session_def,
             &workspace_def,
@@ -715,6 +717,11 @@ impl WorkspaceInstance {
         ) {
             Ok(r) => r,
             Err(e) => {
+                let driver = resolve_pane_driver_with_inference(
+                    Some(&session_def),
+                    Some(&workspace_def),
+                    infer_pane_driver_profile(session_def.startup_command.as_deref(), None),
+                );
                 self.panes.insert(
                     pane_id.clone(),
                     PaneRecord {
@@ -729,6 +736,14 @@ impl WorkspaceInstance {
                 return;
             }
         };
+        let driver = resolve_pane_driver_with_inference(
+            Some(&session_def),
+            Some(&workspace_def),
+            infer_pane_driver_profile(
+                session_def.startup_command.as_deref(),
+                Some(&resolved.executable),
+            ),
+        );
 
         let session_id = SessionId(self.next_session_id);
         self.next_session_id += 1;
@@ -986,8 +1001,6 @@ impl WorkspaceInstance {
                 pane_mappings.iter().zip(pane_defs.iter())
             {
                 let session_launch = session_def.as_ref().cloned().unwrap_or_default();
-                let driver = resolve_pane_driver(Some(&session_launch), Some(workspace_def));
-
                 let resolved = match resolve_launch_spec(
                     &session_launch,
                     workspace_def,
@@ -997,6 +1010,14 @@ impl WorkspaceInstance {
                 ) {
                     Ok(r) => r,
                     Err(e) => {
+                        let driver = resolve_pane_driver_with_inference(
+                            Some(&session_launch),
+                            Some(workspace_def),
+                            infer_pane_driver_profile(
+                                session_launch.startup_command.as_deref(),
+                                None,
+                            ),
+                        );
                         self.panes.insert(
                             pane_id.clone(),
                             PaneRecord {
@@ -1011,16 +1032,19 @@ impl WorkspaceInstance {
                         continue;
                     }
                 };
+                let driver = resolve_pane_driver_with_inference(
+                    Some(&session_launch),
+                    Some(workspace_def),
+                    infer_pane_driver_profile(
+                        session_launch.startup_command.as_deref(),
+                        Some(&resolved.executable),
+                    ),
+                );
 
                 let session_id = SessionId(self.next_session_id);
                 self.next_session_id += 1;
                 let mut session_env = resolved.env;
-                apply_runtime_terminal_env(
-                    &mut session_env,
-                    &self.name,
-                    pane_name,
-                    &session_id,
-                );
+                apply_runtime_terminal_env(&mut session_env, &self.name, pane_name, &session_id);
 
                 let config = SessionConfig {
                     executable: resolved.executable,
@@ -1331,6 +1355,30 @@ mod tests {
                     ],
                 }),
                 focus: Some("bottom".to_string()),
+            }]),
+        }
+    }
+
+    fn startup_command_workspace_def(startup_command: &str) -> WorkspaceDefinition {
+        WorkspaceDefinition {
+            version: 1,
+            name: "test-startup-command".to_string(),
+            description: None,
+            defaults: None,
+            profiles: None,
+            bindings: None,
+            windows: None,
+            tabs: Some(vec![TabDefinition {
+                name: "main".to_string(),
+                layout: PaneNode::Pane(PaneLeaf {
+                    name: "agent".to_string(),
+                    session: Some(SessionLaunchDefinition {
+                        profile: Some("cmd".to_string()),
+                        startup_command: Some(startup_command.to_string()),
+                        ..Default::default()
+                    }),
+                }),
+                focus: None,
             }]),
         }
     }
@@ -1766,16 +1814,28 @@ mod tests {
             &SessionId(42),
         );
 
-        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("Windows_Terminal"));
+        assert_eq!(
+            env.get("TERM_PROGRAM").map(String::as_str),
+            Some("Windows_Terminal")
+        );
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
-        assert_eq!(env.get("WT_SESSION").map(String::as_str), Some("wtd-dnacalc-workspace-42"));
+        assert_eq!(
+            env.get("WT_SESSION").map(String::as_str),
+            Some("wtd-dnacalc-workspace-42")
+        );
         assert_eq!(
             env.get("WT_PROFILE_ID").map(String::as_str),
             Some("wtd://dnacalc-workspace/foundation-pane")
         );
         assert_eq!(env.get("WT_WINDOW_ID").map(String::as_str), Some("1"));
-        assert_eq!(env.get("WTD_WORKSPACE").map(String::as_str), Some("DnaCalc Workspace"));
-        assert_eq!(env.get("WTD_PANE").map(String::as_str), Some("Foundation Pane"));
+        assert_eq!(
+            env.get("WTD_WORKSPACE").map(String::as_str),
+            Some("DnaCalc Workspace")
+        );
+        assert_eq!(
+            env.get("WTD_PANE").map(String::as_str),
+            Some("Foundation Pane")
+        );
         assert_eq!(env.get("WTD_SESSION_ID").map(String::as_str), Some("42"));
     }
 
@@ -1802,7 +1862,10 @@ mod tests {
             session_env.get("TERM_PROGRAM").map(String::as_str),
             Some("Windows_Terminal")
         );
-        assert_eq!(session_env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(
+            session_env.get("COLORTERM").map(String::as_str),
+            Some("truecolor")
+        );
         assert_eq!(
             session_env.get("WT_SESSION").map(String::as_str),
             Some("wtd-test-simple-1")
@@ -1811,8 +1874,37 @@ mod tests {
             session_env.get("WT_PROFILE_ID").map(String::as_str),
             Some("wtd://test-simple/editor")
         );
-        assert_eq!(session_env.get("WTD_WORKSPACE").map(String::as_str), Some("test-simple"));
-        assert_eq!(session_env.get("WTD_PANE").map(String::as_str), Some("editor"));
-        assert_eq!(session_env.get("WTD_SESSION_ID").map(String::as_str), Some("1"));
+        assert_eq!(
+            session_env.get("WTD_WORKSPACE").map(String::as_str),
+            Some("test-simple")
+        );
+        assert_eq!(
+            session_env.get("WTD_PANE").map(String::as_str),
+            Some("editor")
+        );
+        assert_eq!(
+            session_env.get("WTD_SESSION_ID").map(String::as_str),
+            Some("1")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn launched_sessions_infer_codex_driver_from_startup_command() {
+        let def = startup_command_workspace_def("codex --dangerously-skip-permissions");
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(10), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
+
+        let pane_id = inst.find_pane_by_name("agent").expect("agent pane");
+        let driver = inst.pane_driver(&pane_id).expect("driver");
+        assert_eq!(driver.profile, "codex");
+        assert_eq!(driver.submit_key, "Enter");
+        assert_eq!(driver.soft_break_key, None);
+
+        inst.close();
     }
 }

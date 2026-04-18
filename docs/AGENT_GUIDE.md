@@ -166,9 +166,6 @@ wtd send build-and-test/tests "cargo test --lib"
 # Send text without a trailing newline
 wtd send build-and-test/tests "partial input" --no-newline
 
-# Configure a pane once for agent-style prompting
-wtd configure-pane build-and-test/tests --driver-profile claude-code
-
 # Send a pane-aware prompt
 wtd prompt build-and-test/tests "Summarize the failing tests"
 
@@ -180,11 +177,13 @@ Use `wtd prompt` for interactive agent CLIs such as Codex, Claude Code, Gemini C
 
 The shortest agent-safe workflow to remember is:
 
-1. `wtd configure-pane <pane> --driver-profile <tool>` once per pane
-2. `wtd prompt <pane> "<prompt text>"` to write
-3. `wtd capture <pane>` to read what is on screen now
+1. `wtd prompt <pane> "<prompt text>"` to write
+2. `wtd capture <pane>` to read what is on screen now
+3. `wtd configure-pane <pane> ...` only when you need to override the inferred driver
 
 If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` as the low-level shell/text primitive.
+
+Agent panes launched directly as `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` and `capture`.
 
 WTD-launched sessions also advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
 
@@ -193,7 +192,7 @@ Built-in prompt driver profiles:
 | Profile | Submit key | Multiline strategy | Notes |
 |---------|------------|--------------------|-------|
 | `plain` | `Enter` | rejected | Default shell-like behavior |
-| `codex` | `Enter` | terminal-style multiline paste, then submit | Matches the working `Ctrl+Shift+V` path in `wtd-ui` |
+| `codex` | `Enter` | terminal-style multiline paste, then submit | Replaces the current draft first and matches the working `Ctrl+Shift+V` path in `wtd-ui` |
 | `claude-code` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `gemini-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `copilot-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |

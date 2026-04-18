@@ -272,9 +272,9 @@ tabs:
 
 For coding agents, the intended pattern is:
 
-1. `wtd configure-pane <pane> --driver-profile <tool>` once
-2. `wtd prompt <pane> "<prompt text>"` whenever you want to write
-3. `wtd capture <pane>` whenever you want to read the current screen
+1. `wtd prompt <pane> "<prompt text>"` whenever you want to write
+2. `wtd capture <pane>` whenever you want to read the current screen
+3. `wtd configure-pane <pane> ...` only when you want to override the inferred driver
 
 Keep `wtd send` for low-level text injection and shell commands, not agent prompting.
 
@@ -283,12 +283,12 @@ Built-in profiles:
 | Profile | Submit key | Multiline strategy | Notes |
 |---------|------------|--------------------|-------|
 | `plain` | `Enter` | rejected | Default shell-like behavior |
-| `codex` | `Enter` | terminal-style multiline paste, then submit | Matches the working `Ctrl+Shift+V` path in `wtd-ui` |
+| `codex` | `Enter` | terminal-style multiline paste, then submit | Replaces the current draft first and matches the working `Ctrl+Shift+V` path in `wtd-ui` |
 | `claude-code` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `gemini-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `copilot-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 
-Configure a pane interactively:
+Agent panes launched directly as `codex`, `claude`, `gemini`, or `copilot` are auto-detected. Configure a pane interactively only when you need to override that:
 
 ```bash
 wtd configure-pane dev/server --driver-profile claude-code
@@ -378,6 +378,7 @@ Processes communicate over a per-user Windows named pipe (`\\.\pipe\wtd-{SID}`),
 - **Semantic naming** lets you address panes by role (`dev/server`, `ops/prod-logs`) rather than positional IDs.
 - **Controller CLI** (`wtd`) can send text, send keys, capture output, and invoke actions on any named pane — without interrupting interactive use.
 - `wtd prompt` builds on pane-local driver profiles so automation can submit prompts safely across Codex, Claude Code, Gemini CLI, Copilot CLI, and shell-style sessions without remembering per-tool key rules.
+- Agent panes launched directly as `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` to write and `capture` to read.
 - `wtd inspect --json` exposes live viewport state including `onAlternate`, mouse mode, cursor shape/visibility, title, and current cell size so external drivers can reason about full-screen TUIs deterministically.
 - `wtd inspect --json` also reports the pane's effective prompt driver as `driverProfile`, `submitKey`, and `softBreakKey`.
 - Launched pane sessions advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and also expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.

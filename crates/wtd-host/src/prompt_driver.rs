@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use wtd_core::workspace::{
     PaneDriverDefinition, PaneDriverProfile, SessionLaunchDefinition, WorkspaceDefinition,
 };
@@ -20,6 +22,8 @@ pub struct EffectivePaneDriver {
     paste_mode: PromptPasteMode,
     #[serde(skip)]
     submit_delay_ms: u64,
+    #[serde(skip)]
+    prepare_keys: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -93,6 +97,14 @@ pub fn resolve_pane_driver(
     session_def: Option<&SessionLaunchDefinition>,
     workspace_def: Option<&WorkspaceDefinition>,
 ) -> EffectivePaneDriver {
+    resolve_pane_driver_with_inference(session_def, workspace_def, None)
+}
+
+pub fn resolve_pane_driver_with_inference(
+    session_def: Option<&SessionLaunchDefinition>,
+    workspace_def: Option<&WorkspaceDefinition>,
+    inferred_profile: Option<PaneDriverProfile>,
+) -> EffectivePaneDriver {
     let merged = merge_driver_definition(
         workspace_def
             .and_then(|workspace| workspace.defaults.as_ref())
@@ -104,6 +116,7 @@ pub fn resolve_pane_driver(
         merged
             .profile
             .clone()
+            .or(inferred_profile)
             .unwrap_or(PaneDriverProfile::Plain),
     );
 
@@ -127,16 +140,27 @@ pub fn build_prompt_input_plan(
 ) -> Result<PromptInputPlan, PromptError> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalized.split('\n').collect();
+    let mut body = if driver.prepare_keys.is_empty() {
+        Vec::new()
+    } else {
+        encode_key_specs(&driver.prepare_keys).map_err(|message| PromptError::InvalidKeySpec {
+            key_spec: driver.prepare_keys.join(", "),
+            message: message.to_string(),
+        })?
+    };
 
-    let body = match driver.multiline_mode {
+    let prompt_body = match driver.multiline_mode {
         PromptMultilineMode::Reject if lines.len() > 1 => {
             return Err(PromptError::MultilineUnsupported {
                 profile: driver.profile.clone(),
             });
         }
-        PromptMultilineMode::Reject | PromptMultilineMode::LiteralPaste => {
-            encode_prompt_text(&normalized, false, driver.paste_mode, bracketed_paste_active)
-        }
+        PromptMultilineMode::Reject | PromptMultilineMode::LiteralPaste => encode_prompt_text(
+            &normalized,
+            false,
+            driver.paste_mode,
+            bracketed_paste_active,
+        ),
         PromptMultilineMode::SoftBreakKey => {
             let mut out = Vec::new();
             for (index, line) in lines.iter().enumerate() {
@@ -161,6 +185,7 @@ pub fn build_prompt_input_plan(
             out
         }
     };
+    body.extend_from_slice(&prompt_body);
 
     let submit = encode_key_specs(&[driver.submit_key.clone()]).map_err(|message| {
         PromptError::InvalidKeySpec {
@@ -224,6 +249,7 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             multiline_mode: PromptMultilineMode::Reject,
             paste_mode: PromptPasteMode::BracketedIfEnabled,
             submit_delay_ms: 0,
+            prepare_keys: Vec::new(),
         },
         PaneDriverProfile::Codex => EffectivePaneDriver {
             profile: "codex".to_string(),
@@ -237,6 +263,9 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             // A larger gap than the low-level send+keys path is needed because
             // prompt writes both steps from within the host.
             submit_delay_ms: 200,
+            // New Codex panes often start with a suggested draft. Select all
+            // first so `wtd prompt` replaces that draft instead of appending.
+            prepare_keys: vec!["Ctrl+A".to_string()],
         },
         PaneDriverProfile::ClaudeCode => EffectivePaneDriver {
             profile: "claude-code".to_string(),
@@ -245,6 +274,7 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             multiline_mode: PromptMultilineMode::SoftBreakKey,
             paste_mode: PromptPasteMode::BracketedIfEnabled,
             submit_delay_ms: 0,
+            prepare_keys: Vec::new(),
         },
         PaneDriverProfile::GeminiCli => EffectivePaneDriver {
             profile: "gemini-cli".to_string(),
@@ -253,6 +283,7 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             multiline_mode: PromptMultilineMode::SoftBreakKey,
             paste_mode: PromptPasteMode::BracketedIfEnabled,
             submit_delay_ms: 0,
+            prepare_keys: Vec::new(),
         },
         PaneDriverProfile::CopilotCli => EffectivePaneDriver {
             profile: "copilot-cli".to_string(),
@@ -261,8 +292,19 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             multiline_mode: PromptMultilineMode::SoftBreakKey,
             paste_mode: PromptPasteMode::BracketedIfEnabled,
             submit_delay_ms: 0,
+            prepare_keys: Vec::new(),
         },
     }
+}
+
+pub fn infer_pane_driver_profile(
+    startup_command: Option<&str>,
+    executable: Option<&str>,
+) -> Option<PaneDriverProfile> {
+    startup_command
+        .and_then(first_command_token)
+        .and_then(profile_from_program_name)
+        .or_else(|| executable.and_then(profile_from_program_name))
 }
 
 fn profile_name_to_builtin(name: &str) -> Option<PaneDriverProfile> {
@@ -272,6 +314,57 @@ fn profile_name_to_builtin(name: &str) -> Option<PaneDriverProfile> {
         "claude-code" => Some(PaneDriverProfile::ClaudeCode),
         "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
         "copilot-cli" => Some(PaneDriverProfile::CopilotCli),
+        _ => None,
+    }
+}
+
+fn first_command_token(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let bytes = trimmed.as_bytes();
+    if bytes[0] == b'"' || bytes[0] == b'\'' {
+        let quote = bytes[0];
+        let rest = &trimmed[1..];
+        let end = rest.find(quote as char).unwrap_or(rest.len());
+        let token = &rest[..end];
+        if token.is_empty() {
+            None
+        } else {
+            Some(token)
+        }
+    } else {
+        trimmed.split_whitespace().next()
+    }
+}
+
+fn profile_from_program_name(program: &str) -> Option<PaneDriverProfile> {
+    let file_name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    let normalized = file_name
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    let normalized = normalized
+        .strip_suffix(".exe")
+        .or_else(|| normalized.strip_suffix(".cmd"))
+        .or_else(|| normalized.strip_suffix(".bat"))
+        .or_else(|| normalized.strip_suffix(".com"))
+        .or_else(|| normalized.strip_suffix(".ps1"))
+        .unwrap_or(&normalized);
+
+    match normalized {
+        "codex" => Some(PaneDriverProfile::Codex),
+        "claude" | "claude-code" => Some(PaneDriverProfile::ClaudeCode),
+        "gemini" | "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
+        "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
+            Some(PaneDriverProfile::CopilotCli)
+        }
         _ => None,
     }
 }
@@ -413,8 +506,39 @@ mod tests {
         );
 
         let plan = build_prompt_input_plan("first\nsecond", &driver, true).unwrap();
-        assert_eq!(plan.body, b"first\nsecond");
+        assert_eq!(plan.body, b"\x01first\nsecond");
         assert_eq!(plan.submit, b"\r");
         assert_eq!(plan.submit_delay_ms, 200);
+    }
+
+    #[test]
+    fn infer_driver_profile_prefers_startup_command() {
+        assert_eq!(
+            infer_pane_driver_profile(
+                Some("codex --dangerously-skip-permissions"),
+                Some("pwsh.exe")
+            ),
+            Some(PaneDriverProfile::Codex)
+        );
+    }
+
+    #[test]
+    fn infer_driver_profile_falls_back_to_executable_name() {
+        assert_eq!(
+            infer_pane_driver_profile(None, Some(r"C:\Tools\Claude-Code.exe")),
+            Some(PaneDriverProfile::ClaudeCode)
+        );
+        assert_eq!(
+            infer_pane_driver_profile(None, Some("gemini.cmd")),
+            Some(PaneDriverProfile::GeminiCli)
+        );
+    }
+
+    #[test]
+    fn infer_driver_profile_returns_none_for_unknown_programs() {
+        assert_eq!(
+            infer_pane_driver_profile(Some("python runner.py"), Some("pwsh.exe")),
+            None
+        );
     }
 }
