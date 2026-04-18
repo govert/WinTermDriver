@@ -432,6 +432,44 @@ impl LayoutTree {
         }
     }
 
+    // ── Structural transforms ────────────────────────────────────────────────
+
+    /// Toggle the orientation of the nearest ancestor split containing the
+    /// target pane.
+    pub fn toggle_split_orientation(&mut self, target: PaneId) -> Result<(), LayoutError> {
+        let target_idx = self.pane_idx(target)?;
+        let Some(split_idx) = self.nearest_ancestor_any_split(target_idx) else {
+            return Ok(());
+        };
+
+        if let NodeKind::Split { orientation, .. } = &mut self.node_mut(split_idx).kind {
+            *orientation = match orientation {
+                Orientation::Horizontal => Orientation::Vertical,
+                Orientation::Vertical => Orientation::Horizontal,
+            };
+        }
+        Ok(())
+    }
+
+    /// Set the nearest ancestor split containing the target pane to an even
+    /// 50/50 ratio.
+    pub fn equalize_pane_split(&mut self, target: PaneId) -> Result<(), LayoutError> {
+        let target_idx = self.pane_idx(target)?;
+        let Some(split_idx) = self.nearest_ancestor_any_split(target_idx) else {
+            return Ok(());
+        };
+
+        if let NodeKind::Split { ratio, .. } = &mut self.node_mut(split_idx).kind {
+            *ratio = 0.5;
+        }
+        Ok(())
+    }
+
+    /// Reset every split in the tab layout to an even 50/50 ratio.
+    pub fn equalize_tab(&mut self) {
+        self.equalize_subtree(self.root);
+    }
+
     // ── Resize ────────────────────────────────────────────────────────────────
 
     /// Resize the target pane by `cells` character cells in the given direction
@@ -564,6 +602,17 @@ impl LayoutTree {
         }
     }
 
+    fn nearest_ancestor_any_split(&self, target_idx: Idx) -> Option<Idx> {
+        let mut cur = target_idx;
+        loop {
+            let p = self.node(cur).parent?;
+            if matches!(self.node(p).kind, NodeKind::Split { .. }) {
+                return Some(p);
+            }
+            cur = p;
+        }
+    }
+
     fn nearest_pane_in_direction(
         &self,
         target: &PaneId,
@@ -628,6 +677,24 @@ impl LayoutTree {
     fn free_node(&mut self, idx: Idx) {
         self.nodes[idx] = None;
         self.free_list.push(idx);
+    }
+
+    fn equalize_subtree(&mut self, idx: Idx) {
+        let children = match &mut self.node_mut(idx).kind {
+            NodeKind::Pane { .. } => return,
+            NodeKind::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                *ratio = 0.5;
+                (*first, *second)
+            }
+        };
+
+        self.equalize_subtree(children.0);
+        self.equalize_subtree(children.1);
     }
 
     fn alloc_pane_id(&mut self) -> PaneId {
@@ -1077,6 +1144,51 @@ mod tests {
         let rects = tree.compute_rects(area());
         assert_eq!(rects[&top].height, 8);
         assert_eq!(rects[&bottom].height, 16);
+    }
+
+    #[test]
+    fn toggle_split_orientation_flips_nearest_ancestor_split() {
+        let mut tree = LayoutTree::new();
+        let left = tree.focus();
+        let right = tree.split_right(left.clone()).unwrap();
+
+        tree.toggle_split_orientation(right.clone()).unwrap();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&left], Rect::new(0, 0, 80, 12));
+        assert_eq!(rects[&right], Rect::new(0, 12, 80, 12));
+    }
+
+    #[test]
+    fn equalize_pane_split_resets_nearest_ratio_to_half() {
+        let mut tree = LayoutTree::new();
+        let left = tree.focus();
+        let right = tree.split_right(left.clone()).unwrap();
+        tree.resize_pane(left.clone(), ResizeDirection::GrowRight, 16, area())
+            .unwrap();
+
+        tree.equalize_pane_split(right.clone()).unwrap();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&left].width, 40);
+        assert_eq!(rects[&right].width, 40);
+    }
+
+    #[test]
+    fn equalize_tab_resets_nested_split_ratios() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.resize_pane(p1.clone(), ResizeDirection::GrowRight, 16, area())
+            .unwrap();
+        tree.resize_pane(p2.clone(), ResizeDirection::GrowDown, 6, area())
+            .unwrap();
+
+        tree.equalize_tab();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p1], Rect::new(0, 0, 40, 12));
+        assert_eq!(rects[&p3], Rect::new(0, 12, 40, 12));
+        assert_eq!(rects[&p2], Rect::new(40, 0, 40, 12));
+        assert_eq!(rects[&p4], Rect::new(40, 12, 40, 12));
     }
 
     // -- Focus traversal tests ---------------------------------------------

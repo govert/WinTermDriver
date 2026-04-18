@@ -439,6 +439,24 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Swap pane with the nearest pane on the right",
     });
     r.register(ActionDef {
+        name: "toggle-split-orientation",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Toggle the nearest ancestor split orientation",
+    });
+    r.register(ActionDef {
+        name: "equalize-pane-split",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Reset the nearest ancestor split to an even ratio",
+    });
+    r.register(ActionDef {
+        name: "equalize-tab",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Reset all tab splits to even ratios",
+    });
+    r.register(ActionDef {
         name: "rename-pane",
         target_type: TargetType::Pane,
         args: RENAME_PANE_ARGS,
@@ -747,6 +765,23 @@ impl ActionDispatcher {
                 )?;
                 Ok(ActionResult::Ok)
             }
+            "toggle-split-orientation" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().toggle_split_orientation(pane_id)?;
+                Ok(ActionResult::Ok)
+            }
+            "equalize-pane-split" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().equalize_pane_split(pane_id)?;
+                Ok(ActionResult::Ok)
+            }
+            "equalize-tab" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().equalize_tab();
+                Ok(ActionResult::Ok)
+            }
 
             // ── Resize ───────────────────────────────────────────────────
             "resize-pane-right" => {
@@ -950,8 +985,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, and change-profile totals 45 actions.
-        assert_eq!(r.len(), 45);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, and change-profile totals 48 actions.
+        assert_eq!(r.len(), 48);
     }
 
     #[test]
@@ -1346,6 +1381,122 @@ mod tests {
             .compute_rects(Rect::new(0, 0, 120, 40));
         assert_eq!(rects[&left].width, 48);
         assert_eq!(rects[&right].width, 72);
+    }
+
+    #[test]
+    fn dispatch_toggle_split_orientation_flips_layout_axis() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let right = panes[1].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "toggle-split-orientation",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let rects = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&left], Rect::new(0, 0, 120, 20));
+        assert_eq!(rects[&right], Rect::new(0, 20, 120, 20));
+    }
+
+    #[test]
+    fn dispatch_equalize_pane_split_resets_nearest_ratio() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let right = panes[1].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "resize-pane-right",
+                &json!({"amount": 24}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "equalize-pane-split",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let rects = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&left].width, 60);
+        assert_eq!(rects[&right].width, 60);
+    }
+
+    #[test]
+    fn dispatch_equalize_tab_resets_nested_layout_ratios() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let top_right = panes[1].clone();
+        let bottom_right = panes[2].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "resize-pane-right",
+                &json!({"amount": 24}),
+                Some(top_right.clone()),
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "resize-pane-down",
+                &json!({"amount": 8}),
+                Some(bottom_right.clone()),
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(&mut workspace, "equalize-tab", &json!({}), None)
+            .unwrap();
+
+        let rects = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&left], Rect::new(0, 0, 60, 40));
+        assert_eq!(rects[&top_right], Rect::new(60, 0, 60, 20));
+        assert_eq!(rects[&bottom_right], Rect::new(60, 20, 60, 20));
     }
 
     #[test]
