@@ -35,7 +35,7 @@ use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
 use wtd_ui::snapshot::{rebuild_from_snapshot, PaneSession, SnapshotRebuild, SnapshotTab};
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
-use wtd_ui::window::{self, MouseEventKind};
+use wtd_ui::window::{self, InputEvent, MouseEventKind};
 
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 32.0;
@@ -476,6 +476,38 @@ fn bound_action_name(classifier: &InputClassifier, event: &KeyEvent) -> Option<S
         }
         _ => None,
     }
+}
+
+fn key_name_for_text_char(ch: char) -> Option<wtd_ui::input::KeyName> {
+    use wtd_ui::input::KeyName;
+
+    Some(match ch {
+        'A'..='Z' | 'a'..='z' => KeyName::Char(ch.to_ascii_uppercase()),
+        '0'..='9' => KeyName::Digit((ch as u8) - b'0'),
+        ' ' => KeyName::Space,
+        '+' => KeyName::Plus,
+        '-' => KeyName::Minus,
+        '%' => KeyName::Percent,
+        '"' => KeyName::DoubleQuote,
+        ',' => KeyName::Comma,
+        '.' => KeyName::Period,
+        '/' => KeyName::Slash,
+        '\\' => KeyName::Backslash,
+        '[' => KeyName::LeftBracket,
+        ']' => KeyName::RightBracket,
+        ';' => KeyName::Semicolon,
+        '\'' => KeyName::Apostrophe,
+        '`' => KeyName::Backtick,
+        _ => return None,
+    })
+}
+
+fn text_char_to_key_event(ch: char) -> Option<KeyEvent> {
+    Some(KeyEvent {
+        key: key_name_for_text_char(ch)?,
+        modifiers: Default::default(),
+        character: Some(ch),
+    })
 }
 
 const TAB_MENU_NEW_TAB: u32 = 1;
@@ -1624,78 +1656,204 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             }
         }
 
-        // ── Process keyboard events ──────────────────────────────
-        for event in window::drain_key_events() {
-            // When the command palette is visible, it consumes all keyboard input.
-            if command_palette.is_visible() {
-                if let Some(bound_name) = bound_action_name(prefix_sm.classifier(), &event) {
-                    if command_palette.has_action(&bound_name) {
-                        let simple_ref = wtd_core::workspace::ActionReference::Simple(bound_name);
-                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                            dispatch_action(
-                                &simple_ref,
-                                &mut command_palette,
-                                &mut tab_strip,
-                                active_tab,
-                                bridge.as_ref(),
-                                connected,
-                                &mut mouse_handler,
-                            );
+        // ── Process keyboard/text input events ───────────────────
+        for input_event in window::drain_input_events() {
+            match input_event {
+                InputEvent::Key(event) => {
+                    // When the command palette is visible, it consumes all keyboard input.
+                    if command_palette.is_visible() {
+                        if let Some(bound_name) = bound_action_name(prefix_sm.classifier(), &event)
+                        {
+                            if command_palette.has_action(&bound_name) {
+                                let simple_ref =
+                                    wtd_core::workspace::ActionReference::Simple(bound_name);
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    dispatch_action(
+                                        &simple_ref,
+                                        &mut command_palette,
+                                        &mut tab_strip,
+                                        active_tab,
+                                        bridge.as_ref(),
+                                        connected,
+                                        &mut mouse_handler,
+                                    );
+                                }
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                                continue;
+                            }
+                        }
+                        match command_palette.on_key_event(&event) {
+                            PaletteResult::Dismissed => {
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                            PaletteResult::Action(action_ref) => {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    dispatch_action(
+                                        &action_ref,
+                                        &mut command_palette,
+                                        &mut tab_strip,
+                                        active_tab,
+                                        bridge.as_ref(),
+                                        connected,
+                                        &mut mouse_handler,
+                                    );
+                                }
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                            PaletteResult::Consumed => {
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Normal mode — run through prefix state machine (§21.3).
+                    let output = prefix_sm.process(&event);
+                    match output {
+                        PrefixOutput::DispatchAction(action_ref) => {
+                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                dispatch_action(
+                                    &action_ref,
+                                    &mut command_palette,
+                                    &mut tab_strip,
+                                    active_tab,
+                                    bridge.as_ref(),
+                                    connected,
+                                    &mut mouse_handler,
+                                );
+                            }
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                        }
+                        PrefixOutput::SendToSession(bytes) => {
+                            if let Some(ref bridge) = bridge {
+                                if connected && !bytes.is_empty() {
+                                    if let Some(active_tab) =
+                                        active_tab_ref(&tabs, active_tab_index)
+                                    {
+                                        let focused = active_tab.layout_tree.focus();
+                                        let reset_live_view = prepare_pane_for_live_input(
+                                            &mut mouse_handler,
+                                            active_tab,
+                                            &focused,
+                                            true,
+                                        );
+                                        if let Some(ps) = active_tab.pane_sessions.get(&focused) {
+                                            bridge.send_input(ps.session_id.clone(), bytes);
+                                        }
+                                        if reset_live_view {
+                                            force_immediate_paint = true;
+                                            needs_paint = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        PrefixOutput::Consumed => {
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                        }
+                    }
+                }
+                InputEvent::Text(text) => {
+                    if text.is_empty() {
+                        continue;
+                    }
+
+                    if command_palette.is_visible() {
+                        match command_palette.on_text_input(&text) {
+                            PaletteResult::Dismissed => {
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                            PaletteResult::Action(action_ref) => {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    dispatch_action(
+                                        &action_ref,
+                                        &mut command_palette,
+                                        &mut tab_strip,
+                                        active_tab,
+                                        bridge.as_ref(),
+                                        connected,
+                                        &mut mouse_handler,
+                                    );
+                                }
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                            PaletteResult::Consumed => {
+                                force_immediate_paint = true;
+                                needs_paint = true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if prefix_sm.is_prefix_active() {
+                        for ch in text.chars() {
+                            if let Some(event) = text_char_to_key_event(ch) {
+                                let output = prefix_sm.process(&event);
+                                match output {
+                                    PrefixOutput::DispatchAction(action_ref) => {
+                                        if let Some(active_tab) =
+                                            active_tab_ref(&tabs, active_tab_index)
+                                        {
+                                            dispatch_action(
+                                                &action_ref,
+                                                &mut command_palette,
+                                                &mut tab_strip,
+                                                active_tab,
+                                                bridge.as_ref(),
+                                                connected,
+                                                &mut mouse_handler,
+                                            );
+                                        }
+                                    }
+                                    PrefixOutput::SendToSession(bytes) => {
+                                        if let Some(ref bridge) = bridge {
+                                            if connected && !bytes.is_empty() {
+                                                if let Some(active_tab) =
+                                                    active_tab_ref(&tabs, active_tab_index)
+                                                {
+                                                    let focused = active_tab.layout_tree.focus();
+                                                    let reset_live_view =
+                                                        prepare_pane_for_live_input(
+                                                            &mut mouse_handler,
+                                                            active_tab,
+                                                            &focused,
+                                                            true,
+                                                        );
+                                                    if let Some(ps) =
+                                                        active_tab.pane_sessions.get(&focused)
+                                                    {
+                                                        bridge.send_input(
+                                                            ps.session_id.clone(),
+                                                            bytes,
+                                                        );
+                                                    }
+                                                    if reset_live_view {
+                                                        force_immediate_paint = true;
+                                                        needs_paint = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    PrefixOutput::Consumed => {}
+                                }
+                            }
                         }
                         force_immediate_paint = true;
                         needs_paint = true;
                         continue;
                     }
-                }
-                match command_palette.on_key_event(&event) {
-                    PaletteResult::Dismissed => {
-                        force_immediate_paint = true;
-                        needs_paint = true;
-                    }
-                    PaletteResult::Action(action_ref) => {
-                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                            dispatch_action(
-                                &action_ref,
-                                &mut command_palette,
-                                &mut tab_strip,
-                                active_tab,
-                                bridge.as_ref(),
-                                connected,
-                                &mut mouse_handler,
-                            );
-                        }
-                        force_immediate_paint = true;
-                        needs_paint = true;
-                    }
-                    PaletteResult::Consumed => {
-                        force_immediate_paint = true;
-                        needs_paint = true;
-                    }
-                }
-                continue;
-            }
 
-            // Normal mode — run through prefix state machine (§21.3).
-            let output = prefix_sm.process(&event);
-            match output {
-                PrefixOutput::DispatchAction(action_ref) => {
-                    if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                        dispatch_action(
-                            &action_ref,
-                            &mut command_palette,
-                            &mut tab_strip,
-                            active_tab,
-                            bridge.as_ref(),
-                            connected,
-                            &mut mouse_handler,
-                        );
-                    }
-                    force_immediate_paint = true;
-                    needs_paint = true;
-                }
-                PrefixOutput::SendToSession(bytes) => {
                     if let Some(ref bridge) = bridge {
-                        if connected && !bytes.is_empty() {
+                        if connected {
                             if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                                 let focused = active_tab.layout_tree.focus();
                                 let reset_live_view = prepare_pane_for_live_input(
@@ -1705,7 +1863,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     true,
                                 );
                                 if let Some(ps) = active_tab.pane_sessions.get(&focused) {
-                                    bridge.send_input(ps.session_id.clone(), bytes);
+                                    bridge.send_input(
+                                        ps.session_id.clone(),
+                                        text.as_bytes().to_vec(),
+                                    );
                                 }
                                 if reset_live_view {
                                     force_immediate_paint = true;
@@ -1714,10 +1875,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             }
                         }
                     }
-                }
-                PrefixOutput::Consumed => {
-                    force_immediate_paint = true;
-                    needs_paint = true;
                 }
             }
         }

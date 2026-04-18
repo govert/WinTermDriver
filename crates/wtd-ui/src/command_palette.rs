@@ -330,6 +330,41 @@ impl CommandPalette {
         self.refilter();
     }
 
+    pub fn on_text_input(&mut self, text: &str) -> PaletteResult {
+        if !self.visible {
+            return PaletteResult::Consumed;
+        }
+
+        let append_char = |palette: &mut Self, ch: char| {
+            if !ch.is_control() {
+                palette.query.push(ch);
+            }
+        };
+
+        match &self.mode {
+            PaletteMode::Prompt { .. } => {
+                for ch in text.chars() {
+                    append_char(self, ch);
+                }
+                PaletteResult::Consumed
+            }
+            PaletteMode::Selector { .. } => {
+                for ch in text.chars() {
+                    append_char(self, ch);
+                }
+                self.refilter();
+                PaletteResult::Consumed
+            }
+            _ => {
+                for ch in text.chars() {
+                    append_char(self, ch);
+                }
+                self.refilter();
+                PaletteResult::Consumed
+            }
+        }
+    }
+
     /// Process a keyboard event while the palette is visible.
     pub fn on_key_event(&mut self, event: &KeyEvent) -> PaletteResult {
         if !self.visible {

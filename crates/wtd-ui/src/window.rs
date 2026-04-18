@@ -148,20 +148,30 @@ pub fn drain_mouse_events() -> Vec<MouseEvent> {
 
 // ── Keyboard events ──────────────────────────────────────────────────────────
 
-static KEY_EVENTS: OnceLock<Mutex<Vec<KeyEvent>>> = OnceLock::new();
-
-fn key_queue() -> &'static Mutex<Vec<KeyEvent>> {
-    KEY_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+/// Input events captured from the window proc.
+#[derive(Debug, Clone)]
+pub enum InputEvent {
+    /// Non-text keyboard input such as navigation keys, function keys, or
+    /// keys that may participate in bindings/chords.
+    Key(KeyEvent),
+    /// Committed text input from the OS text-input path (WM_CHAR/WM_SYSCHAR).
+    Text(String),
 }
 
-/// Drain all pending keyboard events from the queue.
-pub fn drain_key_events() -> Vec<KeyEvent> {
-    let mut queue = key_queue().lock().unwrap();
+static INPUT_EVENTS: OnceLock<Mutex<Vec<InputEvent>>> = OnceLock::new();
+
+fn input_queue() -> &'static Mutex<Vec<InputEvent>> {
+    INPUT_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Drain all pending keyboard/text input events from the queue.
+pub fn drain_input_events() -> Vec<InputEvent> {
+    let mut queue = input_queue().lock().unwrap();
     std::mem::take(&mut *queue)
 }
 
 /// Build a `KeyEvent` from a Win32 WM_KEYDOWN / WM_SYSKEYDOWN message and
-/// push it to the event queue. Modifier-only keys (Shift, Ctrl, Alt) are
+/// push it to the input queue. Modifier-only keys (Shift, Ctrl, Alt) are
 /// ignored.
 fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
     let vk = (wparam.0 & 0xFFFF) as u16;
@@ -180,11 +190,26 @@ fn push_key_event(wparam: WPARAM, lparam: LPARAM) {
         let modifiers = current_modifiers();
         let character = vk_to_char(vk, scan_code);
 
-        key_queue().lock().unwrap().push(KeyEvent {
-            key,
-            modifiers,
-            character,
-        });
+        input_queue()
+            .lock()
+            .unwrap()
+            .push(InputEvent::Key(KeyEvent {
+                key,
+                modifiers,
+                character,
+            }));
+    }
+}
+
+fn push_text_event(wparam: WPARAM) {
+    let codepoint = wparam.0 as u32;
+    if let Some(ch) = char::from_u32(codepoint) {
+        if !ch.is_control() {
+            input_queue()
+                .lock()
+                .unwrap()
+                .push(InputEvent::Text(ch.to_string()));
+        }
     }
 }
 
@@ -547,6 +572,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             push_key_event(wparam, lparam);
             LRESULT(0)
         }
+        WM_CHAR => {
+            push_text_event(wparam);
+            LRESULT(0)
+        }
+        WM_SYSCHAR => {
+            push_text_event(wparam);
+            LRESULT(0)
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
@@ -563,6 +596,10 @@ mod tests {
         WINDOW_MINIMIZED.store(false, Ordering::Relaxed);
         NEEDS_PAINT.store(false, Ordering::Relaxed);
         clear_resize_signal();
+    }
+
+    fn reset_input_queue() {
+        input_queue().lock().unwrap().clear();
     }
 
     #[test]
@@ -590,5 +627,29 @@ mod tests {
         record_resize(800, 600);
 
         assert_eq!(take_resize(), Some((800, 600)));
+    }
+
+    #[test]
+    fn push_text_event_enqueues_printable_text() {
+        reset_input_queue();
+
+        push_text_event(WPARAM('é' as usize));
+
+        let events = drain_input_events();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            InputEvent::Text(text) => assert_eq!(text, "é"),
+            other => panic!("expected text event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_text_event_ignores_control_characters() {
+        reset_input_queue();
+
+        push_text_event(WPARAM('\r' as usize));
+        push_text_event(WPARAM('\t' as usize));
+
+        assert!(drain_input_events().is_empty());
     }
 }
