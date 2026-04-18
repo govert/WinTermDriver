@@ -427,6 +427,30 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Relaunch pane using the selected profile",
     });
     r.register(ActionDef {
+        name: "resize-pane-right",
+        target_type: TargetType::Pane,
+        args: RESIZE_ARGS,
+        description: "Move the pane splitter to the right",
+    });
+    r.register(ActionDef {
+        name: "resize-pane-left",
+        target_type: TargetType::Pane,
+        args: RESIZE_ARGS,
+        description: "Move the pane splitter to the left",
+    });
+    r.register(ActionDef {
+        name: "resize-pane-down",
+        target_type: TargetType::Pane,
+        args: RESIZE_ARGS,
+        description: "Move the pane splitter downward",
+    });
+    r.register(ActionDef {
+        name: "resize-pane-up",
+        target_type: TargetType::Pane,
+        args: RESIZE_ARGS,
+        description: "Move the pane splitter upward",
+    });
+    r.register(ActionDef {
         name: "resize-pane-grow-right",
         target_type: TargetType::Pane,
         args: RESIZE_ARGS,
@@ -664,6 +688,54 @@ impl ActionDispatcher {
             }
 
             // ── Resize ───────────────────────────────────────────────────
+            "resize-pane-right" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().resize_pane_toward(
+                    pane_id,
+                    Direction::Right,
+                    amount,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
+            "resize-pane-left" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().resize_pane_toward(
+                    pane_id,
+                    Direction::Left,
+                    amount,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
+            "resize-pane-down" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().resize_pane_toward(
+                    pane_id,
+                    Direction::Down,
+                    amount,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
+            "resize-pane-up" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+                let tab = find_tab_for_pane_mut(workspace, &pane_id)?;
+                tab.layout_mut().resize_pane_toward(
+                    pane_id,
+                    Direction::Up,
+                    amount,
+                    self.viewport,
+                )?;
+                Ok(ActionResult::Ok)
+            }
             "resize-pane-grow-right" => {
                 let pane_id = self.resolve_pane(workspace, target_pane_id)?;
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
@@ -817,8 +889,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus change-profile totals 37 actions.
-        assert_eq!(r.len(), 37);
+        // §20.3 plus directional resize aliases and change-profile totals 41 actions.
+        assert_eq!(r.len(), 41);
     }
 
     #[test]
@@ -1075,6 +1147,64 @@ mod tests {
 
         let new_focus = workspace.tabs()[0].layout().focus();
         assert_ne!(original_focus, new_focus);
+    }
+
+    #[test]
+    fn dispatch_resize_pane_right_moves_splitter_right_from_right_pane() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let right = panes[1].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "resize-pane-right",
+                &json!({"amount": 12}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let rects = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&left].width, 72);
+        assert_eq!(rects[&right].width, 48);
+    }
+
+    #[test]
+    fn dispatch_resize_pane_left_moves_splitter_left_from_left_pane() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let left = panes[0].clone();
+        let right = panes[1].clone();
+
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "resize-pane-left",
+                &json!({"amount": 12}),
+                Some(left.clone()),
+            )
+            .unwrap();
+
+        let rects = workspace.tabs()[0]
+            .layout()
+            .compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&left].width, 48);
+        assert_eq!(rects[&right].width, 72);
     }
 
     #[test]

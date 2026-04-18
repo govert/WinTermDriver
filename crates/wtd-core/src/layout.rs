@@ -53,7 +53,7 @@ pub enum Direction {
     Right,
 }
 
-/// Direction for pane resize actions (§18.9).
+/// Direction for spatial pane resize movement (§18.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeDirection {
     GrowRight,
@@ -432,40 +432,65 @@ impl LayoutTree {
         cells: u16,
         total: Rect,
     ) -> Result<(), LayoutError> {
-        let target_idx = self.pane_idx(target)?;
-
         let (orient, growing) = match dir {
             ResizeDirection::GrowRight => (Orientation::Horizontal, true),
             ResizeDirection::ShrinkRight => (Orientation::Horizontal, false),
             ResizeDirection::GrowDown => (Orientation::Vertical, true),
             ResizeDirection::ShrinkDown => (Orientation::Vertical, false),
         };
+        self.resize_against_orientation(target, orient, growing, cells, total)
+    }
 
-        // Walk up to find nearest ancestor split with matching orientation.
-        let mut cur = target_idx;
-        let mut split_idx = None;
-        let mut in_first = true;
-        loop {
-            let p = match self.node(cur).parent {
-                Some(p) => p,
-                None => break,
-            };
-            if let NodeKind::Split {
-                orientation, first, ..
-            } = &self.node(p).kind
-            {
-                in_first = *first == cur;
-                if *orientation == orient {
-                    split_idx = Some(p);
-                    break;
-                }
-            }
-            cur = p;
-        }
+    /// Move the nearest relevant splitter in the given arrow-key direction,
+    /// independent of whether the focused pane is the first or second child of
+    /// that split. This matches Windows Terminal-style Alt+Shift+Arrow
+    /// semantics.
+    pub fn resize_pane_toward(
+        &mut self,
+        target: PaneId,
+        dir: Direction,
+        cells: u16,
+        total: Rect,
+    ) -> Result<(), LayoutError> {
+        let target_idx = self.pane_idx(target.clone())?;
+        let Some((_split_idx, in_first, orient)) = (match dir {
+            Direction::Left | Direction::Right => self
+                .nearest_ancestor_split(target_idx, Orientation::Horizontal)
+                .map(|(split_idx, in_first)| (split_idx, in_first, Orientation::Horizontal)),
+            Direction::Up | Direction::Down => self
+                .nearest_ancestor_split(target_idx, Orientation::Vertical)
+                .map(|(split_idx, in_first)| (split_idx, in_first, Orientation::Vertical)),
+        }) else {
+            return Ok(());
+        };
 
-        let split_idx = match split_idx {
-            Some(s) => s,
-            None => return Ok(()),
+        let growing = match (dir, orient.clone(), in_first) {
+            (Direction::Right, Orientation::Horizontal, true) => true,
+            (Direction::Right, Orientation::Horizontal, false) => false,
+            (Direction::Left, Orientation::Horizontal, true) => false,
+            (Direction::Left, Orientation::Horizontal, false) => true,
+            (Direction::Down, Orientation::Vertical, true) => true,
+            (Direction::Down, Orientation::Vertical, false) => false,
+            (Direction::Up, Orientation::Vertical, true) => false,
+            (Direction::Up, Orientation::Vertical, false) => true,
+            _ => unreachable!(),
+        };
+
+        self.resize_against_orientation(target, orient, growing, cells, total)
+    }
+
+    fn resize_against_orientation(
+        &mut self,
+        target: PaneId,
+        orient: Orientation,
+        growing: bool,
+        cells: u16,
+        total: Rect,
+    ) -> Result<(), LayoutError> {
+        let target_idx = self.pane_idx(target)?;
+        let Some((split_idx, in_first)) = self.nearest_ancestor_split(target_idx, orient.clone())
+        else {
+            return Ok(());
         };
 
         let split_rect = self.node_rect(split_idx, total);
@@ -489,21 +514,18 @@ impl LayoutTree {
             _ => unreachable!(),
         };
 
-        // Grow in the pane's favour: increase ratio when pane is first child
-        // and growing, or when pane is second child and shrinking.
         let new_ratio = if (in_first && growing) || (!in_first && !growing) {
             old_ratio + delta
         } else {
             old_ratio - delta
         };
 
-        // Clamp to [lo, hi] ensuring minimum pane sizes.
         let min_first = self.min_dim(first_idx, &orient) as f64 / total_dim as f64;
         let max_ratio = 1.0 - self.min_dim(second_idx, &orient) as f64 / total_dim as f64;
         let lo = min_first.max(0.1);
         let hi = max_ratio.min(0.9);
         if lo > hi {
-            return Ok(()); // impossible to satisfy constraints
+            return Ok(());
         }
         let clamped = new_ratio.clamp(lo, hi);
 
@@ -511,6 +533,23 @@ impl LayoutTree {
             *ratio = clamped;
         }
         Ok(())
+    }
+
+    fn nearest_ancestor_split(&self, target_idx: Idx, orient: Orientation) -> Option<(Idx, bool)> {
+        let mut cur = target_idx;
+        loop {
+            let p = self.node(cur).parent?;
+            if let NodeKind::Split {
+                orientation, first, ..
+            } = &self.node(p).kind
+            {
+                let in_first = *first == cur;
+                if *orientation == orient {
+                    return Some((p, in_first));
+                }
+            }
+            cur = p;
+        }
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────
@@ -951,6 +990,48 @@ mod tests {
 
         let rects = tree.compute_rects(area());
         assert_eq!(rects[&p1], Rect::new(0, 0, 40, 24)); // unchanged
+    }
+
+    #[test]
+    fn resize_toward_right_moves_splitter_right_even_from_right_pane() {
+        let mut tree = LayoutTree::new();
+        let left = tree.focus();
+        let right = tree.split_right(left.clone()).unwrap();
+
+        tree.resize_pane_toward(right.clone(), Direction::Right, 8, area())
+            .unwrap();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&left].width, 48);
+        assert_eq!(rects[&right].width, 32);
+    }
+
+    #[test]
+    fn resize_toward_left_moves_splitter_left_even_from_left_pane() {
+        let mut tree = LayoutTree::new();
+        let left = tree.focus();
+        let right = tree.split_right(left.clone()).unwrap();
+
+        tree.resize_pane_toward(left.clone(), Direction::Left, 8, area())
+            .unwrap();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&left].width, 32);
+        assert_eq!(rects[&right].width, 48);
+    }
+
+    #[test]
+    fn resize_toward_up_moves_splitter_up_even_from_bottom_pane() {
+        let mut tree = LayoutTree::new();
+        let top = tree.focus();
+        let bottom = tree.split_down(top.clone()).unwrap();
+
+        tree.resize_pane_toward(bottom.clone(), Direction::Up, 4, area())
+            .unwrap();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&top].height, 8);
+        assert_eq!(rects[&bottom].height, 16);
     }
 
     // -- Focus traversal tests ---------------------------------------------

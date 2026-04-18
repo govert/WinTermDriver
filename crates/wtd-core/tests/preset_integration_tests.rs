@@ -8,10 +8,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use wtd_core::global_settings::{
-    default_bindings, effective_bindings, load_global_settings, merge_bindings,
-    windows_terminal_bindings,
-};
+use wtd_core::global_settings::{effective_bindings, load_global_settings, merge_bindings};
 use wtd_core::workspace::{ActionReference, BindingPreset, BindingsDefinition};
 use wtd_core::GlobalSettings;
 
@@ -88,10 +85,10 @@ bindings:
     expect_simple("Alt+Up", "focus-pane-up");
     expect_simple("Alt+Left", "focus-pane-left");
     expect_simple("Alt+Right", "focus-pane-right");
-    expect_simple("Alt+Shift+Down", "resize-pane-grow-down");
-    expect_simple("Alt+Shift+Up", "resize-pane-shrink-down");
-    expect_simple("Alt+Shift+Right", "resize-pane-grow-right");
-    expect_simple("Alt+Shift+Left", "resize-pane-shrink-right");
+    expect_simple("Alt+Shift+Down", "resize-pane-down");
+    expect_simple("Alt+Shift+Up", "resize-pane-up");
+    expect_simple("Alt+Shift+Right", "resize-pane-right");
+    expect_simple("Alt+Shift+Left", "resize-pane-left");
 
     // Secondary clipboard bindings
     expect_simple("Ctrl+Insert", "copy");

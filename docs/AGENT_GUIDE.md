@@ -260,7 +260,7 @@ wtd action build-and-test/tests close-pane
 wtd action build-and-test/server change-profile profile=wsl
 
 # Resize a pane
-wtd action build-and-test/server resize-pane-grow-right cells=5
+wtd action build-and-test/server resize-pane-right cells=5
 ```
 
 ### Target paths
@@ -621,10 +621,14 @@ Available layout actions:
 | `focus-pane-down` | Focus the pane below |
 | `focus-pane-left` | Focus the pane to the left |
 | `focus-pane-right` | Focus the pane to the right |
-| `resize-pane-grow-right` | Grow pane rightward (`cells=N`) |
-| `resize-pane-grow-down` | Grow pane downward (`cells=N`) |
-| `resize-pane-shrink-right` | Shrink pane from right (`cells=N`) |
-| `resize-pane-shrink-down` | Shrink pane from bottom (`cells=N`) |
+| `resize-pane-right` | Move the nearest vertical splitter right (`cells=N`) |
+| `resize-pane-left` | Move the nearest vertical splitter left (`cells=N`) |
+| `resize-pane-down` | Move the nearest horizontal splitter down (`cells=N`) |
+| `resize-pane-up` | Move the nearest horizontal splitter up (`cells=N`) |
+| `resize-pane-grow-right` | Grow the focused pane rightward (`cells=N`) |
+| `resize-pane-grow-down` | Grow the focused pane downward (`cells=N`) |
+| `resize-pane-shrink-right` | Shrink the focused pane from the right (`cells=N`) |
+| `resize-pane-shrink-down` | Shrink the focused pane from the bottom (`cells=N`) |
 | `rename-pane` | Rename a pane (`name=new-name`) |
 | `restart-session` | Restart the session in a pane |
 

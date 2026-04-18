@@ -107,10 +107,10 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 | `moveFocus (nextInOrder)` | (none) | `focus-next-pane` | (none) | `~` | WTD chord: `Ctrl+B, o` |
 | `moveFocus (prevInOrder)` | `ctrl+alt+left` | `focus-prev-pane` | (none) | `→` | WTD has action, no default binding |
 | `togglePaneZoom` | (none) | `zoom-pane` | (none) | `~` | WTD chord: `Ctrl+B, z` |
-| `resizePane (down)` | `alt+shift+down` | `resize-pane-grow-down` | (none) | `→` | No WTD single-stroke default |
-| `resizePane (up)` | `alt+shift+up` | `resize-pane-shrink-down` | (none) | `→` | Semantic: shrink from below = WT resize-up |
-| `resizePane (right)` | `alt+shift+right` | `resize-pane-grow-right` | (none) | `→` | No WTD single-stroke default |
-| `resizePane (left)` | `alt+shift+left` | `resize-pane-shrink-right` | (none) | `→` | Semantic: shrink from right = WT resize-left |
+| `resizePane (down)` | `alt+shift+down` | `resize-pane-down` | (none) | `→` | Move the nearest horizontal splitter down |
+| `resizePane (up)` | `alt+shift+up` | `resize-pane-up` | (none) | `→` | Move the nearest horizontal splitter up |
+| `resizePane (right)` | `alt+shift+right` | `resize-pane-right` | (none) | `→` | Move the nearest vertical splitter right |
+| `resizePane (left)` | `alt+shift+left` | `resize-pane-left` | (none) | `→` | Move the nearest vertical splitter left |
 | `swapPane (direction)` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `toggleSplitOrientation` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `toggleBroadcastInput` | (none) | (none) | (none) | `✗` | No WTD equivalent |
@@ -272,10 +272,10 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 | `Alt+Up` | `focus-pane-up` | `alt+up` | WT uses single-stroke; WTD default uses chord |
 | `Alt+Left` | `focus-pane-left` | `alt+left` | WT uses single-stroke; WTD default uses chord |
 | `Alt+Right` | `focus-pane-right` | `alt+right` | WT uses single-stroke; WTD default uses chord |
-| `Alt+Shift+Down` | `resize-pane-grow-down` | `alt+shift+down` | WT resize-down → WTD grow-down |
-| `Alt+Shift+Up` | `resize-pane-shrink-down` | `alt+shift+up` | WT resize-up → WTD shrink-down |
-| `Alt+Shift+Right` | `resize-pane-grow-right` | `alt+shift+right` | WT resize-right → WTD grow-right |
-| `Alt+Shift+Left` | `resize-pane-shrink-right` | `alt+shift+left` | WT resize-left → WTD shrink-right |
+| `Alt+Shift+Down` | `resize-pane-down` | `alt+shift+down` | Moves the nearest horizontal splitter down, matching WT |
+| `Alt+Shift+Up` | `resize-pane-up` | `alt+shift+up` | Moves the nearest horizontal splitter up, matching WT |
+| `Alt+Shift+Right` | `resize-pane-right` | `alt+shift+right` | Moves the nearest vertical splitter right, matching WT |
+| `Alt+Shift+Left` | `resize-pane-left` | `alt+shift+left` | Moves the nearest vertical splitter left, matching WT |
 | `Ctrl+Insert` | `copy` | `ctrl+insert` | Secondary WT binding |
 | `Shift+Insert` | `paste` | `shift+insert` | Secondary WT binding |
 

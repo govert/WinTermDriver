@@ -328,21 +328,19 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
         ),
         (
             "Alt+Shift+Down",
-            ActionReference::Simple("resize-pane-grow-down".to_string()),
+            ActionReference::Simple("resize-pane-down".to_string()),
         ),
-        // WT resize-up = shrink from below
         (
             "Alt+Shift+Up",
-            ActionReference::Simple("resize-pane-shrink-down".to_string()),
+            ActionReference::Simple("resize-pane-up".to_string()),
         ),
         (
             "Alt+Shift+Right",
-            ActionReference::Simple("resize-pane-grow-right".to_string()),
+            ActionReference::Simple("resize-pane-right".to_string()),
         ),
-        // WT resize-left = shrink from right
         (
             "Alt+Shift+Left",
-            ActionReference::Simple("resize-pane-shrink-right".to_string()),
+            ActionReference::Simple("resize-pane-left".to_string()),
         ),
         // ── Clipboard ───────────────────────────────────────────────────────
         ("Ctrl+Shift+C", ActionReference::Simple("copy".to_string())),
@@ -697,27 +695,19 @@ mod tests {
         );
         assert_eq!(
             keys.get("Alt+Shift+Down"),
-            Some(&ActionReference::Simple(
-                "resize-pane-grow-down".to_string()
-            ))
+            Some(&ActionReference::Simple("resize-pane-down".to_string()))
         );
         assert_eq!(
             keys.get("Alt+Shift+Up"),
-            Some(&ActionReference::Simple(
-                "resize-pane-shrink-down".to_string()
-            ))
+            Some(&ActionReference::Simple("resize-pane-up".to_string()))
         );
         assert_eq!(
             keys.get("Alt+Shift+Right"),
-            Some(&ActionReference::Simple(
-                "resize-pane-grow-right".to_string()
-            ))
+            Some(&ActionReference::Simple("resize-pane-right".to_string()))
         );
         assert_eq!(
             keys.get("Alt+Shift+Left"),
-            Some(&ActionReference::Simple(
-                "resize-pane-shrink-right".to_string()
-            ))
+            Some(&ActionReference::Simple("resize-pane-left".to_string()))
         );
 
         // Clipboard — primary and secondary WT bindings
