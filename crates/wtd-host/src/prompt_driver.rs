@@ -370,6 +370,7 @@ fn profile_from_program_name(program: &str) -> Option<PaneDriverProfile> {
 
     match normalized {
         "codex" => Some(PaneDriverProfile::Codex),
+        "pi" => Some(PaneDriverProfile::Pi),
         "claude" | "claude-code" => Some(PaneDriverProfile::ClaudeCode),
         "gemini" | "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
         "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
@@ -566,6 +567,10 @@ mod tests {
         assert_eq!(
             infer_pane_driver_profile(None, Some("gemini.cmd")),
             Some(PaneDriverProfile::GeminiCli)
+        );
+        assert_eq!(
+            infer_pane_driver_profile(None, Some(r"C:\Tools\pi.exe")),
+            Some(PaneDriverProfile::Pi)
         );
     }
 

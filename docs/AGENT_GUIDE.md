@@ -183,7 +183,7 @@ The shortest agent-safe workflow to remember is:
 
 If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` as the low-level shell/text primitive.
 
-Agent panes launched directly as `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` and `capture`.
+Agent panes launched directly as `pi`, `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` and `capture`.
 
 For launch profiles, `wtd-ui` now keeps the path simple: creating a new tab or split opens a profile selector, and the command palette exposes `change-profile` to relaunch the focused pane with a different launch profile.
 

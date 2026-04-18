@@ -1944,6 +1944,26 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn launched_sessions_infer_pi_driver_from_startup_command() {
+        let def = startup_command_workspace_def("pi");
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(11), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
+
+        let pane_id = inst.find_pane_by_name("agent").expect("agent pane");
+        let driver = inst.pane_driver(&pane_id).expect("driver");
+        assert_eq!(driver.profile, "pi");
+        assert_eq!(driver.submit_key, "Enter");
+        assert_eq!(driver.soft_break_key.as_deref(), Some("Shift+Enter"));
+
+        inst.close();
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn split_spawn_preserves_inherited_startup_command() {
         let marker = "WTD_SPLIT_STARTUP_MARKER_Q07";
         let def = startup_command_workspace_def(&format!("echo {marker}"));
