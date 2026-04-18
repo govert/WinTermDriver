@@ -186,6 +186,8 @@ The shortest agent-safe workflow to remember is:
 
 If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` as the low-level shell/text primitive.
 
+WTD-launched sessions also advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |

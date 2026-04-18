@@ -732,12 +732,14 @@ impl WorkspaceInstance {
 
         let session_id = SessionId(self.next_session_id);
         self.next_session_id += 1;
+        let mut session_env = resolved.env;
+        apply_runtime_terminal_env(&mut session_env, &self.name, &pane_name, &session_id);
 
         let config = SessionConfig {
             executable: resolved.executable,
             args: resolved.args,
             cwd: resolved.cwd,
-            env: resolved.env,
+            env: session_env,
             restart_policy: RestartPolicy::Never,
             startup_command: None,
             size: self.default_size,
@@ -1012,12 +1014,19 @@ impl WorkspaceInstance {
 
                 let session_id = SessionId(self.next_session_id);
                 self.next_session_id += 1;
+                let mut session_env = resolved.env;
+                apply_runtime_terminal_env(
+                    &mut session_env,
+                    &self.name,
+                    pane_name,
+                    &session_id,
+                );
 
                 let config = SessionConfig {
                     executable: resolved.executable,
                     args: resolved.args,
                     cwd: resolved.cwd,
-                    env: resolved.env,
+                    env: session_env,
                     restart_policy: restart_policy.clone(),
                     startup_command: session_launch.startup_command.clone(),
                     size: session_launch
@@ -1193,6 +1202,55 @@ fn collect_pane_defs_recursive(
 
 fn pty_size_from_definition(size: &TerminalSizeDefinition) -> PtySize {
     PtySize::new(size.cols.max(1), size.rows.max(1))
+}
+
+fn apply_runtime_terminal_env(
+    env: &mut HashMap<String, String>,
+    workspace_name: &str,
+    pane_name: &str,
+    session_id: &SessionId,
+) {
+    let workspace_slug = terminal_identity_slug(workspace_name);
+    let pane_slug = terminal_identity_slug(pane_name);
+
+    env.insert("TERM_PROGRAM".to_string(), "Windows_Terminal".to_string());
+    env.insert(
+        "TERM_PROGRAM_VERSION".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
+    env.insert("COLORTERM".to_string(), "truecolor".to_string());
+    env.insert(
+        "WT_SESSION".to_string(),
+        format!("wtd-{}-{}", workspace_slug, session_id),
+    );
+    env.insert(
+        "WT_PROFILE_ID".to_string(),
+        format!("wtd://{}/{}", workspace_slug, pane_slug),
+    );
+    env.insert("WT_WINDOW_ID".to_string(), "1".to_string());
+
+    env.insert("WTD_TERMINAL".to_string(), "1".to_string());
+    env.insert("WTD_WORKSPACE".to_string(), workspace_name.to_string());
+    env.insert("WTD_PANE".to_string(), pane_name.to_string());
+    env.insert("WTD_SESSION_ID".to_string(), session_id.to_string());
+}
+
+fn terminal_identity_slug(value: &str) -> String {
+    let mut slug = String::with_capacity(value.len());
+    let mut last_was_sep = false;
+    for ch in value.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            last_was_sep = false;
+            ch.to_ascii_lowercase()
+        } else if !last_was_sep {
+            last_was_sep = true;
+            '-'
+        } else {
+            continue;
+        };
+        slug.push(normalized);
+    }
+    slug.trim_matches('-').to_string()
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1693,5 +1751,68 @@ mod tests {
             assert_eq!(snap.tabs.len(), 1);
             assert_eq!(snap.tabs[0].focus.as_deref(), Some("bottom"));
         }
+    }
+
+    #[test]
+    fn runtime_terminal_env_stamps_wt_and_wtd_identity() {
+        let mut env = HashMap::new();
+        env.insert("TERM_PROGRAM".to_string(), "stale".to_string());
+        env.insert("WT_SESSION".to_string(), "stale".to_string());
+
+        apply_runtime_terminal_env(
+            &mut env,
+            "DnaCalc Workspace",
+            "Foundation Pane",
+            &SessionId(42),
+        );
+
+        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("Windows_Terminal"));
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(env.get("WT_SESSION").map(String::as_str), Some("wtd-dnacalc-workspace-42"));
+        assert_eq!(
+            env.get("WT_PROFILE_ID").map(String::as_str),
+            Some("wtd://dnacalc-workspace/foundation-pane")
+        );
+        assert_eq!(env.get("WT_WINDOW_ID").map(String::as_str), Some("1"));
+        assert_eq!(env.get("WTD_WORKSPACE").map(String::as_str), Some("DnaCalc Workspace"));
+        assert_eq!(env.get("WTD_PANE").map(String::as_str), Some("Foundation Pane"));
+        assert_eq!(env.get("WTD_SESSION_ID").map(String::as_str), Some("42"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn launched_sessions_receive_runtime_terminal_identity() {
+        let def = simple_workspace_def();
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(9), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
+
+        let pane_id = inst.tabs()[0].layout().focus();
+        let session_id = match inst.pane_state(&pane_id) {
+            Some(PaneState::Attached { session_id }) => session_id.clone(),
+            other => panic!("expected attached pane, got {other:?}"),
+        };
+        let session = inst.session(&session_id).expect("session should exist");
+        let session_env = &session.config().env;
+
+        assert_eq!(
+            session_env.get("TERM_PROGRAM").map(String::as_str),
+            Some("Windows_Terminal")
+        );
+        assert_eq!(session_env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(
+            session_env.get("WT_SESSION").map(String::as_str),
+            Some("wtd-test-simple-1")
+        );
+        assert_eq!(
+            session_env.get("WT_PROFILE_ID").map(String::as_str),
+            Some("wtd://test-simple/editor")
+        );
+        assert_eq!(session_env.get("WTD_WORKSPACE").map(String::as_str), Some("test-simple"));
+        assert_eq!(session_env.get("WTD_PANE").map(String::as_str), Some("editor"));
+        assert_eq!(session_env.get("WTD_SESSION_ID").map(String::as_str), Some("1"));
     }
 }

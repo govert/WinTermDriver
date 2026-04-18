@@ -380,6 +380,7 @@ Processes communicate over a per-user Windows named pipe (`\\.\pipe\wtd-{SID}`),
 - `wtd prompt` builds on pane-local driver profiles so automation can submit prompts safely across Codex, Claude Code, Gemini CLI, Copilot CLI, and shell-style sessions without remembering per-tool key rules.
 - `wtd inspect --json` exposes live viewport state including `onAlternate`, mouse mode, cursor shape/visibility, title, and current cell size so external drivers can reason about full-screen TUIs deterministically.
 - `wtd inspect --json` also reports the pane's effective prompt driver as `driverProfile`, `submitKey`, and `softBreakKey`.
+- Launched pane sessions advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and also expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
 - `wtd capture --vt` returns a replayable VT snapshot of the current visible screen, including alternate-screen and input-mode state, so a driver or helper pane can mirror a live TUI without waiting for fresh output.
 - **Prefix chords** provide tmux-like keyboard navigation (`Ctrl+B,%` to split, `Ctrl+B,o` to cycle focus).
 
