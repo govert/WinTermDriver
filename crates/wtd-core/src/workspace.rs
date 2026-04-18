@@ -188,11 +188,7 @@ pub struct SessionLaunchDefinition {
 pub struct PaneDriverDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<PaneDriverProfile>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "submitKey"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "submitKey")]
     pub submit_key: Option<String>,
     #[serde(
         default,
@@ -209,6 +205,7 @@ pub struct PaneDriverDefinition {
 pub enum PaneDriverProfile {
     Plain,
     Codex,
+    Pi,
     ClaudeCode,
     GeminiCli,
     CopilotCli,

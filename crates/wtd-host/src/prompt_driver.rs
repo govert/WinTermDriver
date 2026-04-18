@@ -267,6 +267,15 @@ fn built_in_driver(profile: PaneDriverProfile) -> EffectivePaneDriver {
             // first so `wtd prompt` replaces that draft instead of appending.
             prepare_keys: vec!["Ctrl+A".to_string()],
         },
+        PaneDriverProfile::Pi => EffectivePaneDriver {
+            profile: "pi".to_string(),
+            submit_key: "Enter".to_string(),
+            soft_break_key: Some("Shift+Enter".to_string()),
+            multiline_mode: PromptMultilineMode::SoftBreakKey,
+            paste_mode: PromptPasteMode::BracketedIfEnabled,
+            submit_delay_ms: 0,
+            prepare_keys: Vec::new(),
+        },
         PaneDriverProfile::ClaudeCode => EffectivePaneDriver {
             profile: "claude-code".to_string(),
             submit_key: "Enter".to_string(),
@@ -311,6 +320,7 @@ fn profile_name_to_builtin(name: &str) -> Option<PaneDriverProfile> {
     match name {
         "plain" => Some(PaneDriverProfile::Plain),
         "codex" => Some(PaneDriverProfile::Codex),
+        "pi" => Some(PaneDriverProfile::Pi),
         "claude-code" => Some(PaneDriverProfile::ClaudeCode),
         "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
         "copilot-cli" => Some(PaneDriverProfile::CopilotCli),
@@ -453,6 +463,31 @@ mod tests {
 
         let plan = build_prompt_input_plan("first\nsecond", &driver, false).unwrap();
         assert_eq!(plan.body, b"first\x1b[13;2usecond");
+        assert_eq!(plan.submit, b"\r");
+        assert_eq!(plan.submit_delay_ms, 0);
+    }
+
+    #[test]
+    fn build_prompt_input_pi_profile_uses_shift_enter_soft_breaks() {
+        let driver = resolve_pane_driver(
+            Some(&SessionLaunchDefinition {
+                driver: Some(PaneDriverDefinition {
+                    profile: Some(PaneDriverProfile::Pi),
+                    submit_key: None,
+                    soft_break_key: None,
+                    disable_soft_break: false,
+                }),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        let plan = build_prompt_input_plan("first\nsecond", &driver, true).unwrap();
+        assert_eq!(driver.profile, "pi");
+        assert_eq!(
+            plan.body,
+            b"\x1b[200~first\x1b[201~\x1b[13;2u\x1b[200~second\x1b[201~"
+        );
         assert_eq!(plan.submit, b"\r");
         assert_eq!(plan.submit_delay_ms, 0);
     }

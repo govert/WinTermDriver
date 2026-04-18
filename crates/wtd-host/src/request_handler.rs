@@ -497,6 +497,7 @@ fn parse_driver_profile(value: &str) -> Option<PaneDriverProfile> {
     match value {
         "plain" => Some(PaneDriverProfile::Plain),
         "codex" => Some(PaneDriverProfile::Codex),
+        "pi" => Some(PaneDriverProfile::Pi),
         "claude-code" => Some(PaneDriverProfile::ClaudeCode),
         "gemini-cli" => Some(PaneDriverProfile::GeminiCli),
         "copilot-cli" => Some(PaneDriverProfile::CopilotCli),
@@ -1556,7 +1557,7 @@ impl HostRequestHandler {
                             id,
                             ErrorCode::InvalidArgument,
                             &format!(
-                                "unknown driver profile '{}'; expected plain, codex, claude-code, gemini-cli, or copilot-cli",
+                                "unknown driver profile '{}'; expected plain, codex, pi, claude-code, gemini-cli, or copilot-cli",
                                 profile
                             ),
                         ));
@@ -2096,7 +2097,10 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
-    use super::{encode_mouse_input, encode_send_input, scoped_session_key, HostRequestHandler};
+    use super::{
+        encode_mouse_input, encode_send_input, parse_driver_profile, scoped_session_key,
+        HostRequestHandler,
+    };
     use crate::output_broadcaster::BroadcastEvent;
     use crate::workspace_instance::WorkspaceInstance;
     use serde_json::json;
@@ -2129,6 +2133,14 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn parse_driver_profile_accepts_pi() {
+        assert_eq!(
+            parse_driver_profile("pi"),
+            Some(wtd_core::workspace::PaneDriverProfile::Pi)
+        );
     }
 
     #[test]

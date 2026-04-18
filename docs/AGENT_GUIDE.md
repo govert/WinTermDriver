@@ -195,6 +195,7 @@ Built-in prompt driver profiles:
 |---------|------------|--------------------|-------|
 | `plain` | `Enter` | rejected | Default shell-like behavior |
 | `codex` | `Enter` | terminal-style multiline paste, then submit | Replaces the current draft first and matches the working `Ctrl+Shift+V` path in `wtd-ui` |
+| `pi` | `Enter` | `Shift+Enter` soft breaks | First-class pi host behavior |
 | `claude-code` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `gemini-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 | `copilot-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
