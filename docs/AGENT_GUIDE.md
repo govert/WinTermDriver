@@ -178,15 +178,23 @@ wtd keys build-and-test/server Ctrl+C
 
 Use `wtd prompt` for interactive agent CLIs such as Codex, Claude Code, Gemini CLI, and Copilot CLI. It expands multiline prompts using the pane's configured `softBreakKey` and then submits with the configured `submitKey`. Keep `wtd send` for low-level shell input and literal text injection.
 
+The shortest agent-safe workflow to remember is:
+
+1. `wtd configure-pane <pane> --driver-profile <tool>` once per pane
+2. `wtd prompt <pane> "<prompt text>"` to write
+3. `wtd capture <pane>` to read what is on screen now
+
+If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` as the low-level shell/text primitive.
+
 Built-in prompt driver profiles:
 
-| Profile | Submit key | Soft break key | Notes |
-|---------|------------|----------------|-------|
-| `plain` | `Enter` | none | Default shell-like behavior |
-| `codex` | `Enter` | none | Multiline prompts are rejected |
-| `claude-code` | `Enter` | `Shift+Enter` | Multiline supported |
-| `gemini-cli` | `Enter` | `Shift+Enter` | Multiline supported |
-| `copilot-cli` | `Enter` | `Shift+Enter` | Multiline supported |
+| Profile | Submit key | Multiline strategy | Notes |
+|---------|------------|--------------------|-------|
+| `plain` | `Enter` | rejected | Default shell-like behavior |
+| `codex` | `Enter` | terminal-style multiline paste, then submit | Matches the working `Ctrl+Shift+V` path in `wtd-ui` |
+| `claude-code` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
+| `gemini-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
+| `copilot-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 
 ### Capturing output
 

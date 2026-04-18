@@ -12,7 +12,12 @@ use clap_complete::Shell;
 ///
 /// Sends commands to the wtd-host background process.
 #[derive(Debug, Parser)]
-#[command(name = "wtd", version, about)]
+#[command(
+    name = "wtd",
+    version,
+    about,
+    after_long_help = "Coding-agent quick path:\n  1. `wtd configure-pane <target> --driver-profile <tool>` once\n  2. `wtd prompt <target> \"<text>\"` to write\n  3. `wtd capture <target>` to read what is on screen now\n\nUse `wtd send` only for low-level shell/text input and `wtd keys` when you need an explicit keypress."
+)]
 pub struct Cli {
     /// Output in JSON format instead of human-readable text.
     #[arg(long, global = true)]
@@ -120,10 +125,13 @@ pub enum Command {
     },
 
     /// Configure pane-local prompt driving behavior.
+    ///
+    /// For coding-agent panes, run this once per pane and then use
+    /// `wtd prompt` for every prompt you send.
     ConfigurePane {
         /// Target path (e.g. workspace/pane).
         target: String,
-        /// Built-in driver profile to apply.
+        /// Built-in driver profile to apply (`codex`, `claude-code`, `gemini-cli`, `copilot-cli`, `plain`).
         #[arg(long, value_enum)]
         driver_profile: Option<DriverProfileArg>,
         /// Key spec used to submit the prompt.
@@ -152,7 +160,10 @@ pub enum Command {
     },
 
     // ── Input commands ──────────────────────────────────────────────
-    /// Send text to a session.
+    /// Send low-level text to a session.
+    ///
+    /// This is the shell/text primitive. For coding-agent panes, prefer
+    /// `wtd prompt`.
     Send {
         /// Target path (e.g. workspace/pane).
         target: String,
@@ -163,11 +174,16 @@ pub enum Command {
         no_newline: bool,
     },
 
-    /// Send a pane-configured prompt to a session.
+    /// Send a prompt using the pane's configured driver profile.
+    ///
+    /// Recommended agent flow:
+    /// 1. `wtd configure-pane <target> --driver-profile <tool>` once
+    /// 2. `wtd prompt <target> "<text>"` to write
+    /// 3. `wtd capture <target>` to read what the agent is showing now
     Prompt {
         /// Target path (e.g. workspace/pane).
         target: String,
-        /// Prompt text to send. Embedded newlines are expanded using the pane driver.
+        /// Prompt text to send. Embedded newlines are handled using the pane driver.
         text: String,
     },
 
@@ -375,6 +391,7 @@ pub fn print_completions(shell: Shell) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use clap::Parser;
 
     /// Helper: parse a command line, returning the parsed Cli or the error string.
@@ -729,6 +746,53 @@ mod tests {
                 clear_driver: false,
             }) if target == "dev/server" && key == "Shift+Enter"
         ));
+    }
+
+    #[test]
+    fn prompt_help_is_agent_oriented() {
+        let mut cmd = Cli::command();
+        let sub = cmd.find_subcommand_mut("prompt").unwrap();
+        let mut help = Vec::new();
+        sub.write_long_help(&mut help).unwrap();
+        let text = String::from_utf8(help).unwrap();
+        assert!(text.contains("Recommended agent flow"));
+        assert!(text.contains("wtd configure-pane <target> --driver-profile <tool>"));
+        assert!(text.contains("wtd capture <target>"));
+    }
+
+    #[test]
+    fn configure_pane_help_mentions_prompt_workflow() {
+        let mut cmd = Cli::command();
+        let sub = cmd.find_subcommand_mut("configure-pane").unwrap();
+        let mut help = Vec::new();
+        sub.write_long_help(&mut help).unwrap();
+        let text = String::from_utf8(help).unwrap();
+        assert!(text.contains("run this once per pane"));
+        assert!(text.contains("use `wtd prompt`"));
+    }
+
+    #[test]
+    fn root_help_has_agent_quick_path() {
+        let mut cmd = Cli::command();
+        let mut help = Vec::new();
+        cmd.write_long_help(&mut help).unwrap();
+        let text = String::from_utf8(help).unwrap();
+        assert!(text.contains("Coding-agent quick path"));
+        assert!(text.contains("wtd configure-pane <target> --driver-profile <tool>"));
+        assert!(text.contains("wtd prompt <target> \"<text>\""));
+        assert!(text.contains("wtd capture <target>"));
+    }
+
+    #[test]
+    fn send_help_steers_agents_to_prompt() {
+        let mut cmd = Cli::command();
+        let sub = cmd.find_subcommand_mut("send").unwrap();
+        let mut help = Vec::new();
+        sub.write_long_help(&mut help).unwrap();
+        let text = String::from_utf8(help).unwrap();
+        assert!(text.contains("low-level"));
+        assert!(text.contains("prefer"));
+        assert!(text.contains("wtd prompt"));
     }
 
     #[test]

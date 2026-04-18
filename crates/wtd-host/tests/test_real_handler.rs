@@ -647,13 +647,19 @@ tabs:
     .await
     .unwrap();
     let multi_resp = read_frame(&mut client).await.unwrap();
-    assert_eq!(multi_resp.msg_type, ErrorResponse::TYPE_NAME);
-    let multi_err: ErrorResponse = multi_resp.extract_payload().unwrap();
-    assert_eq!(multi_err.code, ErrorCode::InvalidArgument);
+    assert_eq!(multi_resp.msg_type, OkResponse::TYPE_NAME);
+
+    let multi_prompted = poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.contains("ONE") && text.contains("TWO"),
+        Duration::from_secs(10),
+    )
+    .await;
     assert!(
-        multi_err.message.contains("does not support multiline prompts"),
-        "unexpected multiline error: {}",
-        multi_err.message
+        multi_prompted.contains("ONE") && multi_prompted.contains("TWO"),
+        "multiline codex-style prompt should paste and submit in cmd.exe, got:\n{}",
+        multi_prompted
     );
 
     let save_path = tmp_dir.join("saved-driver.yaml");

@@ -270,15 +270,23 @@ tabs:
 
 `wtd prompt` expands prompt text using pane-local driver settings. This is the reliable path for driving agent CLIs that need different soft-break and submit keys.
 
+For coding agents, the intended pattern is:
+
+1. `wtd configure-pane <pane> --driver-profile <tool>` once
+2. `wtd prompt <pane> "<prompt text>"` whenever you want to write
+3. `wtd capture <pane>` whenever you want to read the current screen
+
+Keep `wtd send` for low-level text injection and shell commands, not agent prompting.
+
 Built-in profiles:
 
-| Profile | Submit key | Soft break key | Notes |
-|---------|------------|----------------|-------|
-| `plain` | `Enter` | none | Default shell-like behavior |
-| `codex` | `Enter` | none | Multiline prompts are rejected |
-| `claude-code` | `Enter` | `Shift+Enter` | Multiline supported |
-| `gemini-cli` | `Enter` | `Shift+Enter` | Multiline supported |
-| `copilot-cli` | `Enter` | `Shift+Enter` | Multiline supported |
+| Profile | Submit key | Multiline strategy | Notes |
+|---------|------------|--------------------|-------|
+| `plain` | `Enter` | rejected | Default shell-like behavior |
+| `codex` | `Enter` | terminal-style multiline paste, then submit | Matches the working `Ctrl+Shift+V` path in `wtd-ui` |
+| `claude-code` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
+| `gemini-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
+| `copilot-cli` | `Enter` | `Shift+Enter` soft breaks | Multiline supported |
 
 Configure a pane interactively:
 

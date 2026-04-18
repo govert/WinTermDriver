@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -27,7 +28,7 @@ use crate::ipc_server::{ClientId, RequestHandler};
 use crate::output_broadcaster::progress_info_from_screen;
 use crate::output_broadcaster::BroadcastEvent;
 use crate::prompt_driver::{
-    build_prompt_input, encode_send_input, pane_driver_definition_from_effective,
+    build_prompt_input_plan, encode_send_input, pane_driver_definition_from_effective,
     resolve_pane_driver,
 };
 use crate::target_resolver::{resolve_by_id, resolve_target};
@@ -1035,12 +1036,12 @@ impl HostRequestHandler {
             .pane_driver(&pane_id)
             .cloned()
             .unwrap_or_else(|| resolve_pane_driver(None, None));
-        let input = match build_prompt_input(
+        let plan = match build_prompt_input_plan(
             &prompt.text,
             &driver,
             session.screen().bracketed_paste(),
         ) {
-            Ok(input) => input,
+            Ok(plan) => plan,
             Err(e) => {
                 return Some(error_envelope(
                     id,
@@ -1050,13 +1051,38 @@ impl HostRequestHandler {
             }
         };
 
-        match session.write_input(&input) {
-            Ok(()) => Some(Envelope::new(id, &OkResponse {})),
-            Err(e) => Some(error_envelope(
-                id,
-                ErrorCode::SessionFailed,
-                &format!("write failed: {}", e),
-            )),
+        match session.write_input(&plan.body) {
+            Ok(()) => {}
+            Err(e) => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    &format!("write failed: {}", e),
+                ));
+            }
+        }
+
+        if plan.submit_delay_ms > 0 {
+            match session.schedule_write_input(
+                plan.submit,
+                Duration::from_millis(plan.submit_delay_ms),
+            ) {
+                Ok(()) => Some(Envelope::new(id, &OkResponse {})),
+                Err(e) => Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    &format!("write failed: {}", e),
+                )),
+            }
+        } else {
+            match session.write_input(&plan.submit) {
+                Ok(()) => Some(Envelope::new(id, &OkResponse {})),
+                Err(e) => Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    &format!("write failed: {}", e),
+                )),
+            }
         }
     }
 

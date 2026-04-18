@@ -198,6 +198,25 @@ impl Session {
         Ok(())
     }
 
+    /// Schedule bytes to be written to the child's stdin after a delay.
+    pub fn schedule_write_input(
+        &self,
+        data: Vec<u8>,
+        delay: Duration,
+    ) -> Result<(), SessionError> {
+        let input_handle_raw = self
+            .pty
+            .as_ref()
+            .ok_or(SessionError::NotRunning)?
+            .input_write_handle()
+            .0 as usize;
+        thread::spawn(move || {
+            thread::sleep(delay);
+            write_raw(input_handle_raw, &data);
+        });
+        Ok(())
+    }
+
     /// Resize the PTY and on-host screen buffer.
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), SessionError> {
         let cols = cols.max(1);
