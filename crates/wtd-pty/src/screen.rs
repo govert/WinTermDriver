@@ -465,6 +465,47 @@ fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
     out
 }
 
+fn emit_cells_as_vt_line(out: &mut Vec<u8>, cells: &[Cell], cols: usize) {
+    let mut col = 0usize;
+    while col < cols {
+        let cell = &cells[col];
+
+        if cell.attrs.is_wide_continuation() {
+            col += 1;
+            continue;
+        }
+
+        let run_fg = cell.fg;
+        let run_bg = cell.bg;
+        let run_attrs = cell.attrs;
+        let run_start = col;
+        let mut run_end = col + 1;
+
+        while run_end < cols {
+            let next = &cells[run_end];
+            if next.fg == run_fg
+                && next.bg == run_bg
+                && next.attrs.sgr_eq(run_attrs)
+                && !next.attrs.is_wide_continuation()
+            {
+                run_end += 1;
+            } else {
+                break;
+            }
+        }
+
+        out.extend_from_slice(&build_sgr_params(run_fg, run_bg, run_attrs));
+        for idx in run_start..run_end {
+            let rc = &cells[idx];
+            if !rc.attrs.is_wide_continuation() {
+                out.extend_from_slice(rc.text.as_str().as_bytes());
+            }
+        }
+
+        col = run_end;
+    }
+}
+
 /// Extract plain text from a cell slice, skipping wide-char continuation cells.
 pub fn cells_to_string(cells: &[Cell]) -> String {
     let mut s = String::with_capacity(cells.len());
@@ -915,53 +956,7 @@ impl ScreenBuffer {
                 // Position cursor at start of this row (rows are 1-based in VT).
                 out.extend_from_slice(format!("\x1b[{};1H", row + 1).as_bytes());
             }
-
-            let mut col = 0usize;
-            while col < self.cols {
-                let cell = g.cell(row, col);
-
-                // Skip wide-char continuation cells (the character was already
-                // emitted with the left-half cell).
-                if cell.attrs.is_wide_continuation() {
-                    col += 1;
-                    continue;
-                }
-
-                // Find the extent of a run with identical visual attributes.
-                let run_fg = cell.fg;
-                let run_bg = cell.bg;
-                let run_attrs = cell.attrs;
-                let run_start = col;
-                let mut run_end = col + 1;
-
-                while run_end < self.cols {
-                    let nc = g.cell(row, run_end);
-                    if nc.fg == run_fg
-                        && nc.bg == run_bg
-                        && nc.attrs.sgr_eq(run_attrs)
-                        && !nc.attrs.is_wide_continuation()
-                    {
-                        run_end += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                // Emit SGR for this run.
-                let sgr = build_sgr_params(run_fg, run_bg, run_attrs);
-                out.extend_from_slice(&sgr);
-
-                // Emit each character in the run.
-                for c in run_start..run_end {
-                    let rc = g.cell(row, c);
-                    if rc.attrs.is_wide_continuation() {
-                        continue;
-                    }
-                    out.extend_from_slice(rc.text.as_str().as_bytes());
-                }
-
-                col = run_end;
-            }
+            emit_cells_as_vt_line(&mut out, g.row_slice(row), self.cols);
         }
 
         // Reset SGR so subsequent output starts clean.
@@ -1000,6 +995,21 @@ impl ScreenBuffer {
             out.extend_from_slice(b"\x1b[?2004h");
         }
 
+        out
+    }
+
+    /// Serialize retained scrollback rows as a VT replay stream.
+    ///
+    /// Replaying these bytes into a fresh `ScreenBuffer` rebuilds local
+    /// scrollback history. Consumers should then apply `to_vt_snapshot()` to
+    /// restore the exact current viewport, cursor, title, and mode state.
+    pub fn to_vt_scrollback(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for row in &self.scrollback {
+            emit_cells_as_vt_line(&mut out, row, self.cols);
+            out.extend_from_slice(b"\r\n");
+        }
+        out.extend_from_slice(b"\x1b[0m");
         out
     }
 

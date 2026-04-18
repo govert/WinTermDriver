@@ -49,6 +49,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
         .collect::<Vec<_>>();
     let pane_states = state["paneStates"].as_object()?;
     let session_screens = state["sessionScreens"].as_object();
+    let session_history = state["sessionHistory"].as_object();
     let session_sizes = state["sessionSizes"].as_object();
     let session_titles = state["sessionTitles"].as_object();
     let session_progress = state["sessionProgress"].as_object();
@@ -84,14 +85,37 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                             let session_size = session_sizes
                                 .and_then(|sizes| sizes.get(&session_id))
                                 .and_then(session_size_from_value);
+                            let scrollback_rows = session_history
+                                .and_then(|history| history.get(&session_id))
+                                .and_then(|value| value.get("scrollbackRows"))
+                                .and_then(|value| value.as_u64())
+                                .and_then(|value| usize::try_from(value).ok())
+                                .unwrap_or(0);
                             let session_title = session_titles
                                 .and_then(|title_map| title_map.get(&session_id))
                                 .and_then(|value| value.as_str())
                                 .map(str::trim)
                                 .filter(|value| !value.is_empty())
                                 .map(str::to_owned);
+                            let max_scrollback = 1000usize.max(scrollback_rows);
                             if let Some((session_cols, session_rows)) = session_size {
-                                screen = ScreenBuffer::new(session_cols, session_rows, 1000);
+                                screen =
+                                    ScreenBuffer::new(session_cols, session_rows, max_scrollback);
+                            } else if max_scrollback > 1000 {
+                                screen = ScreenBuffer::new(cols, rows, max_scrollback);
+                            }
+
+                            if let Some(b64) = session_history
+                                .and_then(|history| history.get(&session_id))
+                                .and_then(|value| value.get("scrollbackVt"))
+                                .and_then(|v| v.as_str())
+                            {
+                                let data = base64_decode(b64);
+                                if !data.is_empty() {
+                                    screen.advance(&data);
+                                    let blank_lines = "\r\n".repeat(screen.rows());
+                                    screen.advance(blank_lines.as_bytes());
+                                }
                             }
 
                             if let Some(b64) = session_screens
@@ -321,6 +345,70 @@ mod tests {
         assert!(
             visible.contains("SCREEN_SEED_MARKER"),
             "replayed snapshot should contain SCREEN_SEED_MARKER; got:\n{visible}"
+        );
+    }
+
+    #[test]
+    fn rebuild_snapshot_replays_scrollback_before_visible_seed() {
+        let history = base64_encode(b"line1\r\nline2\r\nline3\r\nline4\r\nline5\r\n");
+        let visible = base64_encode(b"\x1b[2J\x1b[Htail-visible\r\n");
+        let state = json!({
+            "name": "history-seed-test",
+            "tabs": [{
+                "name": "main",
+                "layout": {
+                    "type": "pane",
+                    "name": "shell"
+                },
+                "panes": [42]
+            }],
+            "paneStates": {
+                "42": {
+                    "type": "attached",
+                    "sessionId": "session-42"
+                }
+            },
+            "sessionSizes": {
+                "session-42": {
+                    "cols": 80,
+                    "rows": 2
+                }
+            },
+            "sessionHistory": {
+                "session-42": {
+                    "scrollbackRows": 5,
+                    "scrollbackVt": history
+                }
+            },
+            "sessionScreens": {
+                "session-42": visible
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let tab = &rebuilt.tabs[0];
+        let focused = tab.layout_tree.focus();
+        let screen = rebuilt.tabs[0]
+            .screens
+            .get(&focused)
+            .expect("focused pane should have a screen");
+
+        assert!(screen.scrollback_len() >= 3);
+        let oldest = screen
+            .scrollback_row(0)
+            .map(|row| {
+                let mut text = String::new();
+                for cell in row {
+                    text.push_str(cell.text.as_str());
+                }
+                text.trim_end_matches(' ').to_string()
+            })
+            .expect("oldest scrollback row should exist");
+        assert_eq!(oldest, "line1");
+        assert!(
+            screen.visible_text().contains("tail-visible"),
+            "visible seed should still win for the current viewport; got:\n{}",
+            screen.visible_text()
         );
     }
 

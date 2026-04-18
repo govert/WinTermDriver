@@ -657,3 +657,155 @@ tabs:
     let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+/// Verify that attach snapshots include replayable scrollback for sessions that
+/// have retained history beyond the visible viewport.
+#[tokio::test]
+async fn attach_includes_session_scrollback_history() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("wtd-test-attach-history-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let yaml = r#"
+version: 1
+name: screen-history-test
+tabs:
+  - name: main
+    layout:
+      type: pane
+      name: shell
+      session:
+        profile: cmd
+        startupCommand: "for /L %i in (1,1,40) do @echo HISTORY_%i"
+"#;
+    let yaml_path = tmp_dir.join("screen-history-test.yaml");
+    std::fs::write(&yaml_path, yaml).unwrap();
+
+    let pipe_name = unique_pipe_name();
+    let handler = HostRequestHandler::new(GlobalSettings::default());
+    let server = Arc::new(IpcServer::new(pipe_name.clone(), handler).unwrap());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let s = server.clone();
+    let server_task = tokio::spawn(async move { s.run(shutdown_rx).await });
+
+    let mut client = connect_client(&pipe_name).await;
+    do_handshake(&mut client).await;
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "open-history",
+            &OpenWorkspace {
+                name: Some("screen-history-test".to_string()),
+                file: Some(yaml_path.to_string_lossy().into_owned()),
+                recreate: false,
+                profile: None,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let open_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(open_resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
+
+    poll_capture_until(
+        &mut client,
+        "shell",
+        |text| text.contains("HISTORY_40"),
+        Duration::from_secs(10),
+    )
+    .await;
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "attach-history",
+            &AttachWorkspace {
+                workspace: "screen-history-test".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let attach_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(attach_resp.msg_type, AttachWorkspaceResult::TYPE_NAME);
+
+    let result: AttachWorkspaceResult = attach_resp.extract_payload().unwrap();
+    let state = &result.state;
+
+    let session_history = state["sessionHistory"]
+        .as_object()
+        .expect("sessionHistory should be an object");
+    assert_eq!(
+        session_history.len(),
+        1,
+        "should have 1 session history entry"
+    );
+
+    let (_, history_val) = session_history.iter().next().unwrap();
+    let scrollback_rows = history_val["scrollbackRows"]
+        .as_u64()
+        .expect("scrollbackRows should be present");
+    assert!(
+        scrollback_rows > 0,
+        "history snapshot should report retained scrollback rows"
+    );
+    let scrollback_b64 = history_val["scrollbackVt"]
+        .as_str()
+        .expect("scrollbackVt should be a string");
+    let visible_b64 = state["sessionScreens"]
+        .as_object()
+        .and_then(|map| map.values().next())
+        .and_then(|value| value.as_str())
+        .expect("sessionScreens should contain the visible snapshot");
+
+    let mut screen = wtd_pty::ScreenBuffer::new(80, 24, scrollback_rows as usize);
+    screen.advance(&b64_decode(scrollback_b64));
+    let blank_lines = "\r\n".repeat(screen.rows());
+    screen.advance(blank_lines.as_bytes());
+    screen.advance(&b64_decode(visible_b64));
+
+    assert!(
+        screen.scrollback_len() > 0,
+        "replayed history should populate scrollback"
+    );
+    let oldest = screen
+        .scrollback_row(0)
+        .map(|row| {
+            let mut text = String::new();
+            for cell in row {
+                text.push_str(cell.text.as_str());
+            }
+            text.trim_end_matches(' ').to_string()
+        })
+        .expect("oldest scrollback row should exist");
+    assert!(
+        oldest.starts_with("HISTORY_"),
+        "expected restored history marker, got '{oldest}'"
+    );
+    assert!(
+        screen.visible_text().contains("HISTORY_40"),
+        "visible snapshot should still contain the newest history line; got:\n{}",
+        screen.visible_text()
+    );
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "close-history",
+            &CloseWorkspace {
+                workspace: "screen-history-test".to_string(),
+                kill: false,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let _ = read_frame(&mut client).await;
+
+    let _ = shutdown_tx.send(true);
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

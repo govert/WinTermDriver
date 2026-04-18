@@ -264,6 +264,24 @@ impl WorkspaceInstance {
                     (id.clone(), crate::output_broadcaster::encode_base64(&vt))
                 })
                 .collect(),
+            session_history: self
+                .sessions
+                .iter()
+                .filter_map(|(id, s)| {
+                    let scrollback_rows = s.screen().scrollback_len();
+                    if scrollback_rows == 0 {
+                        return None;
+                    }
+                    let vt = s.screen().to_vt_scrollback();
+                    Some((
+                        id.clone(),
+                        SessionHistorySnapshot {
+                            scrollback_rows: u32::try_from(scrollback_rows).unwrap_or(u32::MAX),
+                            scrollback_vt: crate::output_broadcaster::encode_base64(&vt),
+                        },
+                    ))
+                })
+                .collect(),
         }
     }
 
@@ -1162,6 +1180,11 @@ pub struct AttachSnapshot {
     /// The UI can feed these bytes directly into `ScreenBuffer::advance()` to
     /// seed pane content immediately on attach, before any new output arrives.
     pub session_screens: HashMap<SessionId, String>,
+    /// Replayable retained scrollback per session.
+    ///
+    /// The UI can replay `scrollback_vt` into a fresh `ScreenBuffer` before
+    /// applying `session_screens` so newly attached panes preserve local history.
+    pub session_history: HashMap<SessionId, SessionHistorySnapshot>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1177,6 +1200,13 @@ pub struct SessionProgressSnapshot {
     pub state: wtd_ipc::message::ProgressState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<u8>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistorySnapshot {
+    pub scrollback_rows: u32,
+    pub scrollback_vt: String,
 }
 
 /// Snapshot of a single tab's metadata and layout.
