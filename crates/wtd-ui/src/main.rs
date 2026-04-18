@@ -510,6 +510,10 @@ fn text_char_to_key_event(ch: char) -> Option<KeyEvent> {
     })
 }
 
+fn text_input_bytes(text: &str) -> Vec<u8> {
+    text.as_bytes().to_vec()
+}
+
 const TAB_MENU_NEW_TAB: u32 = 1;
 const TAB_MENU_RENAME_TAB: u32 = 2;
 const TAB_MENU_CLOSE_TAB: u32 = 3;
@@ -1872,10 +1876,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     true,
                                 );
                                 if let Some(ps) = active_tab.pane_sessions.get(&focused) {
-                                    bridge.send_input(
-                                        ps.session_id.clone(),
-                                        text.as_bytes().to_vec(),
-                                    );
+                                    bridge
+                                        .send_input(ps.session_id.clone(), text_input_bytes(&text));
                                 }
                                 if reset_live_view {
                                     force_immediate_paint = true;
@@ -3036,6 +3038,13 @@ mod tests {
 
         let bytes = paste_bytes_for_pane(&tab, &pane_id, "hello");
         assert_eq!(bytes, b"hello");
+    }
+
+    #[test]
+    fn text_input_bytes_preserves_altgr_style_characters_as_utf8_text() {
+        for text in ["@", "{", "}", "[", "]", "\\", "~", "|"] {
+            assert_eq!(text_input_bytes(text), text.as_bytes());
+        }
     }
 
     #[test]

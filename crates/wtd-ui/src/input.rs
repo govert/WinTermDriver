@@ -1375,6 +1375,12 @@ mod tests {
     }
 
     #[test]
+    fn raw_bytes_ctrl_alt_without_character_produces_no_meta_text() {
+        let event = key(KeyName::Char('Q'), Modifiers::CTRL | Modifiers::ALT, None);
+        assert!(key_event_to_bytes(&event).is_empty());
+    }
+
+    #[test]
     fn raw_bytes_unicode() {
         let event = key(KeyName::Char('A'), Modifiers::NONE, Some('ñ'));
         let bytes = key_event_to_bytes(&event);
