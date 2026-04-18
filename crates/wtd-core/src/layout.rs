@@ -83,6 +83,17 @@ pub enum LayoutError {
 type Idx = usize;
 
 #[derive(Debug, Clone)]
+enum LayoutPlan {
+    Pane(PaneId),
+    Split {
+        orientation: Orientation,
+        ratio: f64,
+        first: Box<LayoutPlan>,
+        second: Box<LayoutPlan>,
+    },
+}
+
+#[derive(Debug, Clone)]
 struct Node {
     parent: Option<Idx>,
     kind: NodeKind,
@@ -470,6 +481,27 @@ impl LayoutTree {
         self.equalize_subtree(self.root);
     }
 
+    /// Rebuild the layout as an even left-to-right arrangement using the
+    /// current stable pane order.
+    pub fn retile_even_horizontal(&mut self) {
+        let panes = self.panes();
+        self.rebuild_from_plan(Self::build_even_plan(&panes, Orientation::Horizontal));
+    }
+
+    /// Rebuild the layout as an even top-to-bottom arrangement using the
+    /// current stable pane order.
+    pub fn retile_even_vertical(&mut self) {
+        let panes = self.panes();
+        self.rebuild_from_plan(Self::build_even_plan(&panes, Orientation::Vertical));
+    }
+
+    /// Rebuild the layout as a near-square grid using the current stable pane
+    /// order.
+    pub fn retile_grid(&mut self) {
+        let panes = self.panes();
+        self.rebuild_from_plan(Self::build_grid_plan(&panes));
+    }
+
     // ── Resize ────────────────────────────────────────────────────────────────
 
     /// Resize the target pane by `cells` character cells in the given direction
@@ -695,6 +727,106 @@ impl LayoutTree {
 
         self.equalize_subtree(children.0);
         self.equalize_subtree(children.1);
+    }
+
+    fn rebuild_from_plan(&mut self, plan: LayoutPlan) {
+        let focus = self.focus.clone();
+        let zoomed = self.zoomed.clone();
+        let next_pane_id = self.next_pane_id;
+
+        self.nodes.clear();
+        self.pane_index.clear();
+        self.free_list.clear();
+        self.root = self.build_from_plan(plan, None);
+        self.focus = focus;
+        self.zoomed = zoomed;
+        self.next_pane_id = next_pane_id;
+    }
+
+    fn build_from_plan(&mut self, plan: LayoutPlan, parent: Option<Idx>) -> Idx {
+        match plan {
+            LayoutPlan::Pane(id) => {
+                let idx = self.alloc_node(Node {
+                    parent,
+                    kind: NodeKind::Pane { id: id.clone() },
+                });
+                self.pane_index.insert(id, idx);
+                idx
+            }
+            LayoutPlan::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                let idx = self.alloc_node(Node {
+                    parent,
+                    kind: NodeKind::Split {
+                        orientation,
+                        ratio,
+                        first: 0,
+                        second: 0,
+                    },
+                });
+                let first_idx = self.build_from_plan(*first, Some(idx));
+                let second_idx = self.build_from_plan(*second, Some(idx));
+                if let NodeKind::Split { first, second, .. } = &mut self.node_mut(idx).kind {
+                    *first = first_idx;
+                    *second = second_idx;
+                }
+                idx
+            }
+        }
+    }
+
+    fn build_even_plan(panes: &[PaneId], orientation: Orientation) -> LayoutPlan {
+        match panes.len() {
+            0 => unreachable!("retile requires at least one pane"),
+            1 => LayoutPlan::Pane(panes[0].clone()),
+            len => {
+                let mid = len / 2;
+                LayoutPlan::Split {
+                    orientation: orientation.clone(),
+                    ratio: mid as f64 / len as f64,
+                    first: Box::new(Self::build_even_plan(&panes[..mid], orientation.clone())),
+                    second: Box::new(Self::build_even_plan(&panes[mid..], orientation)),
+                }
+            }
+        }
+    }
+
+    fn build_grid_plan(panes: &[PaneId]) -> LayoutPlan {
+        match panes.len() {
+            0 => unreachable!("retile requires at least one pane"),
+            1 => LayoutPlan::Pane(panes[0].clone()),
+            len => {
+                let cols = (len as f64).sqrt().ceil() as usize;
+                let row_plans: Vec<LayoutPlan> = panes
+                    .chunks(cols)
+                    .map(|row| Self::build_even_plan(row, Orientation::Horizontal))
+                    .collect();
+                Self::build_plan_from_nodes(&row_plans, Orientation::Vertical)
+            }
+        }
+    }
+
+    fn build_plan_from_nodes(nodes: &[LayoutPlan], orientation: Orientation) -> LayoutPlan {
+        match nodes.len() {
+            0 => unreachable!("retile requires at least one node"),
+            1 => nodes[0].clone(),
+            len => {
+                let mid = len / 2;
+                LayoutPlan::Split {
+                    orientation: orientation.clone(),
+                    ratio: mid as f64 / len as f64,
+                    first: Box::new(Self::build_plan_from_nodes(
+                        &nodes[..mid],
+                        orientation.clone(),
+                    )),
+                    second: Box::new(Self::build_plan_from_nodes(&nodes[mid..], orientation)),
+                }
+            }
+        }
     }
 
     fn alloc_pane_id(&mut self) -> PaneId {
@@ -1189,6 +1321,51 @@ mod tests {
         assert_eq!(rects[&p3], Rect::new(0, 12, 40, 12));
         assert_eq!(rects[&p2], Rect::new(40, 0, 40, 12));
         assert_eq!(rects[&p4], Rect::new(40, 12, 40, 12));
+    }
+
+    #[test]
+    fn retile_even_horizontal_rebuilds_stable_left_to_right_layout() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p3.clone()).unwrap();
+
+        tree.retile_even_horizontal();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p1], Rect::new(0, 0, 20, 24));
+        assert_eq!(rects[&p3], Rect::new(20, 0, 20, 24));
+        assert_eq!(rects[&p2], Rect::new(40, 0, 20, 24));
+        assert_eq!(rects[&p4], Rect::new(60, 0, 20, 24));
+        assert_eq!(tree.focus(), p3);
+    }
+
+    #[test]
+    fn retile_even_vertical_rebuilds_stable_top_to_bottom_layout() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p2.clone()).unwrap();
+
+        tree.retile_even_vertical();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p1], Rect::new(0, 0, 80, 6));
+        assert_eq!(rects[&p3], Rect::new(0, 6, 80, 6));
+        assert_eq!(rects[&p2], Rect::new(0, 12, 80, 6));
+        assert_eq!(rects[&p4], Rect::new(0, 18, 80, 6));
+        assert_eq!(tree.focus(), p2);
+    }
+
+    #[test]
+    fn retile_grid_rebuilds_four_panes_as_even_grid() {
+        let (mut tree, p1, p2, p3, p4) = four_pane_tree();
+        tree.set_focus(p4.clone()).unwrap();
+
+        tree.retile_grid();
+
+        let rects = tree.compute_rects(area());
+        assert_eq!(rects[&p1], Rect::new(0, 0, 40, 12));
+        assert_eq!(rects[&p3], Rect::new(40, 0, 40, 12));
+        assert_eq!(rects[&p2], Rect::new(0, 12, 40, 12));
+        assert_eq!(rects[&p4], Rect::new(40, 12, 40, 12));
+        assert_eq!(tree.focus(), p4);
     }
 
     // -- Focus traversal tests ---------------------------------------------

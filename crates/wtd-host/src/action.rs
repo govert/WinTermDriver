@@ -457,6 +457,24 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Reset all tab splits to even ratios",
     });
     r.register(ActionDef {
+        name: "retile-even-horizontal",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile all panes into an even left-to-right layout",
+    });
+    r.register(ActionDef {
+        name: "retile-even-vertical",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile all panes into an even top-to-bottom layout",
+    });
+    r.register(ActionDef {
+        name: "retile-grid",
+        target_type: TargetType::Tab,
+        args: NO_ARGS,
+        description: "Retile all panes into a near-square grid",
+    });
+    r.register(ActionDef {
         name: "rename-pane",
         target_type: TargetType::Pane,
         args: RENAME_PANE_ARGS,
@@ -782,6 +800,21 @@ impl ActionDispatcher {
                 tab.layout_mut().equalize_tab();
                 Ok(ActionResult::Ok)
             }
+            "retile-even-horizontal" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_even_horizontal();
+                Ok(ActionResult::Ok)
+            }
+            "retile-even-vertical" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_even_vertical();
+                Ok(ActionResult::Ok)
+            }
+            "retile-grid" => {
+                let tab = active_tab_mut(workspace)?;
+                tab.layout_mut().retile_grid();
+                Ok(ActionResult::Ok)
+            }
 
             // ── Resize ───────────────────────────────────────────────────
             "resize-pane-right" => {
@@ -985,8 +1018,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, and change-profile totals 48 actions.
-        assert_eq!(r.len(), 48);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, retile actions, and change-profile totals 51 actions.
+        assert_eq!(r.len(), 51);
     }
 
     #[test]
@@ -1497,6 +1530,124 @@ mod tests {
         assert_eq!(rects[&left], Rect::new(0, 0, 60, 40));
         assert_eq!(rects[&top_right], Rect::new(60, 0, 60, 20));
         assert_eq!(rects[&bottom_right], Rect::new(60, 20, 60, 20));
+    }
+
+    #[test]
+    fn dispatch_retile_even_horizontal_rebuilds_tab_layout() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(right))
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p2.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-even-horizontal", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p1], Rect::new(0, 0, 40, 40));
+        assert_eq!(rects[&p2], Rect::new(40, 0, 40, 40));
+        assert_eq!(rects[&p3], Rect::new(80, 0, 40, 40));
+        assert_eq!(layout.focus(), p2);
+    }
+
+    #[test]
+    fn dispatch_retile_even_vertical_rebuilds_tab_layout() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), None)
+            .unwrap();
+        let bottom = workspace.tabs()[0].layout().panes()[1].clone();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(bottom.clone()),
+            )
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p3.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-even-vertical", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p1], Rect::new(0, 0, 120, 13));
+        assert_eq!(rects[&p2], Rect::new(0, 13, 120, 14));
+        assert_eq!(rects[&p3], Rect::new(0, 27, 120, 13));
+        assert_eq!(layout.focus(), p3);
+    }
+
+    #[test]
+    fn dispatch_retile_grid_rebuilds_tab_layout() {
+        let dispatcher = ActionDispatcher::new(v1_registry(), Rect::new(0, 0, 120, 40));
+        let mut workspace = test_workspace();
+
+        dispatcher
+            .dispatch(&mut workspace, "split-right", &json!({}), None)
+            .unwrap();
+        let right = workspace.tabs()[0].layout().panes()[1].clone();
+        let left = workspace.tabs()[0].layout().panes()[0].clone();
+        dispatcher
+            .dispatch(&mut workspace, "split-down", &json!({}), Some(left))
+            .unwrap();
+        dispatcher
+            .dispatch(
+                &mut workspace,
+                "split-down",
+                &json!({}),
+                Some(right.clone()),
+            )
+            .unwrap();
+
+        let panes = workspace.tabs()[0].layout().panes();
+        let p1 = panes[0].clone();
+        let p2 = panes[1].clone();
+        let p3 = panes[2].clone();
+        let p4 = panes[3].clone();
+        workspace.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(p4.clone())
+            .unwrap();
+
+        dispatcher
+            .dispatch(&mut workspace, "retile-grid", &json!({}), None)
+            .unwrap();
+
+        let layout = workspace.tabs()[0].layout();
+        let rects = layout.compute_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(rects[&p1], Rect::new(0, 0, 60, 20));
+        assert_eq!(rects[&p2], Rect::new(60, 0, 60, 20));
+        assert_eq!(rects[&p3], Rect::new(0, 20, 60, 20));
+        assert_eq!(rects[&p4], Rect::new(60, 20, 60, 20));
+        assert_eq!(layout.focus(), p4);
     }
 
     #[test]
