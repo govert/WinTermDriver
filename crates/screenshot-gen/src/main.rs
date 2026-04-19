@@ -164,7 +164,7 @@ fn run_docs_capture(output_dir: &Path) -> anyhow::Result<()> {
     status_bar.layout(w);
 
     let bindings = default_bindings();
-    let mut palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
+    let mut palette = CommandPalette::new(renderer.dw_factory(), &bindings, Vec::new())?;
 
     let mut tree = LayoutTree::new();
     let p1 = tree.focus();
@@ -344,7 +344,7 @@ fn run_workspace_capture(
     let mut status_bar = StatusBar::new(renderer.dw_factory())?;
 
     let bindings = default_bindings();
-    let palette = CommandPalette::new(renderer.dw_factory(), &bindings)?;
+    let palette = CommandPalette::new(renderer.dw_factory(), &bindings, Vec::new())?;
 
     let content_height = h - tab_strip.height() - status_bar.height();
     let content_rows = (content_height / cell_h).max(1.0) as u16;

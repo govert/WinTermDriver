@@ -140,9 +140,19 @@ fn mouse_queue() -> &'static Mutex<Vec<MouseEvent>> {
     MOUSE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn lock_mouse_queue() -> std::sync::MutexGuard<'static, Vec<MouseEvent>> {
+    match mouse_queue().lock() {
+        Ok(queue) => queue,
+        Err(poisoned) => {
+            tracing::error!("mouse event queue mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 /// Drain all pending mouse events from the queue.
 pub fn drain_mouse_events() -> Vec<MouseEvent> {
-    let mut queue = mouse_queue().lock().unwrap();
+    let mut queue = lock_mouse_queue();
     std::mem::take(&mut *queue)
 }
 
@@ -165,13 +175,33 @@ fn input_queue() -> &'static Mutex<Vec<InputEvent>> {
     INPUT_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn lock_input_queue() -> std::sync::MutexGuard<'static, Vec<InputEvent>> {
+    match input_queue().lock() {
+        Ok(queue) => queue,
+        Err(poisoned) => {
+            tracing::error!("input event queue mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 fn pending_high_surrogate() -> &'static Mutex<Option<u16>> {
     PENDING_HIGH_SURROGATE.get_or_init(|| Mutex::new(None))
 }
 
+fn lock_pending_high_surrogate() -> std::sync::MutexGuard<'static, Option<u16>> {
+    match pending_high_surrogate().lock() {
+        Ok(pending) => pending,
+        Err(poisoned) => {
+            tracing::error!("pending surrogate mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 /// Drain all pending keyboard/text input events from the queue.
 pub fn drain_input_events() -> Vec<InputEvent> {
-    let mut queue = input_queue().lock().unwrap();
+    let mut queue = lock_input_queue();
     std::mem::take(&mut *queue)
 }
 
@@ -193,14 +223,11 @@ fn push_key_event(wparam: WPARAM, _lparam: LPARAM) {
     if let Some(key) = vk_to_key_name(vk) {
         let modifiers = current_modifiers();
 
-        input_queue()
-            .lock()
-            .unwrap()
-            .push(InputEvent::Key(KeyEvent {
-                key,
-                modifiers,
-                character: None,
-            }));
+        lock_input_queue().push(InputEvent::Key(KeyEvent {
+            key,
+            modifiers,
+            character: None,
+        }));
     }
 }
 
@@ -208,11 +235,11 @@ fn push_text_event(wparam: WPARAM) {
     let code_unit = (wparam.0 & 0xFFFF) as u16;
 
     if (0xD800..=0xDBFF).contains(&code_unit) {
-        *pending_high_surrogate().lock().unwrap() = Some(code_unit);
+        *lock_pending_high_surrogate() = Some(code_unit);
         return;
     }
 
-    let mut pending = pending_high_surrogate().lock().unwrap();
+    let mut pending = lock_pending_high_surrogate();
     let text = if (0xDC00..=0xDFFF).contains(&code_unit) {
         if let Some(high) = pending.take() {
             let mut buf = [0u16; 2];
@@ -230,7 +257,7 @@ fn push_text_event(wparam: WPARAM) {
 
     if let Some(text) = text {
         if !text.chars().all(char::is_control) {
-            input_queue().lock().unwrap().push(InputEvent::Text(text));
+            lock_input_queue().push(InputEvent::Text(text));
         }
     }
 }
@@ -490,7 +517,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONDOWN => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftDown,
                 x,
                 y,
@@ -500,7 +527,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONDBLCLK => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftDoubleDown,
                 x,
                 y,
@@ -510,7 +537,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONUP => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftUp,
                 x,
                 y,
@@ -520,7 +547,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_RBUTTONDOWN => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::RightDown,
                 x,
                 y,
@@ -530,7 +557,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_RBUTTONUP => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::RightUp,
                 x,
                 y,
@@ -540,7 +567,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_MBUTTONDOWN => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::MiddleDown,
                 x,
                 y,
@@ -550,7 +577,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_MBUTTONUP => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::MiddleUp,
                 x,
                 y,
@@ -560,7 +587,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_MOUSEMOVE => {
             let (x, y) = extract_mouse_pos(lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::Move,
                 x,
                 y,
@@ -572,7 +599,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             // Wheel delta is in the high word of wparam (signed).
             let delta = ((wparam.0 >> 16) & 0xFFFF) as i16;
             let (x, y) = client_pos_from_screen(hwnd, lparam);
-            mouse_queue().lock().unwrap().push(MouseEvent {
+            lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::Wheel(delta),
                 x,
                 y,
@@ -621,8 +648,8 @@ mod tests {
     }
 
     fn reset_input_queue() {
-        input_queue().lock().unwrap().clear();
-        *pending_high_surrogate().lock().unwrap() = None;
+        lock_input_queue().clear();
+        *lock_pending_high_surrogate() = None;
     }
 
     #[test]

@@ -90,6 +90,16 @@ impl HostRequestHandler {
         }
     }
 
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, HostState> {
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                tracing::error!("host state mutex poisoned; recovering lock state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Drain pending output from all sessions and collect broadcast events.
     ///
     /// Called periodically by the output broadcaster. Returns events for:
@@ -103,7 +113,7 @@ impl HostRequestHandler {
         prev_titles: &mut HashMap<String, String>,
         prev_progress: &mut HashMap<String, Option<wtd_ipc::message::ProgressInfo>>,
     ) -> Vec<BroadcastEvent> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let mut events = Vec::new();
         events.append(&mut state.pending_broadcasts);
 
@@ -632,7 +642,7 @@ impl RequestHandler for HostRequestHandler {
 impl HostRequestHandler {
     fn handle_open_workspace(&self, envelope: &Envelope, open: &OpenWorkspace) -> Option<Envelope> {
         let id = &envelope.id;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
 
         // Derive effective workspace name.
         let ws_name = match (&open.name, &open.profile) {
@@ -710,7 +720,7 @@ impl HostRequestHandler {
     }
 
     fn handle_close_workspace(&self, id: &str, close: &CloseWorkspace) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         match state.workspaces.remove(&close.workspace) {
             Some(mut inst) => {
                 inst.close();
@@ -731,7 +741,7 @@ impl HostRequestHandler {
     }
 
     fn handle_attach_workspace(&self, id: &str, attach: &AttachWorkspace) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         if !state.workspaces.contains_key(&attach.workspace) {
             return Some(error_envelope(
                 id,
@@ -745,7 +755,14 @@ impl HostRequestHandler {
                 session.process_pending_output();
             }
         }
-        let inst = state.workspaces.get(&attach.workspace).unwrap();
+        let Some(inst) = state.workspaces.get(&attach.workspace) else {
+            tracing::error!(workspace = %attach.workspace, "workspace disappeared during attach handling");
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", attach.workspace),
+            ));
+        };
         let snapshot = inst.attach_snapshot();
         let state_value = serde_json::to_value(&snapshot)
             .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
@@ -761,7 +778,7 @@ impl HostRequestHandler {
         recreate: &RecreateWorkspace,
     ) -> Option<Envelope> {
         let id = &envelope.id;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
 
         if !state.workspaces.contains_key(&recreate.workspace) {
             return Some(error_envelope(
@@ -782,7 +799,14 @@ impl HostRequestHandler {
 
         let settings = state.settings.clone();
         let env = host_env();
-        let inst = state.workspaces.get_mut(&recreate.workspace).unwrap();
+        let Some(inst) = state.workspaces.get_mut(&recreate.workspace) else {
+            tracing::error!(workspace = %recreate.workspace, "workspace disappeared during recreate handling");
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", recreate.workspace),
+            ));
+        };
 
         match inst.recreate(&def, &settings, &env, find_exe) {
             Ok(()) => Some(Envelope::new(
@@ -801,7 +825,7 @@ impl HostRequestHandler {
     }
 
     fn handle_save_workspace(&self, id: &str, save: &SaveWorkspace) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         match state.workspaces.get(&save.workspace) {
             Some(inst) => {
                 let def = inst.save();
@@ -854,7 +878,7 @@ impl HostRequestHandler {
     fn handle_list_workspaces(&self, envelope: &Envelope) -> Option<Envelope> {
         let discovered = list_workspaces(&request_cwd(envelope));
 
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
 
         // Merge discovered definitions with running instances
         let mut workspaces: Vec<WorkspaceInfo> = discovered
@@ -882,7 +906,7 @@ impl HostRequestHandler {
     }
 
     fn handle_list_instances(&self, id: &str) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let instances: Vec<InstanceInfo> = state
             .workspaces
             .iter()
@@ -895,7 +919,7 @@ impl HostRequestHandler {
     }
 
     fn handle_list_panes(&self, id: &str, lp: &ListPanes) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let inst = match state.workspaces.get(&lp.workspace) {
             Some(i) => i,
             None => {
@@ -933,7 +957,7 @@ impl HostRequestHandler {
     }
 
     fn handle_list_sessions(&self, id: &str, ls: &ListSessions) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let inst = match state.workspaces.get(&ls.workspace) {
             Some(i) => i,
             None => {
@@ -959,7 +983,7 @@ impl HostRequestHandler {
     }
 
     fn handle_send(&self, id: &str, send: &message::Send) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &send.target) {
             Some(r) => r,
             None => {
@@ -1006,7 +1030,7 @@ impl HostRequestHandler {
     }
 
     fn handle_prompt(&self, id: &str, prompt: &message::Prompt) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &prompt.target) {
             Some(r) => r,
             None => {
@@ -1094,7 +1118,7 @@ impl HostRequestHandler {
     }
 
     fn handle_keys(&self, id: &str, keys: &Keys) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &keys.target) {
             Some(r) => r,
             None => {
@@ -1151,7 +1175,7 @@ impl HostRequestHandler {
     }
 
     fn handle_mouse(&self, id: &str, mouse: &message::Mouse) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &mouse.target) {
             Some(r) => r,
             None => {
@@ -1213,7 +1237,7 @@ impl HostRequestHandler {
     }
 
     fn handle_pane_input(&self, id: &str, input: &PaneInput) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &input.target) {
             Some(r) => r,
             None => {
@@ -1270,7 +1294,7 @@ impl HostRequestHandler {
     }
 
     fn handle_capture(&self, id: &str, capture: &Capture) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
 
         // Drain pending output from all sessions
         for inst in state.workspaces.values_mut() {
@@ -1395,7 +1419,7 @@ impl HostRequestHandler {
     }
 
     fn handle_scrollback(&self, id: &str, scrollback: &Scrollback) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
 
         // Drain pending output
         for inst in state.workspaces.values_mut() {
@@ -1420,7 +1444,7 @@ impl HostRequestHandler {
     }
 
     fn handle_follow(&self, id: &str, follow: &Follow) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         match find_pane(&state.workspaces, &follow.target) {
             Some(_) => Some(Envelope::new(id, &OkResponse {})),
             None => Some(error_envelope(
@@ -1432,7 +1456,7 @@ impl HostRequestHandler {
     }
 
     fn handle_inspect(&self, id: &str, inspect: &Inspect) -> Option<Envelope> {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let (inst, pane_id) = match find_pane(&state.workspaces, &inspect.target) {
             Some(r) => r,
             None => {
@@ -1499,7 +1523,7 @@ impl HostRequestHandler {
     }
 
     fn handle_configure_pane(&self, id: &str, configure: &ConfigurePane) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let (workspace_name, pane_id) =
             match resolve_pane_for_resize(&state.workspaces, &configure.target) {
                 Some((workspace_name, pane_id)) => (workspace_name, pane_id),
@@ -1512,7 +1536,14 @@ impl HostRequestHandler {
                 }
             };
 
-        let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            tracing::error!(workspace = %workspace_name, "workspace disappeared during configure-pane handling");
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
 
         if !configure.clear_driver
             && configure.driver_profile.is_none()
@@ -1601,7 +1632,7 @@ impl HostRequestHandler {
     }
 
     fn handle_invoke_action(&self, id: &str, action: &InvokeAction) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
 
         // Resolve the pane context up front. UI callers send pane ids here,
         // while other clients may send canonical workspace/tab/pane paths or
@@ -1633,7 +1664,14 @@ impl HostRequestHandler {
         };
 
         let settings = state.settings.clone();
-        let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            tracing::error!(workspace = %workspace_name, "workspace disappeared during invoke-action handling");
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
         let active_pane = || {
             inst.tabs()
                 .get(inst.active_tab_index())
@@ -1945,7 +1983,7 @@ impl HostRequestHandler {
             ));
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let (workspace_name, pane_id) =
             match resolve_pane_for_resize(&state.workspaces, &resize.pane_id) {
                 Some((name, pane_id)) => (name, pane_id),
@@ -1958,7 +1996,14 @@ impl HostRequestHandler {
                 }
             };
 
-        let inst = state.workspaces.get_mut(&workspace_name).unwrap();
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            tracing::error!(workspace = %workspace_name, "workspace disappeared during pane-resize handling");
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
         match inst.resize_pane_session(&pane_id, resize.cols, resize.rows) {
             Ok(()) => Some(Envelope::new(id, &OkResponse {})),
             Err(e) => {
@@ -1977,7 +2022,7 @@ impl HostRequestHandler {
     }
 
     fn handle_session_input(&self, input: &SessionInput) {
-        let state = self.state.lock().unwrap();
+        let state = self.lock_state();
         let Some(inst) = state.workspaces.get(&input.workspace) else {
             return;
         };
@@ -1990,7 +2035,7 @@ impl HostRequestHandler {
     }
 
     fn handle_focus_pane(&self, id: &str, focus: &FocusPane) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let Some((workspace_name, pane_id)) =
             resolve_invoke_action_target(&state.workspaces, &focus.pane_id)
         else {
@@ -2018,7 +2063,7 @@ impl HostRequestHandler {
     }
 
     fn handle_rename_pane(&self, id: &str, rename: &RenamePane) -> Option<Envelope> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let Some((workspace_name, pane_id)) =
             resolve_invoke_action_target(&state.workspaces, &rename.pane_id)
         else {

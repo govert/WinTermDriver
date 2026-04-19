@@ -1357,6 +1357,7 @@ fn terminal_identity_slug(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wtd_core::layout::{Direction, Rect};
     use wtd_core::workspace::{Orientation, PaneLeaf, SplitNode};
 
     fn default_global_settings() -> GlobalSettings {
@@ -1430,6 +1431,76 @@ mod tests {
                     ],
                 }),
                 focus: Some("bottom".to_string()),
+            }]),
+        }
+    }
+
+    fn dnacalc_pi_workspace_def() -> WorkspaceDefinition {
+        WorkspaceDefinition {
+            version: 1,
+            name: "DnaCalc-pi".to_string(),
+            description: None,
+            defaults: None,
+            profiles: None,
+            bindings: None,
+            windows: None,
+            tabs: Some(vec![TabDefinition {
+                name: "main".to_string(),
+                layout: PaneNode::Split(SplitNode {
+                    orientation: Orientation::Horizontal,
+                    ratio: Some(0.5),
+                    children: vec![
+                        PaneNode::Split(SplitNode {
+                            orientation: Orientation::Vertical,
+                            ratio: Some(0.5),
+                            children: vec![
+                                PaneNode::Split(SplitNode {
+                                    orientation: Orientation::Horizontal,
+                                    ratio: Some(0.5),
+                                    children: vec![
+                                        PaneNode::Pane(PaneLeaf {
+                                            name: "Foundation".to_string(),
+                                            session: None,
+                                        }),
+                                        PaneNode::Pane(PaneLeaf {
+                                            name: "OxReplay".to_string(),
+                                            session: None,
+                                        }),
+                                    ],
+                                }),
+                                PaneNode::Pane(PaneLeaf {
+                                    name: "OxXlPlay".to_string(),
+                                    session: None,
+                                }),
+                            ],
+                        }),
+                        PaneNode::Split(SplitNode {
+                            orientation: Orientation::Vertical,
+                            ratio: Some(0.5),
+                            children: vec![
+                                PaneNode::Pane(PaneLeaf {
+                                    name: "DnaOneCalc".to_string(),
+                                    session: None,
+                                }),
+                                PaneNode::Split(SplitNode {
+                                    orientation: Orientation::Horizontal,
+                                    ratio: Some(0.5),
+                                    children: vec![
+                                        PaneNode::Pane(PaneLeaf {
+                                            name: "OxFml".to_string(),
+                                            session: None,
+                                        }),
+                                        PaneNode::Pane(PaneLeaf {
+                                            name: "OxFunc".to_string(),
+                                            session: None,
+                                        }),
+                                    ],
+                                }),
+                            ],
+                        }),
+                    ],
+                }),
+                focus: Some("Foundation".to_string()),
             }]),
         }
     }
@@ -1873,6 +1944,48 @@ mod tests {
             let snap = inst.attach_snapshot();
             assert_eq!(snap.tabs.len(), 1);
             assert_eq!(snap.tabs[0].focus.as_deref(), Some("bottom"));
+        }
+    }
+
+    #[test]
+    fn repeated_resize_on_dnacalc_pi_top_left_pane_keeps_snapshot_and_save_stable() {
+        let def = dnacalc_pi_workspace_def();
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let mut inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(9), &def, &gs, &env, find_exe_windows)
+                .expect("open should succeed");
+
+        let target = inst
+            .find_pane_by_name("Foundation")
+            .expect("Foundation pane should exist");
+        inst.tabs_mut()[0]
+            .layout_mut()
+            .set_focus(target.clone())
+            .expect("focus should set");
+
+        for dir in [
+            Direction::Right,
+            Direction::Down,
+            Direction::Right,
+            Direction::Down,
+        ] {
+            inst.tabs_mut()[0]
+                .layout_mut()
+                .resize_pane_toward(target.clone(), dir, 2, Rect::new(0, 0, 120, 40))
+                .expect("resize should succeed");
+
+            let snapshot = inst.attach_snapshot();
+            assert_eq!(snapshot.tabs.len(), 1);
+            serde_json::to_value(&snapshot).expect("snapshot should serialize after resize");
+
+            let saved = inst.save();
+            let tabs = saved
+                .tabs
+                .as_ref()
+                .expect("saved workspace should have tabs");
+            assert_eq!(tabs.len(), 1);
         }
     }
 

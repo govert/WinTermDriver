@@ -495,6 +495,7 @@ fn build_sgr_params(fg: Color, bg: Color, attrs: CellAttrs) -> Vec<u8> {
 }
 
 fn emit_cells_as_vt_line(out: &mut Vec<u8>, cells: &[Cell], cols: usize) {
+    let cols = cols.min(cells.len());
     let mut col = 0usize;
     while col < cols {
         let cell = &cells[col];
@@ -2178,6 +2179,23 @@ mod tests {
             feed(&mut b, &format!("L{:04}\r\n", i));
         }
         assert_eq!(b.scrollback_len(), max);
+    }
+
+    #[test]
+    fn vt_scrollback_handles_rows_captured_before_resize() {
+        let mut b = ScreenBuffer::new(13, 2, 20);
+        for i in 0..6usize {
+            feed(&mut b, &format!("line{:02}\r\n", i));
+        }
+        assert!(b.scrollback_len() > 0);
+
+        b.resize(14, 2);
+
+        let vt = b.to_vt_scrollback();
+        assert!(
+            !vt.is_empty(),
+            "scrollback VT should still serialize after resize"
+        );
     }
 
     // ── Title extraction ──────────────────────────────────────────────────────

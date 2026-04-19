@@ -78,7 +78,15 @@ pub async fn run(
             biased;
             _ = shutdown_rx.changed() => break,
             _ = interval.tick() => {
-                let events = handler.drain_session_events(&mut prev_titles, &mut prev_progress);
+                let events = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handler.drain_session_events(&mut prev_titles, &mut prev_progress)
+                })) {
+                    Ok(events) => events,
+                    Err(_) => {
+                        tracing::error!("output broadcaster panicked while draining session events; continuing");
+                        continue;
+                    }
+                };
                 for event in events {
                     let id = format!(
                         "evt-{}",

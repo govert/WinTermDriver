@@ -34,14 +34,26 @@ fn probe_drives_alt_screen_cursor_and_mouse_modes() {
         for session in harness.instance.sessions_mut().values_mut() {
             session.process_pending_output();
         }
-        let screen = harness.instance.sessions().values().next().unwrap().screen();
+        let screen = harness
+            .instance
+            .sessions()
+            .values()
+            .next()
+            .unwrap()
+            .screen();
         screen.on_alternate()
             && !screen.cursor().visible
             && screen.cursor().shape == CursorShape::Bar
             && screen.mouse_mode() == MouseMode::ButtonEvent
             && screen.sgr_mouse()
     });
-    let screen = harness.instance.sessions().values().next().unwrap().screen();
+    let screen = harness
+        .instance
+        .sessions()
+        .values()
+        .next()
+        .unwrap()
+        .screen();
     assert!(
         ok,
         "probe should drive alternate-screen cursor/mouse modes; alt={} visible={} shape={:?} mouse={:?} sgr={} text={}",

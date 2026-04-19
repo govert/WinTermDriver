@@ -136,13 +136,13 @@ impl Session {
         // Schedule startup command delivery after 100ms (&sect;17.4).
         if !startup_injected_via_shell {
             if let Some(ref cmd) = self.config.startup_command {
-            let input_handle_raw = pty.input_write_handle().0 as usize;
+                let input_handle_raw = pty.input_write_handle().0 as usize;
                 let payload = startup_command_payload(cmd);
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(100));
-                write_raw(input_handle_raw, &payload);
-            });
-        }
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(100));
+                    write_raw(input_handle_raw, &payload);
+                });
+            }
         }
 
         self.pty = Some(pty);
@@ -206,11 +206,7 @@ impl Session {
     }
 
     /// Schedule bytes to be written to the child's stdin after a delay.
-    pub fn schedule_write_input(
-        &self,
-        data: Vec<u8>,
-        delay: Duration,
-    ) -> Result<(), SessionError> {
+    pub fn schedule_write_input(&self, data: Vec<u8>, delay: Duration) -> Result<(), SessionError> {
         let input_handle_raw = self
             .pty
             .as_ref()
@@ -507,8 +503,7 @@ mod tests {
 
     #[test]
     fn cmd_startup_command_uses_spawn_args() {
-        let (args, handled) =
-            spawn_args_with_startup_command("cmd.exe", &[], Some("echo hello"));
+        let (args, handled) = spawn_args_with_startup_command("cmd.exe", &[], Some("echo hello"));
         assert!(handled);
         assert_eq!(args, vec!["/K".to_string(), "echo hello".to_string()]);
     }

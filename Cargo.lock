@@ -1186,6 +1186,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wtd-probe"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "wtd-pty"
 version = "0.1.0"
 dependencies = [

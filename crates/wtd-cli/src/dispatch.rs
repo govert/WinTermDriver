@@ -371,7 +371,8 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &id,
             &ConfigurePane {
                 target: target.clone(),
-                driver_profile: driver_profile.map(|profile| map_driver_profile(profile).to_string()),
+                driver_profile: driver_profile
+                    .map(|profile| map_driver_profile(profile).to_string()),
                 submit_key: submit_key.clone(),
                 soft_break_key: soft_break_key.clone(),
                 clear_soft_break: *clear_soft_break,

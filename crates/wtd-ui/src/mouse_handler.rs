@@ -228,8 +228,11 @@ impl MouseHandler {
                                         cell_width,
                                         cell_height,
                                     );
-                                    let sgr =
-                                        mouse_modes_use_sgr(mouse_modes, alternate_screens, &pane_id);
+                                    let sgr = mouse_modes_use_sgr(
+                                        mouse_modes,
+                                        alternate_screens,
+                                        &pane_id,
+                                    );
                                     let seq = encode_mouse_event(
                                         MouseButton::Left,
                                         true,
@@ -439,8 +442,7 @@ impl MouseHandler {
                         );
                         let (col, row) =
                             pixel_to_cell(event.x, event.y, content_rect, cell_width, cell_height);
-                        let sgr =
-                            mouse_modes_use_sgr(mouse_modes, alternate_screens, &motion_pane);
+                        let sgr = mouse_modes_use_sgr(mouse_modes, alternate_screens, &motion_pane);
                         // Motion events use button 0 + 32 (motion flag)
                         let button = if self.left_down {
                             MouseButton::Left

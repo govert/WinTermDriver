@@ -1474,12 +1474,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             continue;
                         }
 
-                        let target_tab =
-                            tab_index_for_host_name(&tab_strip, &tab, active_tab_index);
-                        if target_tab.is_none() {
+                        let Some(target_tab) =
+                            tab_index_for_host_name(&tab_strip, &tab, active_tab_index)
+                        else {
                             continue;
-                        }
-                        let target_tab = target_tab.unwrap();
+                        };
 
                         let pane_node = match serde_json::from_value::<PaneNode>(layout) {
                             Ok(node) => node,
