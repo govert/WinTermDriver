@@ -107,8 +107,7 @@ fn all_16_ansi_colors_produce_distinct_rgb() {
 #[test]
 fn indexed_256_color_covers_full_range() {
     for i in 0..=255u8 {
-        let (r, g, b) = color_to_rgb(&Color::Indexed(i), true);
-        assert!(r <= 255 && g <= 255 && b <= 255, "Index {i} out of range");
+        let _ = color_to_rgb(&Color::Indexed(i), true);
     }
 }
 

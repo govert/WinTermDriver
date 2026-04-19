@@ -1809,10 +1809,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 {
                                                     bridge.send_input(ps.session_id.clone(), bytes);
                                                 }
-                                                if reset_live_view {
-                                                    force_immediate_paint = true;
-                                                    needs_paint = true;
-                                                }
+                                                let _ = reset_live_view;
                                             }
                                         }
                                     }
@@ -2182,10 +2179,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     if let Some(ps) = active_tab.pane_sessions.get(&pane_id) {
                                         bridge.send_input(ps.session_id.clone(), bytes);
                                     }
-                                    if reset_live_view {
-                                        force_immediate_paint = true;
-                                        needs_paint = true;
-                                    }
+                                    let _ = reset_live_view;
                                 }
                             }
                         }
@@ -2197,8 +2191,6 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     .clamp_scroll(&pane_id, screen.scrollback_len() as i32);
                             }
                         }
-                        force_immediate_paint = true;
-                        needs_paint = true;
                     }
                     MouseOutput::PasteClipboard(pane_id) => {
                         if let Ok(text) = wtd_ui::clipboard::read_from_clipboard() {
@@ -2220,10 +2212,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             {
                                                 bridge.send_input(ps.session_id.clone(), bytes);
                                             }
-                                            if reset_live_view {
-                                                force_immediate_paint = true;
-                                                needs_paint = true;
-                                            }
+                                            let _ = reset_live_view;
                                         }
                                     }
                                 }

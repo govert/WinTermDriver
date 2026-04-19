@@ -1,7 +1,6 @@
 //! Integration tests for pane layout rendering, splitter detection, and
 //! mouse interaction (§24.4).
 
-use wtd_core::ids::PaneId;
 use wtd_core::layout::{LayoutTree, Rect, ResizeDirection};
 use wtd_ui::pane_layout::{CursorHint, PaneLayout, PaneLayoutAction, PixelRect};
 
@@ -404,7 +403,7 @@ fn pixel_rect_new_and_fields() {
 fn full_drag_resize_relayout_cycle() {
     let mut tree = LayoutTree::new();
     let p1 = tree.focus();
-    let p2 = tree.split_right(p1.clone()).unwrap();
+    let _p2 = tree.split_right(p1.clone()).unwrap();
 
     let mut layout = make_layout();
     layout.update(&tree, 0.0, 0.0, COLS, ROWS);
