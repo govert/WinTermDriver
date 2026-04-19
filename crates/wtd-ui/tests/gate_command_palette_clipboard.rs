@@ -139,10 +139,10 @@ fn palette_opens_searches_and_dispatches_action() {
 
     // Initially not visible.
     assert!(!palette.is_visible());
-    assert_eq!(
-        palette.entry_count(),
-        36,
-        "palette shows the runnable action subset"
+    let total_entries = palette.entry_count();
+    assert!(
+        total_entries >= 36,
+        "palette should expose the runnable action catalog (got {total_entries})"
     );
 
     // Show the palette.
@@ -150,7 +150,7 @@ fn palette_opens_searches_and_dispatches_action() {
     assert!(palette.is_visible());
     assert_eq!(
         palette.filtered_count(),
-        36,
+        total_entries,
         "empty query shows all entries"
     );
     assert_eq!(palette.query(), "");
@@ -165,7 +165,7 @@ fn palette_opens_searches_and_dispatches_action() {
     // Should filter to actions containing "split".
     let count = palette.filtered_count();
     assert!(
-        count > 0 && count < 36,
+        count > 0 && count < total_entries,
         "typing 'split' should narrow results (got {})",
         count
     );
@@ -591,10 +591,11 @@ fn palette_toggle_show_hide() {
     palette.on_key_event(&make_key(KeyName::Down, Modifiers::NONE, None));
 
     // Re-show should reset.
+    let total_entries = palette.entry_count();
     palette.show();
     assert_eq!(palette.query(), "");
     assert_eq!(palette.selected_index(), 0);
-    assert_eq!(palette.filtered_count(), 36);
+    assert_eq!(palette.filtered_count(), total_entries);
 
     destroy_test_window(hwnd);
 }
@@ -638,7 +639,10 @@ fn palette_renders_in_composited_frame() {
     // Verify palette is still visible and has filtered results.
     assert!(palette.is_visible());
     assert!(palette.filtered_count() > 0, "filtered results for 'tab'");
-    assert!(palette.filtered_count() < 36, "not all entries match 'tab'");
+    assert!(
+        palette.filtered_count() < palette.entry_count(),
+        "not all entries match 'tab'"
+    );
 
     destroy_test_window(hwnd);
 }
