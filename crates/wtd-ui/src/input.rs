@@ -599,8 +599,10 @@ fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
         KeyName::Space => {
             if mods.ctrl() {
                 Some(vec![0x00]) // Ctrl+Space → NUL
+            } else if mods.alt() {
+                Some(vec![b' ']) // Alt+Space still needs a key-lane encoding.
             } else {
-                Some(vec![b' '])
+                None // Plain/Shift+Space should come from the text lane.
             }
         }
         KeyName::Backspace => {
@@ -1445,6 +1447,18 @@ mod tests {
     fn raw_bytes_space() {
         let event = key(KeyName::Space, Modifiers::NONE, Some(' '));
         assert_eq!(key_event_to_bytes(&event), b" ");
+    }
+
+    #[test]
+    fn raw_bytes_plain_space_without_character_stays_on_text_lane() {
+        let event = key(KeyName::Space, Modifiers::NONE, None);
+        assert!(key_event_to_bytes(&event).is_empty());
+    }
+
+    #[test]
+    fn raw_bytes_shift_space_without_character_stays_on_text_lane() {
+        let event = key(KeyName::Space, Modifiers::SHIFT, None);
+        assert!(key_event_to_bytes(&event).is_empty());
     }
 
     #[test]

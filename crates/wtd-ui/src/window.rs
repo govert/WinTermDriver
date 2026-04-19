@@ -99,6 +99,48 @@ fn record_resize_from_client(hwnd: HWND) -> bool {
     }
 }
 
+fn resize_frame_thickness() -> (i32, i32) {
+    unsafe {
+        (
+            GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER),
+            GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER),
+        )
+    }
+}
+
+fn apply_maximized_client_insets(rect: &mut RECT, frame_x: i32, frame_y: i32) {
+    if rect.right - rect.left > frame_x * 2 {
+        rect.left += frame_x;
+        rect.right -= frame_x;
+    }
+    if rect.bottom - rect.top > frame_y {
+        rect.bottom -= frame_y;
+    }
+}
+
+fn apply_maximized_bounds(minmax: &mut MINMAXINFO, monitor_rect: RECT, work_rect: RECT) {
+    minmax.ptMaxPosition.x = work_rect.left - monitor_rect.left;
+    minmax.ptMaxPosition.y = work_rect.top - monitor_rect.top;
+    minmax.ptMaxSize.x = work_rect.right - work_rect.left;
+    minmax.ptMaxSize.y = work_rect.bottom - work_rect.top;
+    minmax.ptMaxTrackSize = minmax.ptMaxSize;
+}
+
+unsafe fn update_maximized_bounds(hwnd: HWND, minmax: &mut MINMAXINFO) {
+    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if monitor.0.is_null() {
+        return;
+    }
+
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(monitor, &mut info as *mut _).as_bool() {
+        apply_maximized_bounds(minmax, info.rcMonitor, info.rcWork);
+    }
+}
+
 // ── Mouse events ─────────────────────────────────────────────────────────────
 
 /// A mouse event captured from the window proc.
@@ -418,8 +460,9 @@ unsafe fn resize_hit_test(hwnd: HWND, lparam: LPARAM) -> Option<LRESULT> {
         return None;
     }
 
-    let border_x = (GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)).max(6);
-    let border_y = (GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)).max(6);
+    let (frame_x, frame_y) = resize_frame_thickness();
+    let border_x = frame_x.max(6);
+    let border_y = frame_y.max(6);
 
     let x = (lparam.0 & 0xFFFF) as i16 as i32;
     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
@@ -446,7 +489,23 @@ unsafe fn resize_hit_test(hwnd: HWND, lparam: LPARAM) -> Option<LRESULT> {
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_NCCALCSIZE => LRESULT(0),
+        WM_GETMINMAXINFO => {
+            if let Some(minmax) = (lparam.0 as *mut MINMAXINFO).as_mut() {
+                update_maximized_bounds(hwnd, minmax);
+            }
+            LRESULT(0)
+        }
+        WM_NCCALCSIZE => {
+            if wparam.0 != 0 {
+                if let Some(params) = (lparam.0 as *mut NCCALCSIZE_PARAMS).as_mut() {
+                    if IsZoomed(hwnd).as_bool() {
+                        let (frame_x, frame_y) = resize_frame_thickness();
+                        apply_maximized_client_insets(&mut params.rgrc[0], frame_x, frame_y);
+                    }
+                }
+            }
+            LRESULT(0)
+        }
         WM_NCHITTEST => {
             if let Some(hit) = resize_hit_test(hwnd, lparam) {
                 return hit;
@@ -742,5 +801,48 @@ mod tests {
             }
             other => panic!("expected key event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn apply_maximized_client_insets_preserves_resize_margins() {
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+
+        apply_maximized_client_insets(&mut rect, 12, 10);
+
+        assert_eq!(rect.left, 12);
+        assert_eq!(rect.right, 1908);
+        assert_eq!(rect.top, 0);
+        assert_eq!(rect.bottom, 1070);
+    }
+
+    #[test]
+    fn apply_maximized_bounds_uses_monitor_work_area() {
+        let mut minmax = MINMAXINFO::default();
+        let monitor = RECT {
+            left: 100,
+            top: 50,
+            right: 2020,
+            bottom: 1130,
+        };
+        let work = RECT {
+            left: 100,
+            top: 50,
+            right: 2020,
+            bottom: 1090,
+        };
+
+        apply_maximized_bounds(&mut minmax, monitor, work);
+
+        assert_eq!(minmax.ptMaxPosition.x, 0);
+        assert_eq!(minmax.ptMaxPosition.y, 0);
+        assert_eq!(minmax.ptMaxSize.x, 1920);
+        assert_eq!(minmax.ptMaxSize.y, 1040);
+        assert_eq!(minmax.ptMaxTrackSize.x, 1920);
+        assert_eq!(minmax.ptMaxTrackSize.y, 1040);
     }
 }
