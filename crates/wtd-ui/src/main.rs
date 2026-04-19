@@ -145,6 +145,7 @@ fn refresh_active_tab_ui(
     tab_strip: &TabStrip,
     status_bar: &mut StatusBar,
     mouse_modes: &mut HashMap<PaneId, MouseMode>,
+    sgr_mouse_modes: &mut HashMap<PaneId, bool>,
     window_width: f32,
     window_height: f32,
     cell_w: f32,
@@ -199,7 +200,7 @@ fn refresh_active_tab_ui(
         status_bar.set_pane_path(format!("{}", focused.0));
     }
     if let Some(active_tab) = active_tab_ref(tabs, active_tab_index) {
-        refresh_mouse_modes(mouse_modes, &active_tab.screens);
+        refresh_mouse_modes(mouse_modes, sgr_mouse_modes, &active_tab.screens);
     }
 }
 
@@ -866,11 +867,14 @@ fn content_dims(
 
 fn refresh_mouse_modes(
     mouse_modes: &mut HashMap<PaneId, MouseMode>,
+    sgr_mouse_modes: &mut HashMap<PaneId, bool>,
     screens: &HashMap<PaneId, ScreenBuffer>,
 ) {
     mouse_modes.clear();
+    sgr_mouse_modes.clear();
     for (pane_id, screen) in screens {
         mouse_modes.insert(pane_id.clone(), screen.mouse_mode());
+        sgr_mouse_modes.insert(pane_id.clone(), screen.sgr_mouse());
     }
 }
 
@@ -883,10 +887,10 @@ fn pane_at_point(pane_layout: &PaneLayout, x: f32, y: f32) -> Option<PaneId> {
     None
 }
 
-fn pane_is_on_alternate(tab: &SnapshotTab, pane_id: &PaneId) -> bool {
+fn pane_has_mouse_reporting(tab: &SnapshotTab, pane_id: &PaneId) -> bool {
     tab.screens
         .get(pane_id)
-        .map(ScreenBuffer::on_alternate)
+        .map(|screen| screen.mouse_mode() != MouseMode::None)
         .unwrap_or(false)
 }
 
@@ -1220,8 +1224,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     // Mouse handler for selection, scrollback, focus, and paste.
     let mut mouse_handler = MouseHandler::new();
     let mut mouse_modes: HashMap<PaneId, MouseMode> = HashMap::new();
+    let mut sgr_mouse_modes: HashMap<PaneId, bool> = HashMap::new();
     if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-        refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
+        refresh_mouse_modes(&mut mouse_modes, &mut sgr_mouse_modes, &active_tab.screens);
     }
 
     // Set initial window title.
@@ -1326,6 +1331,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &tab_strip,
                                 &mut status_bar,
                                 &mut mouse_modes,
+                                &mut sgr_mouse_modes,
                                 window_width,
                                 window_height,
                                 cell_w,
@@ -1384,7 +1390,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 };
 
                                 if let Some(on_alternate) = visible_screen_on_alternate {
-                                    refresh_mouse_modes(&mut mouse_modes, &tab.screens);
+                                    refresh_mouse_modes(
+                                        &mut mouse_modes,
+                                        &mut sgr_mouse_modes,
+                                        &tab.screens,
+                                    );
                                     if on_alternate {
                                         saw_visible_alt_screen_output = true;
                                     } else if should_coalesce_primary_screen_output(&data) {
@@ -1499,6 +1509,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &tab_strip,
                                 &mut status_bar,
                                 &mut mouse_modes,
+                                &mut sgr_mouse_modes,
                                 window_width,
                                 window_height,
                                 cell_w,
@@ -1863,7 +1874,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     let target_pane = active_tab_ref(&tabs, active_tab_index).and_then(|tab| {
                         pane_at_point(&pane_layout, event.x, event.y)
                             .or_else(|| Some(tab.layout_tree.focus()))
-                            .filter(|pane_id| pane_is_on_alternate(tab, pane_id))
+                            .filter(|pane_id| pane_has_mouse_reporting(tab, pane_id))
                     });
                     if target_pane.is_none() {
                         let new_font_size = adjusted_font_size(config.font_size, delta);
@@ -1879,6 +1890,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &tab_strip,
                                 &mut status_bar,
                                 &mut mouse_modes,
+                                &mut sgr_mouse_modes,
                                 window_width,
                                 window_height,
                                 cell_w,
@@ -2052,6 +2064,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 window_height,
                 &focused,
                 &mouse_modes,
+                &sgr_mouse_modes,
                 &alternate_screens,
                 cell_w,
                 cell_h,
@@ -2267,6 +2280,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             );
                                             refresh_mouse_modes(
                                                 &mut mouse_modes,
+                                                &mut sgr_mouse_modes,
                                                 &active_tab.screens,
                                             );
                                         }
@@ -2295,7 +2309,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             content_cols,
                                             content_rows,
                                         );
-                                        refresh_mouse_modes(&mut mouse_modes, &active_tab.screens);
+                                        refresh_mouse_modes(
+                                            &mut mouse_modes,
+                                            &mut sgr_mouse_modes,
+                                            &active_tab.screens,
+                                        );
                                     }
                                 }
                                 tab_strip.layout(window_width);
@@ -2341,6 +2359,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                     &tab_strip,
                                                     &mut status_bar,
                                                     &mut mouse_modes,
+                                                    &mut sgr_mouse_modes,
                                                     window_width,
                                                     window_height,
                                                     cell_w,
@@ -2365,6 +2384,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 &tab_strip,
                                                 &mut status_bar,
                                                 &mut mouse_modes,
+                                                &mut sgr_mouse_modes,
                                                 window_width,
                                                 window_height,
                                                 cell_w,
@@ -2436,6 +2456,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             {
                                                 refresh_mouse_modes(
                                                     &mut mouse_modes,
+                                                    &mut sgr_mouse_modes,
                                                     &active_tab.screens,
                                                 );
                                             }
@@ -2485,6 +2506,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         {
                                             refresh_mouse_modes(
                                                 &mut mouse_modes,
+                                                &mut sgr_mouse_modes,
                                                 &active_tab.screens,
                                             );
                                         }
@@ -2566,6 +2588,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             &tab_strip,
                             &mut status_bar,
                             &mut mouse_modes,
+                            &mut sgr_mouse_modes,
                             window_width,
                             window_height,
                             cell_w,
@@ -2647,6 +2670,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     &tab_strip,
                     &mut status_bar,
                     &mut mouse_modes,
+                    &mut sgr_mouse_modes,
                     window_width,
                     window_height,
                     cell_w,

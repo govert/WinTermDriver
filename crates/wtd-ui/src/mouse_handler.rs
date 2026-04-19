@@ -157,6 +157,7 @@ impl MouseHandler {
     /// - `window_height`: total window pixel height
     /// - `focused_pane`: currently focused pane ID
     /// - `mouse_modes`: map of pane ID → mouse mode (from ScreenBuffer)
+    /// - `sgr_mouse_modes`: map of pane ID → whether SGR mouse format is enabled
     /// - `alternate_screens`: map of pane ID → whether the pane is on the alternate screen
     /// - `cell_width`/`cell_height`: cell dimensions in pixels
     pub fn handle_event(
@@ -169,6 +170,7 @@ impl MouseHandler {
         window_height: f32,
         focused_pane: &PaneId,
         mouse_modes: &HashMap<PaneId, MouseMode>,
+        sgr_mouse_modes: &HashMap<PaneId, bool>,
         alternate_screens: &HashMap<PaneId, bool>,
         cell_width: f32,
         cell_height: f32,
@@ -208,8 +210,7 @@ impl MouseHandler {
                             outputs.push(MouseOutput::FocusPane(pane_id.clone()));
 
                             // Check if this pane has mouse reporting enabled
-                            let mode =
-                                effective_mouse_mode(mouse_modes, alternate_screens, &pane_id);
+                            let mode = effective_mouse_mode(mouse_modes, &pane_id);
                             if mode != MouseMode::None {
                                 self.vt_mouse_pane = Some(pane_id.clone());
                                 // Forward as VT mouse press
@@ -228,11 +229,7 @@ impl MouseHandler {
                                         cell_width,
                                         cell_height,
                                     );
-                                    let sgr = mouse_modes_use_sgr(
-                                        mouse_modes,
-                                        alternate_screens,
-                                        &pane_id,
-                                    );
+                                    let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &pane_id);
                                     let seq = encode_mouse_event(
                                         MouseButton::Left,
                                         true,
@@ -336,7 +333,7 @@ impl MouseHandler {
                     .take()
                     .or_else(|| pane_at_point(pane_layout, event.x, event.y))
                     .unwrap_or_else(|| focused_pane.clone());
-                let mode = effective_mouse_mode(mouse_modes, alternate_screens, &release_pane);
+                let mode = effective_mouse_mode(mouse_modes, &release_pane);
                 if mode != MouseMode::None {
                     if let Some(rect) = pane_layout.pane_pixel_rect(&release_pane) {
                         let content_rect = inset_pane_rect(
@@ -348,8 +345,7 @@ impl MouseHandler {
                         );
                         let (col, row) =
                             pixel_to_cell(event.x, event.y, content_rect, cell_width, cell_height);
-                        let sgr =
-                            mouse_modes_use_sgr(mouse_modes, alternate_screens, &release_pane);
+                        let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &release_pane);
                         let seq = encode_mouse_event(
                             MouseButton::Left,
                             false,
@@ -420,7 +416,7 @@ impl MouseHandler {
 
                 // VT mouse motion reporting
                 let motion_target = self.vt_mouse_pane.as_ref().unwrap_or(focused_pane);
-                let mode = effective_mouse_mode(mouse_modes, alternate_screens, motion_target);
+                let mode = effective_mouse_mode(mouse_modes, motion_target);
                 let report_motion = match mode {
                     MouseMode::AnyEvent => true,
                     MouseMode::ButtonEvent => self.left_down,
@@ -442,7 +438,7 @@ impl MouseHandler {
                         );
                         let (col, row) =
                             pixel_to_cell(event.x, event.y, content_rect, cell_width, cell_height);
-                        let sgr = mouse_modes_use_sgr(mouse_modes, alternate_screens, &motion_pane);
+                        let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &motion_pane);
                         // Motion events use button 0 + 32 (motion flag)
                         let button = if self.left_down {
                             MouseButton::Left
@@ -466,7 +462,7 @@ impl MouseHandler {
                 if event.y >= tab_strip_height && event.y < content_bottom {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
-                    let mode = effective_mouse_mode(mouse_modes, alternate_screens, &target_pane);
+                    let mode = effective_mouse_mode(mouse_modes, &target_pane);
                     if mode != MouseMode::None {
                         // Forward as VT mouse event
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
@@ -484,8 +480,7 @@ impl MouseHandler {
                                 cell_width,
                                 cell_height,
                             );
-                            let sgr =
-                                mouse_modes_use_sgr(mouse_modes, alternate_screens, &target_pane);
+                            let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &target_pane);
                             let seq = encode_mouse_event(
                                 MouseButton::Right,
                                 true,
@@ -506,7 +501,7 @@ impl MouseHandler {
                 if event.y >= tab_strip_height && event.y < content_bottom {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
-                    let mode = effective_mouse_mode(mouse_modes, alternate_screens, &target_pane);
+                    let mode = effective_mouse_mode(mouse_modes, &target_pane);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
                             let content_rect = inset_pane_rect(
@@ -523,8 +518,7 @@ impl MouseHandler {
                                 cell_width,
                                 cell_height,
                             );
-                            let sgr =
-                                mouse_modes_use_sgr(mouse_modes, alternate_screens, &target_pane);
+                            let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &target_pane);
                             let seq = encode_mouse_event(
                                 MouseButton::Right,
                                 false,
@@ -544,7 +538,7 @@ impl MouseHandler {
                 if event.y >= tab_strip_height && event.y < content_bottom {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
-                    let mode = effective_mouse_mode(mouse_modes, alternate_screens, &target_pane);
+                    let mode = effective_mouse_mode(mouse_modes, &target_pane);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
                             let content_rect = inset_pane_rect(
@@ -561,8 +555,7 @@ impl MouseHandler {
                                 cell_width,
                                 cell_height,
                             );
-                            let sgr =
-                                mouse_modes_use_sgr(mouse_modes, alternate_screens, &target_pane);
+                            let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &target_pane);
                             let seq = encode_mouse_event(
                                 MouseButton::Middle,
                                 true,
@@ -580,7 +573,7 @@ impl MouseHandler {
                 if event.y >= tab_strip_height && event.y < content_bottom {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
-                    let mode = effective_mouse_mode(mouse_modes, alternate_screens, &target_pane);
+                    let mode = effective_mouse_mode(mouse_modes, &target_pane);
                     if mode != MouseMode::None {
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
                             let content_rect = inset_pane_rect(
@@ -597,8 +590,7 @@ impl MouseHandler {
                                 cell_width,
                                 cell_height,
                             );
-                            let sgr =
-                                mouse_modes_use_sgr(mouse_modes, alternate_screens, &target_pane);
+                            let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &target_pane);
                             let seq = encode_mouse_event(
                                 MouseButton::Middle,
                                 false,
@@ -620,7 +612,7 @@ impl MouseHandler {
                     let target_pane = pane_at_point(pane_layout, event.x, event.y)
                         .unwrap_or_else(|| focused_pane.clone());
 
-                    let mode = effective_mouse_mode(mouse_modes, alternate_screens, &target_pane);
+                    let mode = effective_mouse_mode(mouse_modes, &target_pane);
                     if mode != MouseMode::None {
                         // Forward as VT scroll events
                         if let Some(rect) = pane_layout.pane_pixel_rect(&target_pane) {
@@ -638,8 +630,7 @@ impl MouseHandler {
                                 cell_width,
                                 cell_height,
                             );
-                            let sgr =
-                                mouse_modes_use_sgr(mouse_modes, alternate_screens, &target_pane);
+                            let sgr = mouse_modes_use_sgr(sgr_mouse_modes, &target_pane);
                             let button = if delta > 0 {
                                 MouseButton::WheelUp
                             } else {
@@ -856,30 +847,12 @@ fn encode_mouse_modifiers(modifiers: crate::input::Modifiers) -> u8 {
 }
 
 /// Check if a pane is using SGR mouse format.
-fn effective_mouse_mode(
-    mouse_modes: &HashMap<PaneId, MouseMode>,
-    alternate_screens: &HashMap<PaneId, bool>,
-    pane_id: &PaneId,
-) -> MouseMode {
-    match mouse_modes.get(pane_id).copied().unwrap_or(MouseMode::None) {
-        MouseMode::None if alternate_screens.get(pane_id).copied().unwrap_or(false) => {
-            MouseMode::ButtonEvent
-        }
-        mode => mode,
-    }
+fn effective_mouse_mode(mouse_modes: &HashMap<PaneId, MouseMode>, pane_id: &PaneId) -> MouseMode {
+    mouse_modes.get(pane_id).copied().unwrap_or(MouseMode::None)
 }
 
-fn mouse_modes_use_sgr(
-    mouse_modes: &HashMap<PaneId, MouseMode>,
-    alternate_screens: &HashMap<PaneId, bool>,
-    pane_id: &PaneId,
-) -> bool {
-    // SGR format is tracked separately in ScreenBuffer; for now we always prefer
-    // SGR when mouse mode is enabled, as it is the modern standard. The caller
-    // should pass accurate sgr state via a parallel map if needed. For this
-    // implementation, we default to SGR=true when mouse mode is active, since
-    // most modern applications enable both 1006 and 100x together.
-    effective_mouse_mode(mouse_modes, alternate_screens, pane_id) != MouseMode::None
+fn mouse_modes_use_sgr(sgr_mouse_modes: &HashMap<PaneId, bool>, pane_id: &PaneId) -> bool {
+    sgr_mouse_modes.get(pane_id).copied().unwrap_or(false)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1063,6 +1036,7 @@ mod tests {
 
         let mut handler = MouseHandler::new();
         let mouse_modes = HashMap::new();
+        let sgr_mouse_modes = HashMap::new();
         let alternate_screens = HashMap::new();
 
         let down = handler.handle_event(
@@ -1079,6 +1053,7 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1106,6 +1081,7 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1132,6 +1108,7 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1222,6 +1199,7 @@ mod tests {
 
         let mut handler = MouseHandler::new();
         let mouse_modes = HashMap::new();
+        let sgr_mouse_modes = HashMap::new();
         let alternate_screens = HashMap::from([(pane.clone(), true)]);
 
         let outputs = handler.handle_event(
@@ -1238,6 +1216,7 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1250,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn alternate_screen_left_click_prefers_vt_mouse_over_selection() {
+    fn alternate_screen_left_click_without_mouse_mode_starts_selection() {
         let dw = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap() };
         let mut tab_strip = TabStrip::new(&dw).unwrap();
         let mut pane_layout = PaneLayout::new(8.0, 16.0);
@@ -1260,6 +1239,7 @@ mod tests {
 
         let mut handler = MouseHandler::new();
         let mouse_modes = HashMap::new();
+        let sgr_mouse_modes = HashMap::new();
         let alternate_screens = HashMap::from([(pane.clone(), true)]);
 
         let outputs = handler.handle_event(
@@ -1276,6 +1256,54 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
+            &alternate_screens,
+            8.0,
+            16.0,
+            0.5,
+            0.5,
+        );
+
+        assert!(outputs
+            .iter()
+            .any(|output| matches!(output, MouseOutput::FocusPane(id) if id == &pane)));
+        assert!(outputs.iter().any(
+            |output| matches!(output, MouseOutput::SelectionChanged(id, None) if id == &pane)
+        ));
+        assert!(!outputs
+            .iter()
+            .any(|output| matches!(output, MouseOutput::SendToSession(_, _))));
+    }
+
+    #[test]
+    fn alternate_screen_left_click_with_explicit_mouse_mode_prefers_vt_mouse_over_selection() {
+        let dw = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap() };
+        let mut tab_strip = TabStrip::new(&dw).unwrap();
+        let mut pane_layout = PaneLayout::new(8.0, 16.0);
+        let tree = LayoutTree::new();
+        let pane = tree.focus();
+        pane_layout.update(&tree, 0.0, 32.0, 80, 24);
+
+        let mut handler = MouseHandler::new();
+        let mouse_modes = HashMap::from([(pane.clone(), MouseMode::ButtonEvent)]);
+        let sgr_mouse_modes = HashMap::from([(pane.clone(), true)]);
+        let alternate_screens = HashMap::from([(pane.clone(), true)]);
+
+        let outputs = handler.handle_event(
+            &MouseEvent {
+                kind: MouseEventKind::LeftDown,
+                x: 16.0,
+                y: 48.0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut tab_strip,
+            &mut pane_layout,
+            32.0,
+            24.0,
+            440.0,
+            &pane,
+            &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1295,7 +1323,7 @@ mod tests {
     }
 
     #[test]
-    fn alternate_screen_wheel_prefers_vt_mouse_over_local_scrollback() {
+    fn alternate_screen_wheel_with_explicit_mouse_mode_prefers_vt_mouse_over_local_scrollback() {
         let dw = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap() };
         let mut tab_strip = TabStrip::new(&dw).unwrap();
         let mut pane_layout = PaneLayout::new(8.0, 16.0);
@@ -1304,7 +1332,8 @@ mod tests {
         pane_layout.update(&tree, 0.0, 32.0, 80, 24);
 
         let mut handler = MouseHandler::new();
-        let mouse_modes = HashMap::new();
+        let mouse_modes = HashMap::from([(pane.clone(), MouseMode::ButtonEvent)]);
+        let sgr_mouse_modes = HashMap::from([(pane.clone(), true)]);
         let alternate_screens = HashMap::from([(pane.clone(), true)]);
 
         let outputs = handler.handle_event(
@@ -1321,6 +1350,7 @@ mod tests {
             440.0,
             &pane,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1349,6 +1379,7 @@ mod tests {
 
         let mut handler = MouseHandler::new();
         let mouse_modes = HashMap::from([(right.clone(), MouseMode::Normal)]);
+        let sgr_mouse_modes = HashMap::new();
         let alternate_screens = HashMap::new();
 
         let down_outputs = handler.handle_event(
@@ -1365,6 +1396,7 @@ mod tests {
             440.0,
             &left,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
@@ -1389,6 +1421,7 @@ mod tests {
             440.0,
             &left,
             &mouse_modes,
+            &sgr_mouse_modes,
             &alternate_screens,
             8.0,
             16.0,
