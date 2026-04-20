@@ -24,6 +24,7 @@
       "Alt+Shift+Up":    "resize-pane-up",
       "Alt+Shift+Right": "resize-pane-right",
       "Alt+Shift+Left":  "resize-pane-left",
+      "Alt+Shift+K":     "pass-through-next-key",
       "Ctrl+Insert":     "copy",
       "Shift+Insert":    "paste"
     },

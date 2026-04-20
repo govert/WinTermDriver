@@ -281,6 +281,7 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 | `Alt+Shift+Up` | `resize-pane-up` | `alt+shift+up` | Moves the nearest horizontal splitter up, matching WT |
 | `Alt+Shift+Right` | `resize-pane-right` | `alt+shift+right` | Moves the nearest vertical splitter right, matching WT |
 | `Alt+Shift+Left` | `resize-pane-left` | `alt+shift+left` | Moves the nearest vertical splitter left, matching WT |
+| `Alt+Shift+K` | `pass-through-next-key` | WTD-only | Arms one-shot key pass-through for the focused pane |
 | `Ctrl+Insert` | `copy` | `ctrl+insert` | Secondary WT binding |
 | `Shift+Insert` | `paste` | `shift+insert` | Secondary WT binding |
 

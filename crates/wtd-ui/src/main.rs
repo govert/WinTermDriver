@@ -26,7 +26,7 @@ use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
-use wtd_ui::input::{InputAction, InputClassifier, KeyEvent};
+use wtd_ui::input::{key_event_to_bytes, InputAction, InputClassifier, KeyEvent};
 use wtd_ui::mouse_handler::{MouseHandler, MouseOutput};
 use wtd_ui::paint_scheduler::PaintScheduler;
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction, PixelRect};
@@ -483,6 +483,48 @@ fn text_input_bytes(text: &str) -> Vec<u8> {
     text.as_bytes().to_vec()
 }
 
+const PASS_THROUGH_NEXT_KEY_LABEL: &str = "SEND KEY";
+
+#[derive(Debug, Default)]
+struct PassThroughNextKeyState {
+    armed: bool,
+}
+
+impl PassThroughNextKeyState {
+    fn arm(&mut self) {
+        self.armed = true;
+    }
+
+    fn is_armed(&self) -> bool {
+        self.armed
+    }
+
+    fn badge_label(&self) -> &'static str {
+        PASS_THROUGH_NEXT_KEY_LABEL
+    }
+
+    fn process_key(&mut self, event: &KeyEvent) -> Option<Vec<u8>> {
+        if !self.armed {
+            return None;
+        }
+
+        let bytes = key_event_to_bytes(event);
+        if !bytes.is_empty() {
+            self.armed = false;
+        }
+        Some(bytes)
+    }
+
+    fn process_text(&mut self, text: &str) -> Option<Vec<u8>> {
+        if !self.armed || text.is_empty() {
+            return None;
+        }
+
+        self.armed = false;
+        Some(text_input_bytes(text))
+    }
+}
+
 const TAB_MENU_NEW_TAB: u32 = 1;
 const TAB_MENU_RENAME_TAB: u32 = 2;
 const TAB_MENU_CLOSE_TAB: u32 = 3;
@@ -915,6 +957,7 @@ fn dispatch_action(
     active_tab: &SnapshotTab,
     bridge: Option<&HostBridge>,
     connected: bool,
+    pass_through_next_key: &mut PassThroughNextKeyState,
     mouse_handler: &mut MouseHandler,
 ) -> bool {
     let name = action_name(action_ref);
@@ -930,6 +973,10 @@ fn dispatch_action(
     match name {
         "toggle-command-palette" => {
             command_palette.toggle();
+            true
+        }
+        "pass-through-next-key" => {
+            pass_through_next_key.arm();
             true
         }
         "next-tab" => {
@@ -1195,6 +1242,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut command_palette =
         CommandPalette::new(renderer.dw_factory(), &bindings, profile_entries)?;
     let mut prefix_sm = PrefixStateMachine::new(input_classifier);
+    let mut pass_through_next_key = PassThroughNextKeyState::default();
+    status_bar.set_prefix_label(prefix_sm.prefix_label().to_string());
 
     let (initial_window_width, initial_window_height) =
         window::client_size(hwnd).unwrap_or((1000, 600));
@@ -1666,6 +1715,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         active_tab,
                                         bridge.as_ref(),
                                         connected,
+                                        &mut pass_through_next_key,
                                         &mut mouse_handler,
                                     );
                                 }
@@ -1688,6 +1738,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         active_tab,
                                         bridge.as_ref(),
                                         connected,
+                                        &mut pass_through_next_key,
                                         &mut mouse_handler,
                                     );
                                 }
@@ -1697,6 +1748,30 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             PaletteResult::Consumed => {
                                 force_immediate_paint = true;
                                 needs_paint = true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Some(bytes) = pass_through_next_key.process_key(&event) {
+                        if let Some(ref bridge) = bridge {
+                            if connected && !bytes.is_empty() {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    let focused = active_tab.layout_tree.focus();
+                                    let reset_live_view = prepare_pane_for_live_input(
+                                        &mut mouse_handler,
+                                        active_tab,
+                                        &focused,
+                                        true,
+                                    );
+                                    if let Some(ps) = active_tab.pane_sessions.get(&focused) {
+                                        bridge.send_input(ps.session_id.clone(), bytes);
+                                    }
+                                    if reset_live_view {
+                                        force_immediate_paint = true;
+                                        needs_paint = true;
+                                    }
+                                }
                             }
                         }
                         continue;
@@ -1714,6 +1789,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     active_tab,
                                     bridge.as_ref(),
                                     connected,
+                                    &mut pass_through_next_key,
                                     &mut mouse_handler,
                                 );
                             }
@@ -1770,6 +1846,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         active_tab,
                                         bridge.as_ref(),
                                         connected,
+                                        &mut pass_through_next_key,
                                         &mut mouse_handler,
                                     );
                                 }
@@ -1779,6 +1856,30 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             PaletteResult::Consumed => {
                                 force_immediate_paint = true;
                                 needs_paint = true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Some(bytes) = pass_through_next_key.process_text(&text) {
+                        if let Some(ref bridge) = bridge {
+                            if connected && !bytes.is_empty() {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    let focused = active_tab.layout_tree.focus();
+                                    let reset_live_view = prepare_pane_for_live_input(
+                                        &mut mouse_handler,
+                                        active_tab,
+                                        &focused,
+                                        true,
+                                    );
+                                    if let Some(ps) = active_tab.pane_sessions.get(&focused) {
+                                        bridge.send_input(ps.session_id.clone(), bytes);
+                                    }
+                                    if reset_live_view {
+                                        force_immediate_paint = true;
+                                        needs_paint = true;
+                                    }
+                                }
                             }
                         }
                         continue;
@@ -1798,6 +1899,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                             active_tab,
                                             bridge.as_ref(),
                                             connected,
+                                            &mut pass_through_next_key,
                                             &mut mouse_handler,
                                         );
                                     }
@@ -1860,12 +1962,17 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // Check prefix timeout (§21.3).
         if prefix_sm.check_timeout() {
-            status_bar.set_prefix_active(false);
             force_immediate_paint = true;
             needs_paint = true;
         }
-        // Update status bar prefix indicator.
-        status_bar.set_prefix_active(prefix_sm.is_prefix_active());
+        // Update status bar transient indicator.
+        let transient_label = if pass_through_next_key.is_armed() {
+            pass_through_next_key.badge_label()
+        } else {
+            prefix_sm.prefix_label()
+        };
+        status_bar.set_prefix_label(transient_label.to_string());
+        status_bar.set_prefix_active(pass_through_next_key.is_armed() || prefix_sm.is_prefix_active());
 
         // ── Process mouse events ─────────────────────────────────
         for event in window::drain_mouse_events() {
@@ -1940,6 +2047,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 active_tab,
                                 bridge.as_ref(),
                                 connected,
+                                &mut pass_through_next_key,
                                 &mut mouse_handler,
                             );
                         }
@@ -3035,6 +3143,38 @@ mod tests {
     }
 
     #[test]
+    fn pass_through_next_key_waits_for_text_when_key_event_has_no_bytes() {
+        let mut state = PassThroughNextKeyState::default();
+        state.arm();
+
+        let event = KeyEvent {
+            key: wtd_ui::input::KeyName::Char('A'),
+            modifiers: wtd_ui::input::Modifiers::NONE,
+            character: None,
+        };
+
+        assert_eq!(state.process_key(&event), Some(Vec::new()));
+        assert!(state.is_armed());
+        assert_eq!(state.process_text("a"), Some(b"a".to_vec()));
+        assert!(!state.is_armed());
+    }
+
+    #[test]
+    fn pass_through_next_key_sends_modified_special_key_once() {
+        let mut state = PassThroughNextKeyState::default();
+        state.arm();
+
+        let event = KeyEvent {
+            key: wtd_ui::input::KeyName::Right,
+            modifiers: wtd_ui::input::Modifiers::ALT,
+            character: None,
+        };
+
+        assert_eq!(state.process_key(&event), Some(b"\x1B[1;3C".to_vec()));
+        assert!(!state.is_armed());
+    }
+
+    #[test]
     fn plain_shell_output_is_not_coalesced() {
         assert!(!should_coalesce_primary_screen_output(
             b"PS C:\\Users\\me> dir\r\n"
@@ -3061,5 +3201,21 @@ mod tests {
         assert!(!should_prompt_for_profile("new-tab", &None, false, true));
         assert!(!should_prompt_for_profile("new-tab", &None, true, false));
         assert!(!should_prompt_for_profile("rename-pane", &None, true, true));
+    }
+
+    #[test]
+    fn default_bindings_bind_pass_through_next_key_to_alt_shift_k() {
+        let bindings = wtd_core::global_settings::default_bindings();
+        let classifier = InputClassifier::from_bindings(&bindings).unwrap();
+        let event = KeyEvent {
+            key: wtd_ui::input::KeyName::Char('K'),
+            modifiers: wtd_ui::input::Modifiers::ALT | wtd_ui::input::Modifiers::SHIFT,
+            character: None,
+        };
+
+        assert_eq!(
+            bound_action_name(&classifier, &event).as_deref(),
+            Some("pass-through-next-key")
+        );
     }
 }

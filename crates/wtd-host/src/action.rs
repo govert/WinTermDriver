@@ -600,6 +600,12 @@ pub fn v1_registry() -> ActionRegistry {
         args: NO_ARGS,
         description: "Enter scrollback navigation mode",
     });
+    r.register(ActionDef {
+        name: "pass-through-next-key",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Send the next keypress directly to the app, bypassing WTD bindings",
+    });
 
     r
 }

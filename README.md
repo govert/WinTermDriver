@@ -268,6 +268,8 @@ tabs:
 
 In `wtd-ui`, creating a new tab or split opens a profile selector. This applies to the command palette actions and the default split shortcuts. Use the `change-profile` action from the command palette to relaunch the focused pane with a different launch profile.
 
+When you need one keypress to bypass WTD shortcuts entirely, use the `pass-through-next-key` action. The default `windows-terminal` preset binds it to `Alt+Shift+K`, and the command palette exposes the same action name for rebinding or discovery.
+
 ### Prompt driver profiles
 
 `wtd prompt` uses pane-local driver settings to prepare the composer, expand multiline input, and submit safely. This is the reliable path for driving agent CLIs with different input behaviors.

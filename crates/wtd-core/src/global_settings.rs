@@ -226,7 +226,7 @@ fn default_confirm_close() -> bool {
 
 /// Returns the tmux-style preset keybindings.
 ///
-/// Ctrl+B prefix, 10 single-stroke keys, 15 chords — the legacy WTD defaults.
+/// Ctrl+B prefix, 10 single-stroke keys, 16 chords — the legacy WTD defaults.
 pub fn tmux_bindings() -> BindingsDefinition {
     let keys: HashMap<String, ActionReference> = [
         ("Ctrl+Shift+T", "new-tab"),
@@ -255,6 +255,7 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("n", "next-tab"),
         ("p", "prev-tab"),
         ("d", "close-workspace"),
+        ("k", "pass-through-next-key"),
         ("Up", "focus-pane-up"),
         ("Down", "focus-pane-down"),
         ("Left", "focus-pane-left"),
@@ -279,11 +280,11 @@ pub fn tmux_bindings() -> BindingsDefinition {
 /// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
 /// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
 ///
-/// **28 bindings total:**
+/// **29 bindings total:**
 /// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
 /// - Pane: split right/down, focus up/down/left/right, resize in all directions
 /// - Clipboard: copy/paste (primary + secondary WT bindings)
-/// - UI: toggle-fullscreen, toggle-command-palette
+/// - UI: toggle-fullscreen, toggle-command-palette, pass-through-next-key
 pub fn windows_terminal_bindings() -> BindingsDefinition {
     let mut keys: HashMap<String, ActionReference> = [
         // ── Tab management ──────────────────────────────────────────────────
@@ -357,6 +358,10 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
         (
             "Ctrl+Shift+P",
             ActionReference::Simple("toggle-command-palette".to_string()),
+        ),
+        (
+            "Alt+Shift+K",
+            ActionReference::Simple("pass-through-next-key".to_string()),
         ),
     ]
     .into_iter()
@@ -622,7 +627,7 @@ mod tests {
         assert!(b.chords.is_none());
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 28, "28 WT-mapped single-stroke bindings");
+        assert_eq!(keys.len(), 29, "29 WT-mapped single-stroke bindings");
 
         // Tab management
         assert_eq!(
@@ -740,6 +745,12 @@ mod tests {
                 "toggle-command-palette".to_string()
             ))
         );
+        assert_eq!(
+            keys.get("Alt+Shift+K"),
+            Some(&ActionReference::Simple(
+                "pass-through-next-key".to_string()
+            ))
+        );
 
         // Omitted: no scroll-line/page actions in WTD v1
         assert!(!keys.contains_key("Ctrl+Shift+Up"));
@@ -783,7 +794,7 @@ mod tests {
         );
 
         let chords = b.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 15);
+        assert_eq!(chords.len(), 16);
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-right".to_string()))
@@ -792,6 +803,12 @@ mod tests {
             chords.get("["),
             Some(&ActionReference::Simple(
                 "enter-scrollback-mode".to_string()
+            ))
+        );
+        assert_eq!(
+            chords.get("k"),
+            Some(&ActionReference::Simple(
+                "pass-through-next-key".to_string()
             ))
         );
     }
@@ -812,7 +829,7 @@ mod tests {
         let keys = eff.keys.as_ref().unwrap();
         assert_eq!(keys.len(), 10);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 15);
+        assert_eq!(chords.len(), 16);
     }
 
     #[test]
@@ -826,9 +843,9 @@ mod tests {
         // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
         assert!(eff.chords.is_none());
-        // But it has 28 single-stroke keys.
+        // But it has 29 single-stroke keys.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 28);
+        assert_eq!(keys.len(), 29);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -837,6 +854,12 @@ mod tests {
             keys.get("Ctrl+Shift+P"),
             Some(&ActionReference::Simple(
                 "toggle-command-palette".to_string()
+            ))
+        );
+        assert_eq!(
+            keys.get("Alt+Shift+K"),
+            Some(&ActionReference::Simple(
+                "pass-through-next-key".to_string()
             ))
         );
     }

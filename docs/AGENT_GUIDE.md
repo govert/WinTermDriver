@@ -187,6 +187,8 @@ Agent panes launched directly as `pi`, `codex`, `claude`, `gemini`, or `copilot`
 
 For launch profiles, `wtd-ui` now keeps the path simple: creating a new tab or split opens a profile selector, and the command palette exposes `change-profile` to relaunch the focused pane with a different launch profile.
 
+For one-shot shortcut bypass, use the `pass-through-next-key` action. In the default `windows-terminal` preset it is bound to `Alt+Shift+K`, which arms the focused pane so the next keypress goes to the app instead of being handled as a WTD shortcut.
+
 WTD-launched sessions also advertise a Windows Terminal-compatible terminal identity (`TERM_PROGRAM=Windows_Terminal`, `WT_SESSION`, `WT_PROFILE_ID`, `COLORTERM=truecolor`) and expose `WTD_WORKSPACE`, `WTD_PANE`, and `WTD_SESSION_ID` for WTD-specific detection.
 
 For agent-aware panes, WTD also exports a capability-oriented contract:

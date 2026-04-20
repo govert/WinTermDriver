@@ -130,6 +130,10 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("toggle-command-palette", "Toggle command palette"),
     ("toggle-fullscreen", "Toggle window fullscreen"),
     ("enter-scrollback-mode", "Enter scrollback navigation mode"),
+    (
+        "pass-through-next-key",
+        "Send the next keypress directly to the app",
+    ),
 ];
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -1240,6 +1244,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn default_bindings_expand_to_pass_through_shortcut_hint() {
+        let hints = build_keybinding_hints(&wtd_core::global_settings::default_bindings());
+        assert_eq!(
+            hints.get("pass-through-next-key"),
+            Some(&"Alt+Shift+K".to_string())
+        );
+    }
+
     // ── Palette entries ──
 
     #[test]
@@ -1295,6 +1308,19 @@ mod tests {
         };
         let entries = build_palette_entries(&bindings);
         assert!(entries.iter().any(|e| e.name == "change-profile"));
+    }
+
+    #[test]
+    fn entries_include_pass_through_next_key() {
+        let bindings = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        let entries = build_palette_entries(&bindings);
+        assert!(entries.iter().any(|e| e.name == "pass-through-next-key"));
     }
 
     #[test]
