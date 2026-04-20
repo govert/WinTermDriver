@@ -30,7 +30,7 @@ fn csi_u_probe_transcript_matches_pi_style_enter_and_arrow_expectations() {
         ("Alt+Enter", "input hex=1B 5B 31 33 3B 33 75"),
         ("Ctrl+Enter", "input hex=1B 5B 31 33 3B 35 75"),
         ("Shift+Up", "input hex=1B 5B 31 3B 32 41"),
-        ("Alt+Left", "input hex=1B 1B 5B 31 3B 33 44"),
+        ("Alt+Left", "input hex=1B 5B 31 3B 33 44"),
         ("Alt+X", "input hex=1B 78"),
     ];
 

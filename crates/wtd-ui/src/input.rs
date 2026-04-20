@@ -519,7 +519,8 @@ impl InputClassifier {
 /// - Arrow keys → VT escape sequences (CSI A/B/C/D)
 /// - Function keys → VT escape sequences
 /// - Special keys (Enter, Tab, Escape, Backspace, etc.)
-/// - Alt+key → ESC + key bytes (meta prefix)
+/// - Alt+printable → ESC + key bytes (meta prefix)
+/// - Alt+special → modified VT sequence without an extra ESC prefix
 pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
     let mods = event.modifiers;
 
@@ -542,12 +543,6 @@ pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
     // Special keys with optional modifier encoding
     let special_bytes = special_key_bytes(&event.key, mods);
     if let Some(bytes) = special_bytes {
-        if mods.alt() && !matches!(event.key, KeyName::Escape | KeyName::Enter) {
-            // Alt prefix: ESC + the sequence
-            let mut result = vec![0x1B];
-            result.extend_from_slice(&bytes);
-            return result;
-        }
         return bytes;
     }
 
@@ -1404,6 +1399,12 @@ mod tests {
     fn raw_bytes_alt_a() {
         let event = key(KeyName::Char('A'), Modifiers::ALT, Some('a'));
         assert_eq!(key_event_to_bytes(&event), b"\x1Ba");
+    }
+
+    #[test]
+    fn raw_bytes_alt_arrow_uses_single_modified_csi_sequence() {
+        let event = key(KeyName::Right, Modifiers::ALT, None);
+        assert_eq!(key_event_to_bytes(&event), b"\x1B[1;3C");
     }
 
     #[test]

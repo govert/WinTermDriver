@@ -233,11 +233,6 @@ fn key_spec_to_bytes(spec: &KeySpec, protocol: KeyboardProtocolMode) -> Vec<u8> 
     }
 
     if let Some(bytes) = special_key_bytes(&spec.key, mods, protocol) {
-        if mods.alt() && !matches!(spec.key, KeyName::Escape | KeyName::Enter) {
-            let mut result = vec![0x1B];
-            result.extend_from_slice(&bytes);
-            return result;
-        }
         return bytes;
     }
 
@@ -451,6 +446,11 @@ mod tests {
     #[test]
     fn shifted_arrow_uses_csi_modifier_encoding() {
         assert_eq!(encode_key_spec("Shift+Up").unwrap(), b"\x1B[1;2A");
+    }
+
+    #[test]
+    fn alt_arrow_uses_single_modified_csi_sequence() {
+        assert_eq!(encode_key_spec("Alt+Left").unwrap(), b"\x1B[1;3D");
     }
 
     #[test]
