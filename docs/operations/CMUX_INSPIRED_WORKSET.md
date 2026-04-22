@@ -53,6 +53,12 @@ Key takeaways:
    model for persistence and recovery. That should be kept and strengthened, not
    collapsed.
 
+7. Agent-specific semantics matter.
+   Generic terminal hosting is not enough for modern coding agents. For example,
+   Pi exposes queue semantics, extension-driven status and notifications, and
+   emerging async-task / cross-session workflows that should map into WTD as
+   structured state rather than only screen text.
+
 ## Product Direction
 
 WTD should become:
@@ -71,6 +77,13 @@ WTD should not currently take on:
 
 Those may be revisited later, but they are explicitly deferred for now.
 
+Pi-specific note:
+
+- WTD should treat Pi as a first-class hosted agent, not just another TUI.
+- Interactive Pi panes remain the default host path.
+- Supervisor-style orchestration should rely on explicit waitable pane state and
+  agent-published status, not only prompt + capture loops.
+
 ## Workset Tracks
 
 ## Track A: Agent Attention System
@@ -84,6 +97,7 @@ quickly.
 
 - pane/workspace attention state
 - notification ingestion from OSC and explicit commands
+- agent-published attention and completion signals
 - unread tracking
 - next/previous attention navigation
 - notification list / popover / panel
@@ -111,6 +125,8 @@ Each pane exposes useful structured state beyond raw screen text.
 - progress value
 - latest notification summary
 - last activity timestamp
+- activity phase / waitable completion state
+- queue summary where the hosted agent exposes one
 
 ### Why It Matters
 
@@ -131,6 +147,7 @@ WTD is easy to control safely from other tools and other agents.
 - stronger pane-driver capabilities model
 - `prompt`/`capture`/`inspect` as the standard agent workflow
 - per-driver capabilities and status publication
+- first-class waiting primitive for cross-pane coordination
 
 ### Why It Matters
 
@@ -145,7 +162,7 @@ Existing agent tooling can use WTD with minimal adaptation.
 ### Scope
 
 - tmux-compat shim for pane/workspace operations
-- agent hook kits for Codex, Claude Code, Gemini CLI, Copilot CLI
+- agent hook kits for Pi, Codex, Claude Code, Gemini CLI, Copilot CLI
 - notification helper scripts and examples
 - compatibility notes and test fixtures
 
@@ -166,6 +183,7 @@ recipes.
 - command-palette integration
 - workspace command macros
 - prompt templates
+- wait / capture / prompt coordination recipes
 - driver-aware pane targeting
 - shared conventions for common multi-agent workflows
 
@@ -263,6 +281,12 @@ This workset maps to the following bead epics:
 
 Each epic should have concrete child tasks with clear acceptance criteria and
 test coverage expectations.
+
+Pi-specific follow-on work should include:
+
+- a `wtd wait` primitive for pane coordination
+- agent-published status and attention updates
+- a Pi integration package or extension pattern that feeds WTD state directly
 
 ## Success Criteria
 
