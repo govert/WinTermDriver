@@ -1,11 +1,11 @@
-# Cmux-Inspired Workset
+# Agent-Inspired Workset
 
 ## Purpose
 
-This document captures the WTD improvement workset inspired by a review of
-`cmux.com` and the public `cmux` repository. The goal is not to clone cmux or
-to reshape WTD into a macOS-style application. The goal is to identify the
-useful product ideas behind cmux and adapt the ones that fit WTD's strengths:
+This document captures the broader WTD improvement workset for agent-hosted
+terminal workflows. It started from specific external reviews, including cmux,
+but it now reflects a more general perspective on what WTD should become as an
+agent-aware Windows terminal host.
 
 - durable host-owned sessions
 - explicit workspace/tab/pane structure
@@ -20,10 +20,11 @@ This workset covers both:
 
 The current `workspace -> tab -> pane` model remains in scope and is retained.
 
-## What We Learn From Cmux
+## What We Learn From Agent Hosts
 
-Cmux's strongest ideas are not about terminal rendering. They are about
-attention management, metadata visibility, and orchestration.
+The strongest ideas from modern agent-host products are not about terminal
+rendering. They are about attention management, metadata visibility, and
+orchestration.
 
 Key takeaways:
 
@@ -106,7 +107,7 @@ quickly.
 
 ### Why It Matters
 
-This is the single most important cmux-inspired idea for multi-agent workflows.
+This is the single most important idea for multi-agent workflows.
 
 ## Track B: Structured Pane Metadata and Status
 
@@ -247,7 +248,7 @@ The recommended execution order is:
 7. Track D: Agent Ecosystem Compatibility
 
 This order balances product leverage with reliability. It prioritizes the core
-cmux-inspired product gains, then hardens WTD's platform quality, then adds
+agent-host product gains, then hardens WTD's platform quality, then adds
 workflow convenience and ecosystem compatibility.
 
 ## Explicit Deferrals
