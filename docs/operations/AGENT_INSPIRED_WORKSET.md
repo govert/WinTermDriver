@@ -60,6 +60,11 @@ Key takeaways:
    emerging async-task / cross-session workflows that should map into WTD as
    structured state rather than only screen text.
 
+8. Local stack health matters.
+   An agent host is more useful when the surrounding local project processes are
+   visible and actionable. Crashed workers, dead dev servers, and restart loops
+   should not be invisible background failures.
+
 ## Product Direction
 
 WTD should become:
@@ -99,6 +104,7 @@ quickly.
 - pane/workspace attention state
 - notification ingestion from OSC and explicit commands
 - agent-published attention and completion signals
+- focus-aware notification suppression when the relevant pane is already visible
 - unread tracking
 - next/previous attention navigation
 - notification list / popover / panel
@@ -185,6 +191,7 @@ recipes.
 - workspace command macros
 - prompt templates
 - wait / capture / prompt coordination recipes
+- trust confirmation when checked-in workflow files change before auto-run
 - driver-aware pane targeting
 - shared conventions for common multi-agent workflows
 
@@ -235,6 +242,27 @@ WTD is a strong everyday Windows terminal, not only an agent shell host.
 General terminal quality compounds everything else. If the basics feel weak, the
 agent features do not save the product.
 
+## Track H: Managed Process Health and Recovery
+
+### Outcome
+
+WTD workspaces make the health of the local project stack legible and
+actionable, not just the health of interactive agent panes.
+
+### Scope
+
+- visible process health states such as running, exited, restarting, and
+  crash-looping
+- rate-limited restart behavior surfaced clearly in UI and metadata
+- lightweight per-process resource visibility where practical
+- restart controls exposed to users and agents
+- stack-health context available through inspect / metadata / wait surfaces
+
+### Why It Matters
+
+Coding agents do better work when the surrounding local stack is healthy and
+that health is obvious.
+
 ## Priority Order
 
 The recommended execution order is:
@@ -243,9 +271,10 @@ The recommended execution order is:
 2. Track B: Structured Pane Metadata and Status
 3. Track C: Stable Automation and Driver Model
 4. Track F: Lifecycle and Persistence Reliability
-5. Track G: General-Purpose Terminal Polish
-6. Track E: Project Recipes and Workflow Memory
-7. Track D: Agent Ecosystem Compatibility
+5. Track H: Managed Process Health and Recovery
+6. Track G: General-Purpose Terminal Polish
+7. Track E: Project Recipes and Workflow Memory
+8. Track D: Agent Ecosystem Compatibility
 
 This order balances product leverage with reliability. It prioritizes the core
 agent-host product gains, then hardens WTD's platform quality, then adds
@@ -278,6 +307,7 @@ This workset maps to the following bead epics:
 - `Project Recipes and Palette Commands`
 - `tmux Compatibility Layer`
 - `Agent CLI Notification Hooks`
+- `Managed Process Health and Recovery`
 - `General-Purpose Terminal Polish`
 
 Each epic should have concrete child tasks with clear acceptance criteria and
@@ -288,6 +318,12 @@ Pi-specific follow-on work should include:
 - a `wtd wait` primitive for pane coordination
 - agent-published status and attention updates
 - a Pi integration package or extension pattern that feeds WTD state directly
+
+Solo-inspired follow-on work should include:
+
+- managed process health and restart visibility
+- focus-aware notification suppression
+- trust confirmation for changed checked-in workflow files before auto-run
 
 ## Success Criteria
 
