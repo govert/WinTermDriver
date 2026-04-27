@@ -270,6 +270,10 @@ steps, template variables (`{{name}}`), the `prompt-wait-capture` macro, and
 palette visibility metadata. See
 `docs/operations/PROJECT_RECIPES.md`.
 
+For tmux-oriented agent tools, use the opt-in shim in `tools/tmux-shim/`. It
+maps a small pane orchestration subset to native WTD commands; see
+`docs/operations/TMUX_COMPATIBILITY.md`.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |
