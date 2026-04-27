@@ -95,6 +95,7 @@ pub struct StatusBar {
     session_status: SessionStatus,
     attention_state: AttentionState,
     attention_message: Option<String>,
+    attention_count: usize,
     prefix_active: bool,
     prefix_label: String,
     available_width: f32,
@@ -149,6 +150,7 @@ impl StatusBar {
             session_status: SessionStatus::Running,
             attention_state: AttentionState::Active,
             attention_message: None,
+            attention_count: 0,
             prefix_active: false,
             prefix_label: "PREFIX".to_string(),
             available_width: 0.0,
@@ -207,6 +209,16 @@ impl StatusBar {
     /// Get the focused pane attention state.
     pub fn attention_state(&self) -> AttentionState {
         self.attention_state
+    }
+
+    /// Set total unread/attention count across visible workspace panes.
+    pub fn set_attention_count(&mut self, count: usize) {
+        self.attention_count = count;
+    }
+
+    /// Get total unread/attention count.
+    pub fn attention_count(&self) -> usize {
+        self.attention_count
     }
 
     /// Show or hide the prefix-active indicator.
@@ -312,12 +324,23 @@ impl StatusBar {
 
     fn combined_state_label(&self) -> String {
         let session = self.session_status.label();
+        let count = if self.attention_count > 0 {
+            Some(format!("attention {}", self.attention_count))
+        } else {
+            None
+        };
         let Some(attention) =
             attention_label(self.attention_state, self.attention_message.as_deref())
         else {
-            return session;
+            return match count {
+                Some(count) => format!("{count} · {session}"),
+                None => session,
+            };
         };
-        format!("{attention} · {session}")
+        match count {
+            Some(count) if count != attention => format!("{count} · {attention} · {session}"),
+            _ => format!("{attention} · {session}"),
+        }
     }
 
     fn combined_state_color(&self) -> (u8, u8, u8) {
@@ -509,6 +532,14 @@ mod tests {
             "needs attention: input requested · running"
         );
         assert_eq!(bar.combined_state_color(), ATTENTION_COLOR);
+    }
+
+    #[test]
+    fn attention_count_is_included_in_state_label() {
+        let mut bar = make_bar();
+        bar.set_attention_count(3);
+        assert_eq!(bar.attention_count(), 3);
+        assert_eq!(bar.combined_state_label(), "attention 3 · running");
     }
 
     #[test]

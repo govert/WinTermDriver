@@ -97,6 +97,8 @@ pub enum HostCommand {
         target_pane_id: Option<String>,
         args: Value,
     },
+    /// Clear attention state for a pane.
+    ClearAttention { target: String },
     /// Re-fetch the attached workspace snapshot from the host.
     RefreshWorkspace,
     /// Disconnect from host.
@@ -203,6 +205,11 @@ impl HostBridge {
             target_pane_id,
             args,
         });
+    }
+
+    /// Clear attention state for a pane target.
+    pub fn clear_attention(&self, target: String) {
+        self.send(HostCommand::ClearAttention { target });
     }
 
     /// Re-fetch the current workspace snapshot.
@@ -523,6 +530,9 @@ fn command_to_envelope(cmd: HostCommand, counter: u64) -> Envelope {
                 args,
             },
         ),
+        HostCommand::ClearAttention { target } => {
+            Envelope::new(id, &message::ClearAttention { target })
+        }
         HostCommand::RefreshWorkspace => {
             unreachable!("RefreshWorkspace is handled directly in the IPC loop")
         }
@@ -867,6 +877,19 @@ mod tests {
         let payload: InvokeAction = env.extract_payload().unwrap();
         assert_eq!(payload.action, "split-right");
         assert_eq!(payload.target_pane_id, Some("p1".into()));
+    }
+
+    #[test]
+    fn command_to_envelope_clear_attention() {
+        let env = command_to_envelope(
+            HostCommand::ClearAttention {
+                target: "dev/main/server".into(),
+            },
+            9,
+        );
+        assert_eq!(env.msg_type, message::ClearAttention::TYPE_NAME);
+        let payload: message::ClearAttention = env.extract_payload().unwrap();
+        assert_eq!(payload.target, "dev/main/server");
     }
 
     #[test]

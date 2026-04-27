@@ -349,6 +349,140 @@ fn focused_pane_attention(tab: &SnapshotTab) -> (AttentionState, Option<String>)
         .unwrap_or((AttentionState::Active, None))
 }
 
+fn pane_is_unread_attention(pane_session: &PaneSession) -> bool {
+    matches!(
+        pane_session.attention,
+        AttentionState::NeedsAttention | AttentionState::Error
+    )
+}
+
+fn attention_count(tabs: &[SnapshotTab]) -> usize {
+    tabs.iter()
+        .flat_map(|tab| tab.pane_sessions.values())
+        .filter(|pane_session| pane_is_unread_attention(pane_session))
+        .count()
+}
+
+fn notification_center_label(tabs: &[SnapshotTab]) -> String {
+    let mut items = Vec::new();
+    for tab in tabs {
+        for pane_id in tab.layout_tree.panes() {
+            let Some(pane_session) = tab.pane_sessions.get(&pane_id) else {
+                continue;
+            };
+            if !pane_is_unread_attention(pane_session) {
+                continue;
+            }
+            let label = match pane_session.attention_message.as_deref() {
+                Some(message) if !message.trim().is_empty() => {
+                    format!("{}: {}", pane_session.pane_path, message.trim())
+                }
+                _ => pane_session.pane_path.clone(),
+            };
+            items.push(label);
+        }
+    }
+
+    if items.is_empty() {
+        "Notifications: none".to_string()
+    } else {
+        format!("Notifications: {}", items.join(" | "))
+    }
+}
+
+fn next_attention_target(
+    tabs: &[SnapshotTab],
+    active_tab_index: usize,
+    forward: bool,
+) -> Option<(usize, PaneId)> {
+    let current_order = tabs
+        .get(active_tab_index)
+        .map(|tab| tab.layout_tree.focus())
+        .and_then(|focused| {
+            let mut order = 0usize;
+            for (tab_index, tab) in tabs.iter().enumerate() {
+                for pane_id in tab.layout_tree.panes() {
+                    if tab_index == active_tab_index && pane_id == focused {
+                        return Some(order);
+                    }
+                    order += 1;
+                }
+            }
+            None
+        })
+        .unwrap_or(0);
+
+    let mut attention = Vec::new();
+    let mut order = 0usize;
+    for (tab_index, tab) in tabs.iter().enumerate() {
+        for pane_id in tab.layout_tree.panes() {
+            if tab
+                .pane_sessions
+                .get(&pane_id)
+                .is_some_and(pane_is_unread_attention)
+            {
+                attention.push((order, tab_index, pane_id));
+            }
+            order += 1;
+        }
+    }
+
+    if attention.is_empty() {
+        return None;
+    }
+
+    let selected = if forward {
+        attention
+            .iter()
+            .find(|(order, _, _)| *order > current_order)
+            .or_else(|| attention.first())?
+    } else {
+        attention
+            .iter()
+            .rev()
+            .find(|(order, _, _)| *order < current_order)
+            .or_else(|| attention.last())?
+    };
+
+    Some((selected.1, selected.2.clone()))
+}
+
+fn focus_attention_target(
+    tabs: &mut [SnapshotTab],
+    tab_strip: &mut TabStrip,
+    active_tab_index: &mut usize,
+    target: (usize, PaneId),
+) {
+    let (tab_index, pane_id) = target;
+    if let Some(tab) = tabs.get_mut(tab_index) {
+        let _ = tab.layout_tree.set_focus(pane_id);
+        *active_tab_index = tab_index;
+        tab_strip.set_active(tab_index);
+    }
+}
+
+fn clear_focused_attention(
+    tabs: &mut [SnapshotTab],
+    active_tab_index: usize,
+    bridge: Option<&HostBridge>,
+    status_bar: &mut StatusBar,
+) -> bool {
+    let Some(tab) = tabs.get_mut(active_tab_index) else {
+        return false;
+    };
+    let focused = tab.layout_tree.focus();
+    let Some(pane_session) = tab.pane_sessions.get_mut(&focused) else {
+        return false;
+    };
+    pane_session.attention = AttentionState::Active;
+    pane_session.attention_message = None;
+    status_bar.set_attention(AttentionState::Active, None);
+    if let Some(bridge) = bridge {
+        bridge.clear_attention(pane_session.pane_path.clone());
+    }
+    true
+}
+
 fn compose_window_title(
     workspace_name: &str,
     tab_strip: &TabStrip,
@@ -971,9 +1105,12 @@ fn dispatch_action(
     action_ref: &wtd_core::workspace::ActionReference,
     command_palette: &mut CommandPalette,
     tab_strip: &mut TabStrip,
-    active_tab: &SnapshotTab,
+    tabs: &mut Vec<SnapshotTab>,
+    active_tab_index: &mut usize,
+    status_bar: &mut StatusBar,
     bridge: Option<&HostBridge>,
     connected: bool,
+    notification_center_open: &mut bool,
     pass_through_next_key: &mut PassThroughNextKeyState,
     mouse_handler: &mut MouseHandler,
 ) -> bool {
@@ -986,6 +1123,51 @@ fn dispatch_action(
     if should_prompt_for_profile(name, &args, connected, bridge.is_some()) {
         return show_profile_selector_for_action(command_palette, name);
     }
+
+    match name {
+        "next-attention" => {
+            if let Some(target) = next_attention_target(tabs, *active_tab_index, true) {
+                focus_attention_target(tabs, tab_strip, active_tab_index, target);
+                if let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) {
+                    let (attention_state, attention_message) = focused_pane_attention(active_tab);
+                    status_bar.set_attention(attention_state, attention_message);
+                }
+            }
+            return true;
+        }
+        "prev-attention" => {
+            if let Some(target) = next_attention_target(tabs, *active_tab_index, false) {
+                focus_attention_target(tabs, tab_strip, active_tab_index, target);
+                if let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) {
+                    let (attention_state, attention_message) = focused_pane_attention(active_tab);
+                    status_bar.set_attention(attention_state, attention_message);
+                }
+            }
+            return true;
+        }
+        "clear-focused-attention" => {
+            let _ = clear_focused_attention(tabs, *active_tab_index, bridge, status_bar);
+            status_bar.set_attention_count(attention_count(tabs));
+            return true;
+        }
+        "toggle-notification-center" => {
+            *notification_center_open = !*notification_center_open;
+            if *notification_center_open {
+                status_bar.set_pane_path(notification_center_label(tabs));
+            } else if let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) {
+                let focused = active_tab.layout_tree.focus();
+                if let Some(pane_session) = active_tab.pane_sessions.get(&focused) {
+                    status_bar.set_pane_path(pane_session.pane_path.clone());
+                }
+            }
+            return true;
+        }
+        _ => {}
+    }
+
+    let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) else {
+        return false;
+    };
 
     match name {
         "toggle-command-palette" => {
@@ -1194,6 +1376,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         .map(|name| HostBridge::connect(name.clone()));
     let mut tabs: Vec<SnapshotTab> = Vec::new();
     let mut active_tab_index = 0usize;
+    let mut notification_center_open = false;
 
     if bridge.is_none() {
         let mut layout_tree = LayoutTree::new();
@@ -1372,6 +1555,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             tabs = rebuilt_tabs;
                             status_bar.set_workspace_name(workspace_name.clone());
                             status_bar.set_session_status(SessionStatus::Running);
+                            status_bar.set_attention_count(attention_count(&tabs));
 
                             tab_strip = TabStrip::new(renderer.dw_factory())?;
                             tab_strip.set_workspace_name(workspace_name.clone());
@@ -1570,6 +1754,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         } else {
                             status_bar.set_attention(state, message);
                         }
+                        status_bar.set_attention_count(attention_count(&tabs));
+                        if notification_center_open {
+                            status_bar.set_pane_path(notification_center_label(&tabs));
+                        }
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
@@ -1752,18 +1940,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             if command_palette.has_action(&bound_name) {
                                 let simple_ref =
                                     wtd_core::workspace::ActionReference::Simple(bound_name);
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    dispatch_action(
-                                        &simple_ref,
-                                        &mut command_palette,
-                                        &mut tab_strip,
-                                        active_tab,
-                                        bridge.as_ref(),
-                                        connected,
-                                        &mut pass_through_next_key,
-                                        &mut mouse_handler,
-                                    );
-                                }
+                                dispatch_action(
+                                    &simple_ref,
+                                    &mut command_palette,
+                                    &mut tab_strip,
+                                    &mut tabs,
+                                    &mut active_tab_index,
+                                    &mut status_bar,
+                                    bridge.as_ref(),
+                                    connected,
+                                    &mut notification_center_open,
+                                    &mut pass_through_next_key,
+                                    &mut mouse_handler,
+                                );
                                 force_immediate_paint = true;
                                 needs_paint = true;
                                 continue;
@@ -1775,18 +1964,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 needs_paint = true;
                             }
                             PaletteResult::Action(action_ref) => {
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    dispatch_action(
-                                        &action_ref,
-                                        &mut command_palette,
-                                        &mut tab_strip,
-                                        active_tab,
-                                        bridge.as_ref(),
-                                        connected,
-                                        &mut pass_through_next_key,
-                                        &mut mouse_handler,
-                                    );
-                                }
+                                dispatch_action(
+                                    &action_ref,
+                                    &mut command_palette,
+                                    &mut tab_strip,
+                                    &mut tabs,
+                                    &mut active_tab_index,
+                                    &mut status_bar,
+                                    bridge.as_ref(),
+                                    connected,
+                                    &mut notification_center_open,
+                                    &mut pass_through_next_key,
+                                    &mut mouse_handler,
+                                );
                                 force_immediate_paint = true;
                                 needs_paint = true;
                             }
@@ -1826,18 +2016,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     let output = prefix_sm.process(&event);
                     match output {
                         PrefixOutput::DispatchAction(action_ref) => {
-                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                dispatch_action(
-                                    &action_ref,
-                                    &mut command_palette,
-                                    &mut tab_strip,
-                                    active_tab,
-                                    bridge.as_ref(),
-                                    connected,
-                                    &mut pass_through_next_key,
-                                    &mut mouse_handler,
-                                );
-                            }
+                            dispatch_action(
+                                &action_ref,
+                                &mut command_palette,
+                                &mut tab_strip,
+                                &mut tabs,
+                                &mut active_tab_index,
+                                &mut status_bar,
+                                bridge.as_ref(),
+                                connected,
+                                &mut notification_center_open,
+                                &mut pass_through_next_key,
+                                &mut mouse_handler,
+                            );
                             force_immediate_paint = true;
                             needs_paint = true;
                         }
@@ -1883,18 +2074,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 needs_paint = true;
                             }
                             PaletteResult::Action(action_ref) => {
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    dispatch_action(
-                                        &action_ref,
-                                        &mut command_palette,
-                                        &mut tab_strip,
-                                        active_tab,
-                                        bridge.as_ref(),
-                                        connected,
-                                        &mut pass_through_next_key,
-                                        &mut mouse_handler,
-                                    );
-                                }
+                                dispatch_action(
+                                    &action_ref,
+                                    &mut command_palette,
+                                    &mut tab_strip,
+                                    &mut tabs,
+                                    &mut active_tab_index,
+                                    &mut status_bar,
+                                    bridge.as_ref(),
+                                    connected,
+                                    &mut notification_center_open,
+                                    &mut pass_through_next_key,
+                                    &mut mouse_handler,
+                                );
                                 force_immediate_paint = true;
                                 needs_paint = true;
                             }
@@ -1934,20 +2126,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         for output in prefix_sm.process_text(&text) {
                             match output {
                                 PrefixOutput::DispatchAction(action_ref) => {
-                                    if let Some(active_tab) =
-                                        active_tab_ref(&tabs, active_tab_index)
-                                    {
-                                        dispatch_action(
-                                            &action_ref,
-                                            &mut command_palette,
-                                            &mut tab_strip,
-                                            active_tab,
-                                            bridge.as_ref(),
-                                            connected,
-                                            &mut pass_through_next_key,
-                                            &mut mouse_handler,
-                                        );
-                                    }
+                                    dispatch_action(
+                                        &action_ref,
+                                        &mut command_palette,
+                                        &mut tab_strip,
+                                        &mut tabs,
+                                        &mut active_tab_index,
+                                        &mut status_bar,
+                                        bridge.as_ref(),
+                                        connected,
+                                        &mut notification_center_open,
+                                        &mut pass_through_next_key,
+                                        &mut mouse_handler,
+                                    );
                                 }
                                 PrefixOutput::SendToSession(bytes) => {
                                     if let Some(ref bridge) = bridge {
@@ -2019,6 +2210,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         status_bar.set_prefix_label(transient_label.to_string());
         status_bar
             .set_prefix_active(pass_through_next_key.is_armed() || prefix_sm.is_prefix_active());
+        status_bar.set_attention_count(attention_count(&tabs));
 
         // ── Process mouse events ─────────────────────────────────
         for event in window::drain_mouse_events() {
@@ -2085,18 +2277,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
                 if let Some(result) = result {
                     if let PaletteResult::Action(ref action_ref) = result {
-                        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                            dispatch_action(
-                                action_ref,
-                                &mut command_palette,
-                                &mut tab_strip,
-                                active_tab,
-                                bridge.as_ref(),
-                                connected,
-                                &mut pass_through_next_key,
-                                &mut mouse_handler,
-                            );
-                        }
+                        dispatch_action(
+                            action_ref,
+                            &mut command_palette,
+                            &mut tab_strip,
+                            &mut tabs,
+                            &mut active_tab_index,
+                            &mut status_bar,
+                            bridge.as_ref(),
+                            connected,
+                            &mut notification_center_open,
+                            &mut pass_through_next_key,
+                            &mut mouse_handler,
+                        );
                     }
                     force_immediate_paint = true;
                     needs_paint = true;
@@ -3165,6 +3358,78 @@ mod tests {
 
         let bytes = paste_bytes_for_pane(&tab, &pane_id, "hello");
         assert_eq!(bytes, b"hello");
+    }
+
+    fn attention_test_tab() -> SnapshotTab {
+        let mut layout_tree = LayoutTree::new();
+        let first = layout_tree.focus();
+        let second = layout_tree.split_right(first.clone()).unwrap();
+        let third = layout_tree.split_down(first.clone()).unwrap();
+        let mut pane_sessions = HashMap::new();
+        for (pane_id, name, state, message) in [
+            (first.clone(), "one", AttentionState::Active, None),
+            (
+                second.clone(),
+                "two",
+                AttentionState::NeedsAttention,
+                Some("input requested".to_string()),
+            ),
+            (third.clone(), "three", AttentionState::Error, None),
+        ] {
+            pane_sessions.insert(
+                pane_id,
+                PaneSession {
+                    host_pane_id: None,
+                    session_id: name.to_string(),
+                    pane_path: format!("dev/main/{name}"),
+                    title: None,
+                    session_size: None,
+                    progress: None,
+                    attention: state,
+                    attention_message: message,
+                },
+            );
+        }
+        SnapshotTab {
+            layout_tree,
+            pane_sessions,
+            screens: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn attention_helpers_count_and_summarize_unread_panes() {
+        let tabs = vec![attention_test_tab()];
+        assert_eq!(attention_count(&tabs), 2);
+        let label = notification_center_label(&tabs);
+        assert!(label.contains("dev/main/two: input requested"));
+        assert!(label.contains("dev/main/three"));
+    }
+
+    #[test]
+    fn attention_navigation_orders_and_wraps() {
+        let tabs = vec![attention_test_tab()];
+        let first = next_attention_target(&tabs, 0, true).expect("next attention");
+        assert_eq!(first.0, 0);
+        assert_eq!(
+            tabs[0]
+                .pane_sessions
+                .get(&first.1)
+                .unwrap()
+                .pane_path
+                .as_str(),
+            "dev/main/three"
+        );
+        let previous = next_attention_target(&tabs, 0, false).expect("previous attention");
+        assert_eq!(
+            tabs[0]
+                .pane_sessions
+                .get(&previous.1)
+                .unwrap()
+                .pane_path
+                .as_str(),
+            "dev/main/two"
+        );
     }
 
     #[test]

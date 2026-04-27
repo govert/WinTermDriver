@@ -134,6 +134,22 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
         "pass-through-next-key",
         "Send the next keypress directly to the app",
     ),
+    (
+        "next-attention",
+        "Move focus to the next pane needing attention",
+    ),
+    (
+        "prev-attention",
+        "Move focus to the previous pane needing attention",
+    ),
+    (
+        "clear-focused-attention",
+        "Clear attention for the focused pane",
+    ),
+    (
+        "toggle-notification-center",
+        "Show or hide panes needing attention",
+    ),
 ];
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -1321,6 +1337,24 @@ mod tests {
         };
         let entries = build_palette_entries(&bindings);
         assert!(entries.iter().any(|e| e.name == "pass-through-next-key"));
+    }
+
+    #[test]
+    fn entries_include_attention_navigation_actions() {
+        let bindings = BindingsDefinition {
+            preset: None,
+            prefix: None,
+            prefix_timeout: None,
+            chords: None,
+            keys: None,
+        };
+        let entries = build_palette_entries(&bindings);
+        assert!(entries.iter().any(|e| e.name == "next-attention"));
+        assert!(entries.iter().any(|e| e.name == "prev-attention"));
+        assert!(entries.iter().any(|e| e.name == "clear-focused-attention"));
+        assert!(entries
+            .iter()
+            .any(|e| e.name == "toggle-notification-center"));
     }
 
     #[test]
