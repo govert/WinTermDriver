@@ -5,6 +5,8 @@ that expect a few tmux pane orchestration commands. The shim translates commands
 to native WTD operations and fails clearly for unsupported tmux features.
 
 See `tools/tmux-shim/README.md` for the supported subset and examples.
+Run `tools/tmux-shim/test-wtd-tmux.ps1` to validate the repeatable shim
+translation harness.
 
 The first supported subset is intentionally narrow:
 

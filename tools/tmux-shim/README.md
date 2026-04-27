@@ -37,6 +37,18 @@ tools/tmux-shim/wtd-tmux.ps1 capture-pane -p -t agents/main/worker -S -80
 Use `--what-if` or `-WhatIf` to validate translations without contacting a WTD
 host.
 
+## Regression Harness
+
+Run the translation harness after changing the shim:
+
+```powershell
+tools/tmux-shim/test-wtd-tmux.ps1
+tools/tmux-shim/test-wtd-tmux.ps1 -IncludeBash
+```
+
+The harness validates split creation, focus, send, list, capture, and
+unsupported-command failure.
+
 ## Representative Agent Workflow
 
 ```bash
