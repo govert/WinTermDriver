@@ -27,6 +27,11 @@ Supported `--agent` values are `pi`, `codex`, `claude-code`, `gemini-cli`, and
 `copilot-cli`. Supported events are `working`, `input-needed`, `queued`,
 `completed`, `error`, and `idle`.
 
+Run `tools/agent-hooks/test-agent-hooks.ps1 -IncludeBash` to validate the
+reference PowerShell and Bash translations. See
+`docs/operations/AGENT_NOTIFICATION_COMPATIBILITY.md` for per-agent expected
+behavior.
+
 ## Event Mapping
 
 | Event | WTD surface |

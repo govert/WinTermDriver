@@ -261,7 +261,8 @@ For reusable Pi, Codex, Claude Code, Gemini CLI, and Copilot CLI hook patterns,
 see `docs/operations/AGENT_NOTIFICATION_HOOKS.md` and the helper scripts in
 `tools/agent-hooks/`. For Pi-specific extension wiring, see
 `docs/operations/PI_WTD_EXTENSION_PATTERN.md` and
-`tools/agent-hooks/pi/`.
+`tools/agent-hooks/pi/`. Per-agent notification expectations are summarized in
+`docs/operations/AGENT_NOTIFICATION_COMPATIBILITY.md`.
 
 Project-local workflows can be checked in as `.wtd/recipes.yaml` or
 `wtd-recipes.yaml` and run with `wtd recipe list`, `wtd recipe show <name>`, and
