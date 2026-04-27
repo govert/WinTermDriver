@@ -236,6 +236,7 @@ static CLOSE_WORKSPACE_ARGS: &[ArgDef] = &[ArgDef {
     required: false,
 }];
 static SAVE_WORKSPACE_ARGS: &[ArgDef] = &[ARG_FILE_OPT];
+static RENAME_WORKSPACE_ARGS: &[ArgDef] = &[ARG_NAME_STRING];
 static NO_ARGS: &[ArgDef] = &[];
 static NEW_TAB_ARGS: &[ArgDef] = &[ARG_PROFILE_OPT];
 static GOTO_TAB_ARGS: &[ArgDef] = &[
@@ -281,6 +282,12 @@ pub fn v1_registry() -> ActionRegistry {
         target_type: TargetType::Workspace,
         args: SAVE_WORKSPACE_ARGS,
         description: "Save current workspace state as definition",
+    });
+    r.register(ActionDef {
+        name: "rename-workspace",
+        target_type: TargetType::Workspace,
+        args: RENAME_WORKSPACE_ARGS,
+        description: "Rename the current workspace",
     });
 
     // Window actions
@@ -1162,8 +1169,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, change-profile, pass-through, attention, metadata, and clear actions totals 70 actions.
-        assert_eq!(r.len(), 70);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, change-profile, pass-through, attention, metadata, clear actions, and workspace rename totals 71 actions.
+        assert_eq!(r.len(), 71);
     }
 
     #[test]

@@ -35,7 +35,7 @@ use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction, PixelRect};
 use wtd_ui::prefix_state::{PrefixOutput, PrefixStateMachine};
 use wtd_ui::renderer::{RendererConfig, TerminalRenderer, TextSelection};
 use wtd_ui::snapshot::{rebuild_from_snapshot, PaneSession, SnapshotRebuild, SnapshotTab};
-use wtd_ui::status_bar::{SessionStatus, StatusBar};
+use wtd_ui::status_bar::{SessionStatus, StatusBar, WorkspaceSaveState};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
 use wtd_ui::window::{self, InputEvent, MouseEventKind};
 
@@ -289,7 +289,11 @@ fn rebuild_renderer_resources(
     let pane_path = status_bar.pane_path().to_string();
     let session_status = status_bar.session_status().clone();
     let attention_state = status_bar.attention_state();
+    let workspace_name = status_bar.workspace_name().to_string();
+    let workspace_save_state = status_bar.workspace_save_state().clone();
     let mut rebuilt_status_bar = StatusBar::new(renderer.dw_factory())?;
+    rebuilt_status_bar.set_workspace_name(workspace_name);
+    rebuilt_status_bar.set_workspace_save_state(workspace_save_state);
     rebuilt_status_bar.set_pane_path(pane_path);
     rebuilt_status_bar.set_session_status(session_status);
     rebuilt_status_bar.set_attention(attention_state, None);
@@ -1961,6 +1965,49 @@ fn dispatch_action(
             }
             true
         }
+        "save-workspace" => {
+            if args.is_none() && status_bar.workspace_name() == "default" {
+                command_palette.show_prompt(
+                    "save-default-workspace",
+                    "Save default workspace",
+                    "Enter a workspace name",
+                    "",
+                );
+            } else if let Some(bridge) = bridge {
+                if connected {
+                    send_workspace_action(bridge, "save-workspace", action_args_to_value(&args));
+                    bridge.refresh_workspace();
+                }
+            }
+            true
+        }
+        "save-default-workspace" => {
+            if let Some(bridge) = bridge {
+                if connected {
+                    let value = action_args_to_value(&args);
+                    send_workspace_action(bridge, "rename-workspace", value);
+                    send_workspace_action(bridge, "save-workspace", serde_json::json!({}));
+                    bridge.refresh_workspace();
+                }
+            }
+            true
+        }
+        "rename-workspace" => {
+            if args.is_none() {
+                command_palette.show_prompt(
+                    "rename-workspace",
+                    "Rename current workspace",
+                    "Enter a workspace name",
+                    status_bar.workspace_name().to_string(),
+                );
+            } else if let Some(bridge) = bridge {
+                if connected {
+                    send_workspace_action(bridge, "rename-workspace", action_args_to_value(&args));
+                    bridge.refresh_workspace();
+                }
+            }
+            true
+        }
         "close-tab" => {
             if tab_strip.tab_count() > 1 {
                 if let Some(bridge) = bridge {
@@ -2251,6 +2298,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         );
                         if let Some(SnapshotRebuild {
                             workspace_name,
+                            workspace_saved,
+                            workspace_dirty,
+                            workspace_save_path,
                             tab_names,
                             active_tab_index: rebuilt_active,
                             tabs: rebuilt_tabs,
@@ -2260,6 +2310,11 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 rebuilt_active.min(rebuilt_tabs.len().saturating_sub(1));
                             tabs = rebuilt_tabs;
                             status_bar.set_workspace_name(workspace_name.clone());
+                            status_bar.set_workspace_save_state(WorkspaceSaveState::from_snapshot(
+                                workspace_saved,
+                                workspace_dirty,
+                                workspace_save_path,
+                            ));
                             status_bar.set_session_status(SessionStatus::Running);
                             status_bar.set_attention_count(attention_count(&tabs));
 
@@ -2554,6 +2609,18 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         {
                             should_close_window = true;
                         }
+                    }
+                    HostEvent::WorkspaceRenamed { new_name } => {
+                        status_bar.set_workspace_name(new_name.clone());
+                        tab_strip.set_workspace_name(new_name.clone());
+                        refresh_window_title(
+                            hwnd,
+                            &new_name,
+                            &tab_strip,
+                            active_tab_ref(&tabs, active_tab_index),
+                        );
+                        bridge.refresh_workspace();
+                        needs_paint = true;
                     }
                     HostEvent::Error { message } => {
                         tracing::error!(message = %message, "host error");

@@ -45,6 +45,7 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("close-workspace", "Close workspace UI"),
     ("recreate-workspace", "Tear down and recreate workspace"),
     ("save-workspace", "Save current workspace state"),
+    ("rename-workspace", "Rename current workspace"),
     // Window actions
     ("new-window", "Create a new window"),
     ("close-window", "Close window and all tabs"),

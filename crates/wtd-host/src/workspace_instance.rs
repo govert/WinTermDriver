@@ -5,6 +5,7 @@
 //! child-process cleanup.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use wtd_core::global_settings::GlobalSettings;
 use wtd_core::ids::{PaneId, SessionId, TabId, WorkspaceInstanceId};
@@ -170,6 +171,8 @@ pub struct PaneMetadataRecord {
 pub struct WorkspaceInstance {
     id: WorkspaceInstanceId,
     name: String,
+    saved_definition: Option<WorkspaceDefinition>,
+    save_path: Option<PathBuf>,
     state: WorkspaceState,
     tabs: Vec<TabInstance>,
     active_tab_index: usize,
@@ -199,6 +202,8 @@ impl WorkspaceInstance {
         let mut inst = Self {
             id,
             name: workspace_def.name.clone(),
+            saved_definition: None,
+            save_path: None,
             state: WorkspaceState::Creating,
             tabs: Vec::new(),
             active_tab_index: 0,
@@ -223,6 +228,7 @@ impl WorkspaceInstance {
         AttachSnapshot {
             id: self.id.clone(),
             name: self.name.clone(),
+            save_status: self.save_status(),
             state: self.state.clone(),
             active_tab_index: self.active_tab_index,
             tabs: self
@@ -428,6 +434,29 @@ impl WorkspaceInstance {
         }
     }
 
+    pub fn mark_saved(&mut self, path: impl Into<PathBuf>) {
+        self.saved_definition = Some(self.save());
+        self.save_path = Some(path.into());
+    }
+
+    pub fn save_path(&self) -> Option<&Path> {
+        self.save_path.as_deref()
+    }
+
+    pub fn save_status(&self) -> WorkspaceSaveStatus {
+        WorkspaceSaveStatus {
+            saved: self.saved_definition.is_some(),
+            dirty: self
+                .saved_definition
+                .as_ref()
+                .is_some_and(|saved| saved != &self.save()),
+            path: self
+                .save_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+        }
+    }
+
     // ── Accessors ────────────────────────────────────────────────────────────
 
     pub fn id(&self) -> &WorkspaceInstanceId {
@@ -436,6 +465,10 @@ impl WorkspaceInstance {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn rename_workspace(&mut self, name: String) {
+        self.name = name;
     }
 
     pub fn state(&self) -> &WorkspaceState {
@@ -1056,6 +1089,8 @@ impl WorkspaceInstance {
         let mut inst = Self {
             id: WorkspaceInstanceId(1),
             name: name.to_string(),
+            saved_definition: None,
+            save_path: None,
             state: WorkspaceState::Active,
             tabs: Vec::new(),
             active_tab_index: 0,
@@ -1115,6 +1150,8 @@ impl WorkspaceInstance {
         let mut inst = Self {
             id: WorkspaceInstanceId(instance_id),
             name: name.to_string(),
+            saved_definition: None,
+            save_path: None,
             state: WorkspaceState::Active,
             tabs: Vec::new(),
             active_tab_index: 0,
@@ -1427,6 +1464,7 @@ impl WorkspaceInstance {
 pub struct AttachSnapshot {
     pub id: WorkspaceInstanceId,
     pub name: String,
+    pub save_status: WorkspaceSaveStatus,
     pub state: WorkspaceState,
     pub active_tab_index: usize,
     pub tabs: Vec<TabSnapshot>,
@@ -1451,6 +1489,15 @@ pub struct AttachSnapshot {
     /// The UI can replay `scrollback_vt` into a fresh `ScreenBuffer` before
     /// applying `session_screens` so newly attached panes preserve local history.
     pub session_history: HashMap<SessionId, SessionHistorySnapshot>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSaveStatus {
+    pub saved: bool,
+    pub dirty: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

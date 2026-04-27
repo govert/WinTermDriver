@@ -59,8 +59,8 @@ pub enum Command {
 
     /// Start or reuse a workspace and launch the graphical UI attached to it.
     Start {
-        /// Workspace name.
-        name: String,
+        /// Workspace name (omit to start the default shell).
+        name: Option<String>,
         /// Path to a workspace definition file.
         #[arg(long)]
         file: Option<PathBuf>,
@@ -100,6 +100,14 @@ pub enum Command {
         /// Output file path.
         #[arg(long)]
         file: Option<PathBuf>,
+    },
+
+    /// Rename a running workspace.
+    RenameWorkspace {
+        /// Current workspace name.
+        name: String,
+        /// New workspace name.
+        new_name: String,
     },
 
     // ── List commands ───────────────────────────────────────────────
@@ -584,7 +592,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Start { ref name, ref file, recreate, ref profile })
-            if name == "dev" && file.is_none() && !recreate && profile.is_none()
+            if name.as_deref() == Some("dev") && file.is_none() && !recreate && profile.is_none()
         ));
     }
 
@@ -594,7 +602,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Start { ref name, ref file, recreate, .. })
-            if name == "dev" && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
+            if name.as_deref() == Some("dev") && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
         ));
     }
 
@@ -604,13 +612,17 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Start { ref name, ref profile, .. })
-            if name == "myws" && profile.as_deref() == Some("ssh-prod")
+            if name.as_deref() == Some("myws") && profile.as_deref() == Some("ssh-prod")
         ));
     }
 
     #[test]
-    fn start_requires_name() {
-        assert!(parse(&["start"]).is_err());
+    fn start_allows_default_name() {
+        let cli = parse(&["start"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Start { ref name, .. }) if name.is_none()
+        ));
     }
 
     #[test]

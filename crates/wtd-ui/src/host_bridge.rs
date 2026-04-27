@@ -5,12 +5,12 @@
 //! polls [`HostBridge::try_recv`] each frame to drain incoming events
 //! and calls [`HostBridge::send`] to push fire-and-forget commands.
 
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 
 use serde_json::Value;
 use wtd_ipc::message::{
-    self, AttachWorkspace, AttachWorkspaceResult, AttentionState, ErrorResponse, MessagePayload,
-    ProgressInfo,
+    self, AttachWorkspace, AttachWorkspaceResult, AttentionState, ErrorResponse,
+    InvokeActionResult, MessagePayload, ProgressInfo,
 };
 use wtd_ipc::{parse_envelope, Envelope, TypedMessage};
 
@@ -68,6 +68,8 @@ pub enum HostEvent {
         workspace: String,
         new_state: String,
     },
+    /// A workspace was renamed through an action response.
+    WorkspaceRenamed { new_name: String },
     /// An error response was received.
     Error { message: String },
     /// The IPC connection was lost.
@@ -112,7 +114,7 @@ pub enum HostCommand {
 /// Create with [`HostBridge::connect`], then call [`try_recv`](Self::try_recv)
 /// each frame and [`send`](Self::send) to push commands.
 pub struct HostBridge {
-    workspace_name: String,
+    workspace_name: Arc<Mutex<String>>,
     event_rx: mpsc::Receiver<HostEvent>,
     cmd_tx: mpsc::Sender<HostCommand>,
 }
@@ -126,7 +128,8 @@ impl HostBridge {
     pub fn connect(workspace_name: String) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel();
-        let attached_workspace = workspace_name.clone();
+        let attached_workspace = Arc::new(Mutex::new(workspace_name.clone()));
+        let task_workspace = attached_workspace.clone();
 
         std::thread::Builder::new()
             .name("wtd-ui-ipc".into())
@@ -135,7 +138,7 @@ impl HostBridge {
                     .enable_all()
                     .build()
                     .expect("failed to create tokio runtime for IPC");
-                rt.block_on(ipc_task(workspace_name, event_tx, cmd_rx));
+                rt.block_on(ipc_task(task_workspace, event_tx, cmd_rx));
             })
             .expect("failed to spawn IPC thread");
 
@@ -150,7 +153,8 @@ impl HostBridge {
     pub fn connect_to(pipe_name: String, workspace_name: String) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel();
-        let attached_workspace = workspace_name.clone();
+        let attached_workspace = Arc::new(Mutex::new(workspace_name.clone()));
+        let task_workspace = attached_workspace.clone();
 
         std::thread::Builder::new()
             .name("wtd-ui-ipc".into())
@@ -159,7 +163,7 @@ impl HostBridge {
                     .enable_all()
                     .build()
                     .expect("failed to create tokio runtime for IPC");
-                rt.block_on(ipc_task_to(pipe_name, workspace_name, event_tx, cmd_rx));
+                rt.block_on(ipc_task_to(pipe_name, task_workspace, event_tx, cmd_rx));
             })
             .expect("failed to spawn IPC thread");
 
@@ -183,7 +187,7 @@ impl HostBridge {
     /// Send raw input bytes to a session.
     pub fn send_input(&self, session_id: String, data: Vec<u8>) {
         self.send(HostCommand::SessionInput {
-            workspace: self.workspace_name.clone(),
+            workspace: current_workspace_name(&self.workspace_name),
             session_id,
             data,
         });
@@ -218,10 +222,24 @@ impl HostBridge {
     }
 }
 
+fn current_workspace_name(workspace_name: &Arc<Mutex<String>>) -> String {
+    workspace_name
+        .lock()
+        .map(|name| name.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+}
+
+fn set_current_workspace_name(workspace_name: &Arc<Mutex<String>>, new_name: String) {
+    match workspace_name.lock() {
+        Ok(mut name) => *name = new_name,
+        Err(poisoned) => *poisoned.into_inner() = new_name,
+    }
+}
+
 // ── Async IPC task (runs on background thread) ───────────────────────
 
 async fn ipc_task(
-    workspace_name: String,
+    workspace_name: Arc<Mutex<String>>,
     event_tx: mpsc::Sender<HostEvent>,
     cmd_rx: mpsc::Receiver<HostCommand>,
 ) {
@@ -239,7 +257,7 @@ async fn ipc_task(
 
 async fn ipc_task_to(
     pipe_name: String,
-    workspace_name: String,
+    workspace_name: Arc<Mutex<String>>,
     event_tx: mpsc::Sender<HostEvent>,
     cmd_rx: mpsc::Receiver<HostCommand>,
 ) {
@@ -257,7 +275,7 @@ async fn ipc_task_to(
 
 async fn run_attached(
     mut client: UiIpcClient,
-    workspace_name: String,
+    workspace_name: Arc<Mutex<String>>,
     event_tx: mpsc::Sender<HostEvent>,
     cmd_rx: mpsc::Receiver<HostCommand>,
 ) {
@@ -265,7 +283,7 @@ async fn run_attached(
     let attach_req = Envelope::new(
         "ui-attach-1",
         &AttachWorkspace {
-            workspace: workspace_name.clone(),
+            workspace: current_workspace_name(&workspace_name),
         },
     );
 
@@ -346,7 +364,34 @@ async fn run_attached(
                                 continue;
                             }
                         }
-                        if let Some(event) = envelope_to_event(&workspace_name, &envelope) {
+                        if envelope.msg_type == InvokeActionResult::TYPE_NAME {
+                            if let Ok(result) = envelope.extract_payload::<InvokeActionResult>() {
+                                if let Some(new_name) = result.result.strip_prefix("workspace-renamed:") {
+                                    set_current_workspace_name(&workspace_name, new_name.to_string());
+                                    let _ = event_tx.send(HostEvent::WorkspaceRenamed {
+                                        new_name: new_name.to_string(),
+                                    });
+                                    continue;
+                                }
+                                if result.result.starts_with("workspace-saved:") {
+                                    msg_counter += 1;
+                                    let envelope = Envelope::new(
+                                        format!("ui-refresh-{msg_counter}"),
+                                        &AttachWorkspace {
+                                            workspace: current_workspace_name(&workspace_name),
+                                        },
+                                    );
+                                    if let Err(e) = writer.write_frame(&envelope).await {
+                                        let _ = event_tx.send(HostEvent::Disconnected {
+                                            reason: format!("write error: {e}"),
+                                        });
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        if let Some(event) = envelope_to_event(&current_workspace_name(&workspace_name), &envelope) {
                             if event_tx.send(event).is_err() {
                                 break;
                             }
@@ -366,7 +411,7 @@ async fn run_attached(
                     let envelope = Envelope::new(
                         format!("ui-refresh-{msg_counter}"),
                         &AttachWorkspace {
-                            workspace: workspace_name.clone(),
+                            workspace: current_workspace_name(&workspace_name),
                         },
                     );
                     if let Err(e) = writer.write_frame(&envelope).await {

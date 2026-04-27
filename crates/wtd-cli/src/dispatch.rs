@@ -3,6 +3,7 @@
 //! Each CLI command is translated to an IPC envelope, sent to the host,
 //! and the response is formatted for output.
 
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,8 +26,8 @@ use wtd_ipc::message::{
     self, AttachWorkspace, AttentionState, CancelFollow, Capture, ClearAttention, CloseWorkspace,
     ConfigurePane, ErrorResponse, FocusPane, Follow, FollowEnd, Inspect, InvokeAction,
     ListInstances, ListPanes, ListSessions, ListWorkspaces, MessagePayload, Mouse, Notify,
-    OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback, SetPaneStatus,
-    WaitCondition, WaitPane,
+    OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, RenameWorkspace, SaveWorkspace,
+    Scrollback, SetPaneStatus, WaitCondition, WaitPane,
 };
 use wtd_ipc::Envelope;
 
@@ -116,8 +117,8 @@ fn map_wait_condition(condition: WaitConditionArg) -> WaitCondition {
 pub async fn run(cli: Cli) -> i32 {
     let timeout = resolve_timeout(cli.timeout);
 
-    // Bare `wtd` (no subcommand) → implicit `open` with defaults.
-    let command = cli.command.unwrap_or(Command::Open {
+    // Bare `wtd` (no subcommand) → implicit `start` with defaults.
+    let mut command = cli.command.unwrap_or(Command::Start {
         name: None,
         file: None,
         recreate: false,
@@ -144,6 +145,39 @@ pub async fn run(cli: Cli) -> i32 {
         }
     };
     client.set_timeout(timeout);
+
+    if let Command::Save { name, file: None } = &mut command {
+        if name == "default" {
+            let new_name = match prompt_default_workspace_name() {
+                Ok(new_name) => new_name,
+                Err(e) => {
+                    eprintln!("wtd: {e}");
+                    return exit_code::GENERAL_ERROR;
+                }
+            };
+            let rename = Envelope::new(
+                next_id(),
+                &RenameWorkspace {
+                    workspace: name.clone(),
+                    new_name: new_name.clone(),
+                },
+            );
+            match client.request(&rename).await {
+                Ok(response) => {
+                    let result = output::format_response(&response, cli.json);
+                    if result.exit_code != exit_code::SUCCESS {
+                        print_result(&result);
+                        return result.exit_code;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("wtd: {e}");
+                    return client_error_exit_code(&e);
+                }
+            }
+            *name = new_name;
+        }
+    }
 
     let envelope = match build_request(&command) {
         Ok(Some(env)) => env,
@@ -607,7 +641,7 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             id,
             msg_type: OpenWorkspace::TYPE_NAME.to_string(),
             payload: serde_json::json!({
-                "name": Some(name),
+                "name": name,
                 "file": file.as_ref().map(|p| normalize_request_path(p)),
                 "recreate": recreate,
                 "profile": profile,
@@ -640,6 +674,13 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &SaveWorkspace {
                 workspace: name.clone(),
                 file: file.as_ref().map(|p| p.to_string_lossy().to_string()),
+            },
+        )),
+        Command::RenameWorkspace { name, new_name } => Some(Envelope::new(
+            &id,
+            &RenameWorkspace {
+                workspace: name.clone(),
+                new_name: new_name.clone(),
             },
         )),
         Command::List { what } => match what {
@@ -1172,9 +1213,27 @@ fn client_error_exit_code(e: &ClientError) -> i32 {
 
 fn workspace_name_for_ui(command: &Command) -> Option<&str> {
     match command {
-        Command::Start { name, .. } => Some(name.as_str()),
+        Command::Start { name, profile, .. } => {
+            Some(name.as_deref().or(profile.as_deref()).unwrap_or("default"))
+        }
         _ => None,
     }
+}
+
+fn prompt_default_workspace_name() -> Result<String, String> {
+    print!("Save default workspace as name: ");
+    io::stdout()
+        .flush()
+        .map_err(|e| format!("failed to write prompt: {e}"))?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| format!("failed to read workspace name: {e}"))?;
+    let name = input.trim();
+    if name.is_empty() || name.contains('/') || name.contains('\\') {
+        return Err("workspace name must be non-empty and must not contain path separators".into());
+    }
+    Ok(name.to_string())
 }
 
 fn launch_ui(workspace_name: &str) -> Result<(), String> {
@@ -1286,7 +1345,7 @@ mod tests {
     #[test]
     fn start_request_matches_open_payload_shape() {
         let env = build_request(&Command::Start {
-            name: "dev".to_string(),
+            name: Some("dev".to_string()),
             file: Some(PathBuf::from("dev.yaml")),
             recreate: true,
             profile: None,
@@ -1499,12 +1558,30 @@ commands:
     fn workspace_name_for_ui_only_matches_start() {
         assert_eq!(
             workspace_name_for_ui(&Command::Start {
-                name: "dev".to_string(),
+                name: Some("dev".to_string()),
                 file: None,
                 recreate: false,
                 profile: None,
             }),
             Some("dev")
+        );
+        assert_eq!(
+            workspace_name_for_ui(&Command::Start {
+                name: None,
+                file: None,
+                recreate: false,
+                profile: Some("ssh-prod".to_string()),
+            }),
+            Some("ssh-prod")
+        );
+        assert_eq!(
+            workspace_name_for_ui(&Command::Start {
+                name: None,
+                file: None,
+                recreate: false,
+                profile: None,
+            }),
+            Some("default")
         );
         assert_eq!(
             workspace_name_for_ui(&Command::Open {

@@ -4,6 +4,7 @@
 //! workspace instances, sessions, and the action system.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -628,12 +629,17 @@ fn session_def_with_profile(profile: &str) -> SessionLaunchDefinition {
     }
 }
 
+struct LoadedWorkspaceDefinition {
+    definition: WorkspaceDefinition,
+    path: PathBuf,
+}
+
 /// Load a workspace definition from disk by name (with optional explicit file).
 fn load_workspace_from_disk(
     name: &str,
     file: Option<&str>,
     cwd: &std::path::Path,
-) -> Result<wtd_core::workspace::WorkspaceDefinition, Envelope> {
+) -> Result<LoadedWorkspaceDefinition, Envelope> {
     let explicit = file.map(|f| std::path::PathBuf::from(f));
 
     let discovered = find_workspace(name, explicit.as_deref(), cwd).map_err(|e| {
@@ -658,17 +664,22 @@ fn load_workspace_from_disk(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "workspace.yaml".to_string());
 
-    load_workspace_definition(&file_name, &content).map_err(|e| {
+    let definition = load_workspace_definition(&file_name, &content).map_err(|e| {
         error_envelope(
             "",
             ErrorCode::DefinitionError,
             &format!("failed to parse workspace: {}", e),
         )
+    })?;
+
+    Ok(LoadedWorkspaceDefinition {
+        definition,
+        path: discovered.path,
     })
 }
 
 fn save_workspace_definition_to_file(
-    inst: &WorkspaceInstance,
+    inst: &mut WorkspaceInstance,
     workspace: &str,
     file: Option<&str>,
 ) -> Result<std::path::PathBuf, String> {
@@ -676,6 +687,8 @@ fn save_workspace_definition_to_file(
 
     let path = if let Some(file) = file {
         std::path::PathBuf::from(file)
+    } else if let Some(path) = inst.save_path() {
+        path.to_path_buf()
     } else {
         let dir = wtd_core::ensure_user_workspaces_dir()
             .map_err(|e| format!("failed to create workspaces directory: {e}"))?;
@@ -687,6 +700,7 @@ fn save_workspace_definition_to_file(
 
     std::fs::write(&path, &yaml).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
 
+    inst.mark_saved(path.clone());
     Ok(path)
 }
 
@@ -713,6 +727,10 @@ impl RequestHandler for HostRequestHandler {
             }
 
             TypedMessage::SaveWorkspace(save) => self.handle_save_workspace(&envelope.id, save),
+
+            TypedMessage::RenameWorkspace(rename) => {
+                self.handle_rename_workspace(&envelope.id, rename)
+            }
 
             TypedMessage::ListWorkspaces(_) => self.handle_list_workspaces(envelope),
 
@@ -804,10 +822,14 @@ impl HostRequestHandler {
         }
 
         // Load or synthesize workspace definition.
+        let loaded_path;
         let def = if open.file.is_some() || (open.name.is_some() && open.profile.is_none()) {
             // File-based path: look up workspace definition on disk.
             match load_workspace_from_disk(&ws_name, open.file.as_deref(), &request_cwd(envelope)) {
-                Ok(d) => d,
+                Ok(loaded) => {
+                    loaded_path = Some(loaded.path);
+                    loaded.definition
+                }
                 Err(mut e) => {
                     e.id = id.to_string();
                     return Some(e);
@@ -815,6 +837,7 @@ impl HostRequestHandler {
             }
         } else {
             // Ad-hoc path: synthesize from defaults / named profile.
+            loaded_path = None;
             synthesize_default_workspace(&ws_name, open.profile.as_deref(), &state.settings)
         };
 
@@ -829,7 +852,7 @@ impl HostRequestHandler {
         state.next_instance_id += 1;
 
         let env = host_env();
-        let inst = match WorkspaceInstance::open(
+        let mut inst = match WorkspaceInstance::open(
             WorkspaceInstanceId(inst_id),
             &def,
             &state.settings,
@@ -845,6 +868,9 @@ impl HostRequestHandler {
                 ));
             }
         };
+        if let Some(path) = loaded_path {
+            inst.mark_saved(path);
+        }
 
         let instance_id = format!("{}", inst.id().0);
         state.workspaces.insert(ws_name, inst);
@@ -927,14 +953,14 @@ impl HostRequestHandler {
             ));
         }
 
-        let def = match load_workspace_from_disk(&recreate.workspace, None, &request_cwd(envelope))
-        {
-            Ok(d) => d,
-            Err(mut e) => {
-                e.id = id.to_string();
-                return Some(e);
-            }
-        };
+        let loaded =
+            match load_workspace_from_disk(&recreate.workspace, None, &request_cwd(envelope)) {
+                Ok(loaded) => loaded,
+                Err(mut e) => {
+                    e.id = id.to_string();
+                    return Some(e);
+                }
+            };
 
         let settings = state.settings.clone();
         let env = host_env();
@@ -947,14 +973,17 @@ impl HostRequestHandler {
             ));
         };
 
-        match inst.recreate(&def, &settings, &env, find_exe) {
-            Ok(()) => Some(Envelope::new(
-                id,
-                &RecreateWorkspaceResult {
-                    instance_id: format!("{}", inst.id().0),
-                    state: Value::Object(serde_json::Map::new()),
-                },
-            )),
+        match inst.recreate(&loaded.definition, &settings, &env, find_exe) {
+            Ok(()) => {
+                inst.mark_saved(loaded.path);
+                Some(Envelope::new(
+                    id,
+                    &RecreateWorkspaceResult {
+                        instance_id: format!("{}", inst.id().0),
+                        state: Value::Object(serde_json::Map::new()),
+                    },
+                ))
+            }
             Err(e) => Some(error_envelope(
                 id,
                 ErrorCode::InternalError,
@@ -964,8 +993,8 @@ impl HostRequestHandler {
     }
 
     fn handle_save_workspace(&self, id: &str, save: &SaveWorkspace) -> Option<Envelope> {
-        let state = self.lock_state();
-        match state.workspaces.get(&save.workspace) {
+        let mut state = self.lock_state();
+        match state.workspaces.get_mut(&save.workspace) {
             Some(inst) => {
                 match save_workspace_definition_to_file(inst, &save.workspace, save.file.as_deref())
                 {
@@ -979,6 +1008,38 @@ impl HostRequestHandler {
                 &format!("workspace '{}' not found", save.workspace),
             )),
         }
+    }
+
+    fn handle_rename_workspace(&self, id: &str, rename: &RenameWorkspace) -> Option<Envelope> {
+        let new_name = rename.new_name.trim();
+        if new_name.is_empty() || new_name.contains('/') || new_name.contains('\\') {
+            return Some(error_envelope(
+                id,
+                ErrorCode::InvalidArgument,
+                "workspace name must be non-empty and must not contain path separators",
+            ));
+        }
+
+        let mut state = self.lock_state();
+        if state.workspaces.contains_key(new_name) {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceAlreadyExists,
+                &format!("workspace '{}' already exists", new_name),
+            ));
+        }
+
+        let Some(mut inst) = state.workspaces.remove(&rename.workspace) else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", rename.workspace),
+            ));
+        };
+        inst.rename_workspace(new_name.to_string());
+        state.workspaces.insert(new_name.to_string(), inst);
+
+        Some(Envelope::new(id, &OkResponse {}))
     }
 
     fn handle_list_workspaces(&self, envelope: &Envelope) -> Option<Envelope> {
@@ -2056,6 +2117,54 @@ impl HostRequestHandler {
             }
         };
 
+        if action.action == "rename-workspace" {
+            if let Err(e) = v1_registry().validate_args("rename-workspace", &action.args) {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    &e.to_string(),
+                ));
+            }
+            let Some(new_name) = action.args.get("name").and_then(|v| v.as_str()) else {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    "missing rename-workspace name",
+                ));
+            };
+            let new_name = new_name.trim();
+            if new_name.is_empty() || new_name.contains('/') || new_name.contains('\\') {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InvalidArgument,
+                    "workspace name must be non-empty and must not contain path separators",
+                ));
+            }
+            if state.workspaces.contains_key(new_name) {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::WorkspaceAlreadyExists,
+                    &format!("workspace '{}' already exists", new_name),
+                ));
+            }
+            let Some(mut inst) = state.workspaces.remove(&workspace_name) else {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::WorkspaceNotFound,
+                    &format!("workspace '{}' not found", workspace_name),
+                ));
+            };
+            inst.rename_workspace(new_name.to_string());
+            state.workspaces.insert(new_name.to_string(), inst);
+            return Some(Envelope::new(
+                id,
+                &InvokeActionResult {
+                    result: format!("workspace-renamed:{new_name}"),
+                    pane_id: None,
+                },
+            ));
+        }
+
         let settings = state.settings.clone();
         let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
             tracing::error!(workspace = %workspace_name, "workspace disappeared during invoke-action handling");
@@ -2641,10 +2750,11 @@ mod tests {
         let handler = HostRequestHandler::new(GlobalSettings::default());
         {
             let mut state = handler.state.lock().unwrap();
-            state.workspaces.insert(
-                "alpha".to_string(),
-                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
-            );
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            inst.attach_test_session_by_pane_name("shell", test_session(RestartPolicy::OnFailure))
+                .expect("test pane should exist");
+            state.workspaces.insert("alpha".to_string(), inst);
         }
 
         let response = handler

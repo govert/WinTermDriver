@@ -38,6 +38,9 @@ pub struct SnapshotTab {
 /// Output of [`rebuild_from_snapshot`].
 pub struct SnapshotRebuild {
     pub workspace_name: String,
+    pub workspace_saved: bool,
+    pub workspace_dirty: bool,
+    pub workspace_save_path: Option<String>,
     pub tab_names: Vec<String>,
     pub active_tab_index: usize,
     pub tabs: Vec<SnapshotTab>,
@@ -47,6 +50,19 @@ pub struct SnapshotRebuild {
 /// screen buffers from an `AttachWorkspaceResult.state` JSON value.
 pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<SnapshotRebuild> {
     let workspace_name = state["name"].as_str().unwrap_or("workspace").to_string();
+    let save_status = state.get("saveStatus");
+    let workspace_saved = save_status
+        .and_then(|value| value.get("saved"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let workspace_dirty = save_status
+        .and_then(|value| value.get("dirty"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let workspace_save_path = save_status
+        .and_then(|value| value.get("path"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
     let tabs = state["tabs"].as_array()?;
     let active_tab_index = state
         .get("activeTabIndex")
@@ -236,6 +252,9 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
 
     Some(SnapshotRebuild {
         workspace_name,
+        workspace_saved,
+        workspace_dirty,
+        workspace_save_path,
         tab_names,
         active_tab_index,
         tabs: rebuilt_tabs,

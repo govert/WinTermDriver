@@ -28,6 +28,9 @@ const SEPARATOR_MARGIN: f32 = 8.0;
 const BAR_BG: (u8, u8, u8) = (30, 30, 40); // matches tab strip STRIP_BG
 const TEXT_COLOR: (u8, u8, u8) = (180, 180, 180);
 const WORKSPACE_COLOR: (u8, u8, u8) = (78, 201, 176); // accent, matches ACCENT_COLOR
+const WORKSPACE_SAVED_COLOR: (u8, u8, u8) = (145, 170, 165);
+const WORKSPACE_DIRTY_COLOR: (u8, u8, u8) = (220, 190, 80);
+const WORKSPACE_UNSAVED_COLOR: (u8, u8, u8) = (204, 120, 120);
 const STATE_RUNNING_COLOR: (u8, u8, u8) = (100, 200, 120);
 const STATE_EXITED_COLOR: (u8, u8, u8) = (200, 170, 80);
 const STATE_FAILED_COLOR: (u8, u8, u8) = (204, 120, 120); // matches failed pane msg color
@@ -49,6 +52,39 @@ pub enum SessionStatus {
     Exited { exit_code: u32 },
     Failed { error: String },
     Restarting { attempt: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceSaveState {
+    Unsaved,
+    Saved { path: Option<String> },
+    Modified { path: Option<String> },
+}
+
+impl WorkspaceSaveState {
+    pub fn from_snapshot(saved: bool, dirty: bool, path: Option<String>) -> Self {
+        match (saved, dirty) {
+            (true, true) => Self::Modified { path },
+            (true, false) => Self::Saved { path },
+            (false, _) => Self::Unsaved,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Unsaved => "unsaved",
+            Self::Saved { .. } => "saved",
+            Self::Modified { .. } => "modified",
+        }
+    }
+
+    fn color(&self) -> (u8, u8, u8) {
+        match self {
+            Self::Unsaved => WORKSPACE_UNSAVED_COLOR,
+            Self::Saved { .. } => WORKSPACE_SAVED_COLOR,
+            Self::Modified { .. } => WORKSPACE_DIRTY_COLOR,
+        }
+    }
 }
 
 impl SessionStatus {
@@ -91,6 +127,7 @@ fn attention_label(state: AttentionState, message: Option<&str>) -> Option<Strin
 /// Bottom status bar: workspace name, pane path, prefix indicator, session state.
 pub struct StatusBar {
     workspace_name: String,
+    workspace_save_state: WorkspaceSaveState,
     pane_path: String,
     session_status: SessionStatus,
     attention_state: AttentionState,
@@ -146,6 +183,7 @@ impl StatusBar {
 
         Ok(Self {
             workspace_name: String::new(),
+            workspace_save_state: WorkspaceSaveState::Unsaved,
             pane_path: String::new(),
             session_status: SessionStatus::Running,
             attention_state: AttentionState::Active,
@@ -178,6 +216,14 @@ impl StatusBar {
     /// Get the active workspace name.
     pub fn workspace_name(&self) -> &str {
         &self.workspace_name
+    }
+
+    pub fn set_workspace_save_state(&mut self, state: WorkspaceSaveState) {
+        self.workspace_save_state = state;
+    }
+
+    pub fn workspace_save_state(&self) -> &WorkspaceSaveState {
+        &self.workspace_save_state
     }
 
     /// Set the focused pane path (e.g. "workspace/tab/pane").
@@ -276,6 +322,16 @@ impl StatusBar {
                     WORKSPACE_COLOR,
                 )?;
                 x += w + SEGMENT_GAP;
+                let label = self.workspace_save_state.label();
+                let w = self.draw_text(
+                    rt,
+                    label,
+                    x - SEGMENT_GAP + 4.0,
+                    y,
+                    &self.tf_regular,
+                    self.workspace_save_state.color(),
+                )?;
+                x += w + 4.0;
             }
 
             // 2. Pane path
@@ -500,6 +556,35 @@ mod tests {
         let mut bar = make_bar();
         bar.set_workspace_name("dev".to_string());
         assert_eq!(bar.workspace_name(), "dev");
+    }
+
+    #[test]
+    fn workspace_save_state_labels() {
+        assert_eq!(WorkspaceSaveState::Unsaved.label(), "unsaved");
+        assert_eq!(
+            WorkspaceSaveState::Saved {
+                path: Some("dev.yaml".to_string())
+            }
+            .label(),
+            "saved"
+        );
+        assert_eq!(
+            WorkspaceSaveState::Modified {
+                path: Some("dev.yaml".to_string())
+            }
+            .label(),
+            "modified"
+        );
+    }
+
+    #[test]
+    fn set_workspace_save_state() {
+        let mut bar = make_bar();
+        let state = WorkspaceSaveState::Saved {
+            path: Some("dev.yaml".to_string()),
+        };
+        bar.set_workspace_save_state(state.clone());
+        assert_eq!(bar.workspace_save_state(), &state);
     }
 
     #[test]

@@ -83,6 +83,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         CloseWorkspace      => CloseWorkspace,
         RecreateWorkspace   => RecreateWorkspace,
         SaveWorkspace       => SaveWorkspace,
+        RenameWorkspace     => RenameWorkspace,
         ListWorkspaces      => ListWorkspaces,
         ListInstances       => ListInstances,
         ListPanes           => ListPanes,
@@ -154,6 +155,7 @@ pub enum TypedMessage {
     CloseWorkspace(CloseWorkspace),
     RecreateWorkspace(RecreateWorkspace),
     SaveWorkspace(SaveWorkspace),
+    RenameWorkspace(RenameWorkspace),
     ListWorkspaces(ListWorkspaces),
     ListInstances(ListInstances),
     ListPanes(ListPanes),
@@ -290,6 +292,15 @@ pub struct SaveWorkspace {
     pub file: Option<String>,
 }
 impl_payload!(SaveWorkspace, "SaveWorkspace");
+
+/// §13.14 — Rename a running workspace instance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameWorkspace {
+    pub workspace: String,
+    pub new_name: String,
+}
+impl_payload!(RenameWorkspace, "RenameWorkspace");
 
 /// §13.14 — List known workspace definitions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
