@@ -94,6 +94,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         PaneInput           => PaneInput,
         Capture             => Capture,
         Scrollback          => Scrollback,
+        WaitPane            => WaitPane,
         Follow              => Follow,
         CancelFollow        => CancelFollow,
         Inspect             => Inspect,
@@ -119,6 +120,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         ListSessionsResult  => ListSessionsResult,
         CaptureResult       => CaptureResult,
         ScrollbackResult    => ScrollbackResult,
+        WaitPaneResult      => WaitPaneResult,
         InspectResult       => InspectResult,
         AttentionChanged    => AttentionChanged,
         InvokeActionResult  => InvokeActionResult,
@@ -163,6 +165,7 @@ pub enum TypedMessage {
     PaneInput(PaneInput),
     Capture(Capture),
     Scrollback(Scrollback),
+    WaitPane(WaitPane),
     Follow(Follow),
     CancelFollow(CancelFollow),
     Inspect(Inspect),
@@ -188,6 +191,7 @@ pub enum TypedMessage {
     ListSessionsResult(ListSessionsResult),
     CaptureResult(CaptureResult),
     ScrollbackResult(ScrollbackResult),
+    WaitPaneResult(WaitPaneResult),
     InspectResult(InspectResult),
     AttentionChanged(AttentionChanged),
     InvokeActionResult(InvokeActionResult),
@@ -540,6 +544,32 @@ pub struct SetPaneStatus {
 }
 impl_payload!(SetPaneStatus, "SetPaneStatus");
 
+/// §13.14 — Wait for a pane coordination condition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitPane {
+    pub target: String,
+    pub condition: WaitCondition,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent_lines: Option<u32>,
+}
+impl_payload!(WaitPane, "WaitPane");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WaitCondition {
+    Idle,
+    Done,
+    NeedsAttention,
+    Error,
+    QueueEmpty,
+    StateChange,
+}
+
 /// §13.14 — Update pane-local metadata such as prompt driver settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -873,6 +903,17 @@ pub struct ScrollbackResult {
     pub lines: Vec<String>,
 }
 impl_payload!(ScrollbackResult, "ScrollbackResult");
+
+/// §13.14 — Result of waiting for a pane condition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitPaneResult {
+    pub matched: bool,
+    pub condition: WaitCondition,
+    pub target: String,
+    pub data: Value,
+}
+impl_payload!(WaitPaneResult, "WaitPaneResult");
 
 /// §13.14 — Full metadata for a pane/session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

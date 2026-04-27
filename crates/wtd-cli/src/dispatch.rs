@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::cli::{
     AttentionStateArg, Cli, Command, DriverProfileArg, HostCommand, ListCommand, MouseButtonArg,
-    MouseKindArg,
+    MouseKindArg, WaitConditionArg,
 };
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
@@ -22,6 +22,7 @@ use wtd_ipc::message::{
     ConfigurePane, ErrorResponse, FocusPane, Follow, FollowEnd, Inspect, InvokeAction,
     ListInstances, ListPanes, ListSessions, ListWorkspaces, MessagePayload, Mouse, Notify,
     OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback, SetPaneStatus,
+    WaitCondition, WaitPane,
 };
 use wtd_ipc::Envelope;
 
@@ -93,6 +94,17 @@ fn map_attention_state(state: AttentionStateArg) -> AttentionState {
         AttentionStateArg::NeedsAttention => AttentionState::NeedsAttention,
         AttentionStateArg::Done => AttentionState::Done,
         AttentionStateArg::Error => AttentionState::Error,
+    }
+}
+
+fn map_wait_condition(condition: WaitConditionArg) -> WaitCondition {
+    match condition {
+        WaitConditionArg::Idle => WaitCondition::Idle,
+        WaitConditionArg::Done => WaitCondition::Done,
+        WaitConditionArg::NeedsAttention => WaitCondition::NeedsAttention,
+        WaitConditionArg::Error => WaitCondition::Error,
+        WaitConditionArg::QueueEmpty => WaitCondition::QueueEmpty,
+        WaitConditionArg::StateChange => WaitCondition::StateChange,
     }
 }
 
@@ -464,6 +476,22 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 queue_pending: *queue_pending,
                 completion: completion.clone(),
                 source: source.clone(),
+            },
+        )),
+        Command::Wait {
+            target,
+            condition,
+            timeout,
+            poll_ms,
+            recent_lines,
+        } => Some(Envelope::new(
+            &id,
+            &WaitPane {
+                target: target.clone(),
+                condition: map_wait_condition(*condition),
+                timeout_ms: Some((*timeout * 1000.0).max(0.0) as u64),
+                poll_ms: Some(*poll_ms),
+                recent_lines: Some(*recent_lines),
             },
         )),
         Command::Follow { .. } | Command::Host { .. } | Command::Completions { .. } => None,
@@ -976,6 +1004,26 @@ mod tests {
         assert_eq!(env.payload["statusText"], "running tests");
         assert_eq!(env.payload["queuePending"], 2);
         assert_eq!(env.payload["source"], "codex");
+    }
+
+    #[test]
+    fn wait_request_sets_payload() {
+        let env = build_request(&Command::Wait {
+            target: "dev/server".to_string(),
+            condition: WaitConditionArg::NeedsAttention,
+            timeout: 1.5,
+            poll_ms: 10,
+            recent_lines: 5,
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, WaitPane::TYPE_NAME);
+        assert_eq!(env.payload["target"], "dev/server");
+        assert_eq!(env.payload["condition"], "needs-attention");
+        assert_eq!(env.payload["timeoutMs"], 1500);
+        assert_eq!(env.payload["pollMs"], 10);
+        assert_eq!(env.payload["recentLines"], 5);
     }
 
     #[test]

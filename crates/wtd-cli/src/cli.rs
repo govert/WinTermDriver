@@ -199,6 +199,24 @@ pub enum Command {
         status_text: Option<String>,
     },
 
+    /// Wait until a pane reaches an attention/status condition.
+    Wait {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Condition to wait for.
+        #[arg(long = "for", value_enum, default_value_t = WaitConditionArg::Done)]
+        condition: WaitConditionArg,
+        /// Host-side wait timeout in seconds.
+        #[arg(long, default_value_t = 30.0)]
+        timeout: f64,
+        /// Poll interval in milliseconds.
+        #[arg(long, default_value_t = 250)]
+        poll_ms: u64,
+        /// Recent scrollback lines to include in success/timeout snapshots.
+        #[arg(long, default_value_t = 40)]
+        recent_lines: u32,
+    },
+
     // ── Input commands ──────────────────────────────────────────────
     /// Send low-level text to a session.
     ///
@@ -428,6 +446,16 @@ pub enum AttentionStateArg {
     NeedsAttention,
     Done,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum WaitConditionArg {
+    Idle,
+    Done,
+    NeedsAttention,
+    Error,
+    QueueEmpty,
+    StateChange,
 }
 
 /// Generate shell completions and write them to stdout.
@@ -1183,6 +1211,33 @@ mod tests {
                 && phase.as_deref() == Some("working")
                 && source.as_deref() == Some("codex")
                 && status_text.as_deref() == Some("running tests")
+        ));
+    }
+
+    #[test]
+    fn wait_accepts_condition_timeout_poll_and_recent_lines() {
+        let cli = parse(&[
+            "wait",
+            "dev/server",
+            "--for",
+            "needs-attention",
+            "--timeout",
+            "1.5",
+            "--poll-ms",
+            "10",
+            "--recent-lines",
+            "5",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Wait {
+                ref target,
+                condition: WaitConditionArg::NeedsAttention,
+                timeout,
+                poll_ms: 10,
+                recent_lines: 5,
+            }) if target == "dev/server" && (timeout - 1.5).abs() < f64::EPSILON
         ));
     }
 

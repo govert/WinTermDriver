@@ -338,6 +338,38 @@ fn get_pane_scrollback(inst: &WorkspaceInstance, pane_id: &PaneId, tail: u32) ->
     }
 }
 
+fn wait_signature(inst: &WorkspaceInstance, pane_id: &PaneId, recent_lines: u32) -> String {
+    let attention = inst
+        .pane_attention(pane_id)
+        .and_then(|attention| serde_json::to_string(attention).ok())
+        .unwrap_or_default();
+    let metadata = inst
+        .pane_metadata(pane_id)
+        .and_then(|metadata| serde_json::to_string(metadata).ok())
+        .unwrap_or_default();
+    let recent_output = get_pane_scrollback(inst, pane_id, recent_lines).join("\n");
+    format!("{attention}|{metadata}|{recent_output}")
+}
+
+fn wait_condition_matches(condition: WaitCondition, data: &Value) -> bool {
+    let attention_state = data["attention"]["state"].as_str().unwrap_or("active");
+    let metadata = &data["metadata"];
+    let phase = metadata["phase"].as_str().unwrap_or_default();
+    let completion = metadata["completion"].as_str().unwrap_or_default();
+    let queue_pending = metadata["queuePending"].as_u64();
+
+    match condition {
+        WaitCondition::Idle => phase == "idle",
+        WaitCondition::Done => {
+            attention_state == "done" || phase == "done" || !completion.is_empty()
+        }
+        WaitCondition::NeedsAttention => attention_state == "needs_attention",
+        WaitCondition::Error => attention_state == "error" || phase == "error",
+        WaitCondition::QueueEmpty => queue_pending.unwrap_or(0) == 0,
+        WaitCondition::StateChange => data["stateChanged"].as_bool().unwrap_or(false),
+    }
+}
+
 fn mouse_mode_name(screen: &wtd_pty::ScreenBuffer) -> &'static str {
     match screen.mouse_mode() {
         wtd_pty::MouseMode::None => "none",
@@ -662,6 +694,8 @@ impl RequestHandler for HostRequestHandler {
             TypedMessage::Scrollback(scrollback) => {
                 self.handle_scrollback(&envelope.id, scrollback)
             }
+
+            TypedMessage::WaitPane(wait) => self.handle_wait_pane(&envelope.id, wait),
 
             TypedMessage::Follow(follow) => self.handle_follow(&envelope.id, follow),
 
@@ -1473,6 +1507,99 @@ impl HostRequestHandler {
 
         let lines = get_pane_scrollback(inst, &pane_id, scrollback.tail);
         Some(Envelope::new(id, &ScrollbackResult { lines }))
+    }
+
+    fn handle_wait_pane(&self, id: &str, wait: &WaitPane) -> Option<Envelope> {
+        let timeout = std::time::Duration::from_millis(wait.timeout_ms.unwrap_or(30_000));
+        let poll = std::time::Duration::from_millis(wait.poll_ms.unwrap_or(250).max(10));
+        let recent_lines = wait.recent_lines.unwrap_or(40);
+        let started = std::time::Instant::now();
+        let initial = self.wait_state_signature(&wait.target, recent_lines);
+
+        loop {
+            match self.wait_pane_snapshot(&wait.target, recent_lines, initial.as_deref()) {
+                Ok((_signature, data)) => {
+                    let condition_matched = wait_condition_matches(wait.condition, &data);
+                    if condition_matched {
+                        return Some(Envelope::new(
+                            id,
+                            &WaitPaneResult {
+                                matched: true,
+                                condition: wait.condition,
+                                target: wait.target.clone(),
+                                data,
+                            },
+                        ));
+                    }
+                    if started.elapsed() >= timeout {
+                        return Some(Envelope::new(
+                            id,
+                            &WaitPaneResult {
+                                matched: false,
+                                condition: wait.condition,
+                                target: wait.target.clone(),
+                                data,
+                            },
+                        ));
+                    }
+                }
+                Err(message) => {
+                    return Some(error_envelope(id, ErrorCode::TargetNotFound, &message));
+                }
+            }
+            std::thread::sleep(poll);
+        }
+    }
+
+    fn wait_state_signature(&self, target: &str, recent_lines: u32) -> Option<String> {
+        let mut state = self.lock_state();
+        for inst in state.workspaces.values_mut() {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+        }
+        let (inst, pane_id) = find_pane(&state.workspaces, target)?;
+        Some(wait_signature(inst, &pane_id, recent_lines))
+    }
+
+    fn wait_pane_snapshot(
+        &self,
+        target: &str,
+        recent_lines: u32,
+        initial_signature: Option<&str>,
+    ) -> Result<(Option<String>, Value), String> {
+        let mut state = self.lock_state();
+        for inst in state.workspaces.values_mut() {
+            for session in inst.sessions_mut().values_mut() {
+                session.process_pending_output();
+            }
+        }
+        let (inst, pane_id) = find_pane(&state.workspaces, target)
+            .ok_or_else(|| format!("pane '{target}' not found"))?;
+        let signature = wait_signature(inst, &pane_id, recent_lines);
+        let pane_name = inst.pane_name(&pane_id).unwrap_or("?").to_string();
+        let attention = inst
+            .pane_attention(&pane_id)
+            .and_then(|attention| serde_json::to_value(attention).ok())
+            .unwrap_or_else(|| serde_json::json!({ "state": "active" }));
+        let metadata = inst
+            .pane_metadata(&pane_id)
+            .and_then(|metadata| serde_json::to_value(metadata).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        let recent_output = get_pane_scrollback(inst, &pane_id, recent_lines);
+        let changed = initial_signature
+            .map(|initial| initial != signature)
+            .unwrap_or(false);
+        let data = serde_json::json!({
+            "paneName": pane_name,
+            "paneId": format!("{}", pane_id),
+            "workspace": inst.name(),
+            "attention": attention,
+            "metadata": metadata,
+            "recentOutput": recent_output,
+            "stateChanged": changed,
+        });
+        Ok((Some(signature), data))
     }
 
     fn handle_follow(&self, id: &str, follow: &Follow) -> Option<Envelope> {
@@ -2381,7 +2508,7 @@ mod tests {
     };
     use wtd_ipc::message::{
         AttentionState, ClearAttention, Inspect, InspectResult, Mouse, MouseButton, MouseKind,
-        Notify, SetPaneStatus,
+        Notify, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
     };
 
     fn encode_b64(input: &[u8]) -> String {
@@ -2601,6 +2728,116 @@ mod tests {
         assert_eq!(result.data["metadata"]["statusText"], "running tests");
         assert_eq!(result.data["metadata"]["queuePending"], 2);
         assert_eq!(result.data["metadata"]["source"], "codex");
+    }
+
+    #[test]
+    fn wait_pane_succeeds_with_current_metadata_and_snapshot() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+        handler.handle_set_pane_status(
+            "status-1",
+            &SetPaneStatus {
+                target: "alpha/main/shell".to_string(),
+                phase: Some("done".to_string()),
+                status_text: Some("tests passed".to_string()),
+                progress: None,
+                queue_pending: Some(0),
+                completion: Some("success".to_string()),
+                source: Some("codex".to_string()),
+            },
+        );
+
+        let response = handler
+            .handle_wait_pane(
+                "wait-1",
+                &WaitPane {
+                    target: "alpha/main/shell".to_string(),
+                    condition: WaitCondition::Done,
+                    timeout_ms: Some(1),
+                    poll_ms: Some(1),
+                    recent_lines: Some(5),
+                },
+            )
+            .unwrap();
+        let result: WaitPaneResult = response.extract_payload().unwrap();
+        assert!(result.matched);
+        assert_eq!(result.condition, WaitCondition::Done);
+        assert_eq!(result.data["metadata"]["phase"], "done");
+        assert_eq!(result.data["metadata"]["statusText"], "tests passed");
+    }
+
+    #[test]
+    fn wait_pane_timeout_returns_state_snapshot() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+
+        let response = handler
+            .handle_wait_pane(
+                "wait-1",
+                &WaitPane {
+                    target: "alpha/main/shell".to_string(),
+                    condition: WaitCondition::Error,
+                    timeout_ms: Some(1),
+                    poll_ms: Some(1),
+                    recent_lines: Some(5),
+                },
+            )
+            .unwrap();
+        let result: WaitPaneResult = response.extract_payload().unwrap();
+        assert!(!result.matched);
+        assert_eq!(result.condition, WaitCondition::Error);
+        assert_eq!(result.data["attention"]["state"], "active");
+        assert!(result.data["metadata"].is_object());
+        assert!(result.data["recentOutput"].is_array());
+    }
+
+    #[test]
+    fn wait_pane_snapshot_reports_state_change_after_metadata_update() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+        let initial = handler
+            .wait_state_signature("alpha/main/shell", 5)
+            .expect("pane should resolve");
+        handler.handle_set_pane_status(
+            "status-1",
+            &SetPaneStatus {
+                target: "alpha/main/shell".to_string(),
+                phase: Some("working".to_string()),
+                status_text: Some("running tests".to_string()),
+                progress: None,
+                queue_pending: Some(1),
+                completion: None,
+                source: Some("pi".to_string()),
+            },
+        );
+
+        let (_, data) = handler
+            .wait_pane_snapshot("alpha/main/shell", 5, Some(&initial))
+            .unwrap();
+        assert_eq!(data["stateChanged"], true);
+        assert!(super::wait_condition_matches(
+            WaitCondition::StateChange,
+            &data
+        ));
+        assert_eq!(data["metadata"]["source"], "pi");
     }
 
     fn single_session_workspace(

@@ -5,6 +5,8 @@ WTD exposes two stable primitives for agent panes:
 - `wtd notify <target>` for attention states: `needs-attention`, `done`, and `error`.
 - `wtd status <target>` for structured metadata: phase, source, queue count,
   completion marker, and status text.
+- `wtd wait <target>` for supervisors that need to block until one of those
+  states is reached.
 
 The helper scripts in `tools/agent-hooks/` provide a common event vocabulary for
 agent CLIs and wrappers:
@@ -35,6 +37,22 @@ Supported `--agent` values are `pi`, `codex`, `claude-code`, `gemini-cli`, and
 | `completed` | `wtd status --phase done`, then `wtd notify --state done` |
 | `error` | `wtd status --phase error`, then `wtd notify --state error` |
 | `idle` | `wtd status --phase idle`, then `wtd clear-attention` |
+
+## Waiting From Coordinators
+
+Supervisor panes can wait on agent-published state instead of polling terminal
+text:
+
+```bash
+wtd wait build/tests --for done --timeout 60
+wtd wait build/tests --for needs-attention --recent-lines 80
+wtd wait build/tests --for queue-empty --timeout 30
+```
+
+On success, `wtd wait` returns the matched condition plus current pane metadata.
+On timeout, it exits with the timeout code but still includes the attention
+state, metadata, and recent output needed to decide whether to retry or involve
+a user.
 
 ## Pi
 
@@ -107,4 +125,3 @@ else
   exit "$code"
 fi
 ```
-

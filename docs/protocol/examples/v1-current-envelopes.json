@@ -71,6 +71,17 @@
     }
   },
   {
+    "id": "wait-1",
+    "type": "WaitPane",
+    "payload": {
+      "target": "dev/server",
+      "condition": "done",
+      "timeoutMs": 60000,
+      "pollMs": 250,
+      "recentLines": 80
+    }
+  },
+  {
     "id": "action-1",
     "type": "InvokeAction",
     "payload": {
@@ -103,6 +114,31 @@
       "cursorCol": 0,
       "cursorVisible": true,
       "cursorShape": "block"
+    }
+  },
+  {
+    "id": "wait-1",
+    "type": "WaitPaneResult",
+    "payload": {
+      "matched": false,
+      "condition": "done",
+      "target": "dev/server",
+      "data": {
+        "paneName": "server",
+        "paneId": "1",
+        "workspace": "dev",
+        "attention": {
+          "state": "active"
+        },
+        "metadata": {
+          "phase": "working",
+          "statusText": "running tests",
+          "queuePending": 1,
+          "source": "codex"
+        },
+        "recentOutput": ["running test crate::integration ..."],
+        "stateChanged": false
+      }
     }
   },
   {

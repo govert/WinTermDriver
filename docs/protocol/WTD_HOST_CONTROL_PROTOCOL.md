@@ -137,6 +137,7 @@ Human-facing commands map to protocol messages as follows:
 | `wtd scrollback <target> --tail <n>` | `Scrollback` |
 | `wtd follow <target>` | `Follow` |
 | `wtd inspect <target>` | `Inspect` |
+| `wtd wait <target> --for <condition>` | `WaitPane` |
 | `wtd configure-pane <target>` | `ConfigurePane` |
 | `wtd action <target> <action>` | `InvokeAction` |
 | `wtd notify <target> [--state <state>] [--source <source>] [message]` | `Notify` |
@@ -169,6 +170,7 @@ Client-to-host:
 | `Follow` | `target`, `raw` | Streaming output |
 | `CancelFollow` | `id` | Cancels a follow request |
 | `Inspect` | `target` | Full pane/session metadata |
+| `WaitPane` | `target`, `condition`, optional `timeoutMs`, optional `pollMs`, optional `recentLines` | Waitable pane coordination |
 | `ConfigurePane` | `target` plus optional driver fields | Prompt-driver metadata |
 | `Notify` | `target`, `state`, optional `message`, optional `source` | Set pane attention/status |
 | `ClearAttention` | `target` | Reset pane attention to `active` |
@@ -196,6 +198,7 @@ Host-to-client:
 | `CaptureResult` | Captured text/VT metadata |
 | `ScrollbackResult` | Scrollback lines |
 | `InspectResult` | Full metadata JSON |
+| `WaitPaneResult` | Matched condition or timeout snapshot |
 | `InvokeActionResult` | Action outcome |
 | `FollowData` | Follow stream chunk |
 | `FollowEnd` | Follow stream end |
@@ -333,37 +336,45 @@ runtime fields where available, including `driverProfile`, `cwd`, and terminal
 
 Request timeout is enforced by the CLI client, not by the host protocol. The
 global flag is `--timeout <seconds>`. A timeout exits with code `10` and prints
-the request timeout error. Future `wait-v1` will add host-level timeout
-snapshots for pane coordination.
+the request timeout error.
 
-## Planned Agent Coordination Messages
+### Waitable Agent Coordination
 
-The following messages remain reserved for upcoming beads and are not accepted
-by the current `wtd-ipc` dispatcher yet:
+`wait-v1` adds host-level pane waits for coordinator workflows. The CLI command
+is:
 
-| Planned type | CLI shape | Purpose |
-|--------------|-----------|---------|
-| `WaitPane` | `wtd wait <target> --for <condition>` | Wait for idle/done/error/attention/queue-empty |
+```bash
+wtd wait dev/server --for done --timeout 60 --recent-lines 80
+```
 
-The target response shape for `WaitPane` success and timeout is state-rich:
+Accepted conditions are `idle`, `done`, `needs-attention`, `error`,
+`queue-empty`, and `state-change`. `--timeout` is in seconds, `--poll-ms`
+controls host polling, and `--recent-lines` controls how much recent output is
+included in the returned snapshot.
+
+On success the command exits `0` and returns the matched condition plus current
+metadata. On timeout it exits `10` and still returns a state-rich snapshot:
 
 ```json
 {
   "matched": false,
   "condition": "done",
-  "timedOut": true,
-  "pane": {
-    "target": "dev/server",
-    "phase": "working",
-    "attention": "active",
-    "driverProfile": "pi",
-    "statusText": "running tests",
-    "queueSummary": {
-      "pending": 1
-    }
-  },
-  "recentOutput": {
-    "lines": ["running test crate::integration ..."]
+  "target": "dev/server",
+  "data": {
+    "paneName": "server",
+    "paneId": "1",
+    "workspace": "dev",
+    "attention": {
+      "state": "active"
+    },
+    "metadata": {
+      "phase": "working",
+      "statusText": "running tests",
+      "queuePending": 1,
+      "source": "pi"
+    },
+    "recentOutput": ["running test crate::integration ..."],
+    "stateChanged": false
   }
 }
 ```

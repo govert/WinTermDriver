@@ -56,6 +56,7 @@ fn format_text(response: &Envelope) -> OutputResult {
         "ListSessionsResult" => format_list_sessions(response),
         "CaptureResult" => format_capture(response),
         "ScrollbackResult" => format_scrollback(response),
+        "WaitPaneResult" => format_wait_pane(response),
         "InspectResult" => format_inspect(response),
         "InvokeActionResult" => format_invoke_action(response),
         "FollowData" => format_follow_data(response),
@@ -215,6 +216,63 @@ fn format_scrollback(response: &Envelope) -> OutputResult {
         stdout,
         stderr: String::new(),
         exit_code: exit_code::SUCCESS,
+    }
+}
+
+fn format_wait_pane(response: &Envelope) -> OutputResult {
+    let result: WaitPaneResult = match response.extract_payload() {
+        Ok(r) => r,
+        Err(e) => return parse_error(e),
+    };
+    let condition = wait_condition_label(result.condition);
+    let metadata = &result.data["metadata"];
+    let attention = result.data["attention"]["state"]
+        .as_str()
+        .unwrap_or("active");
+    let phase = metadata["phase"].as_str().unwrap_or("");
+    let status = metadata["statusText"].as_str().unwrap_or("");
+    let mut stdout = if result.matched {
+        format!("matched {condition}\n")
+    } else {
+        format!("timeout waiting for {condition}\n")
+    };
+    stdout.push_str(&format!("attention: {attention}\n"));
+    if !phase.is_empty() {
+        stdout.push_str(&format!("phase: {phase}\n"));
+    }
+    if !status.is_empty() {
+        stdout.push_str(&format!("status: {status}\n"));
+    }
+    if let Some(lines) = result.data["recentOutput"].as_array() {
+        if !lines.is_empty() {
+            stdout.push_str("recent output:\n");
+            for line in lines {
+                if let Some(line) = line.as_str() {
+                    stdout.push_str(line);
+                    stdout.push('\n');
+                }
+            }
+        }
+    }
+    OutputResult {
+        stdout,
+        stderr: String::new(),
+        exit_code: if result.matched {
+            exit_code::SUCCESS
+        } else {
+            exit_code::TIMEOUT
+        },
+    }
+}
+
+fn wait_condition_label(condition: WaitCondition) -> &'static str {
+    match condition {
+        WaitCondition::Idle => "idle",
+        WaitCondition::Done => "done",
+        WaitCondition::NeedsAttention => "needs-attention",
+        WaitCondition::Error => "error",
+        WaitCondition::QueueEmpty => "queue-empty",
+        WaitCondition::StateChange => "state-change",
     }
 }
 
@@ -552,5 +610,56 @@ mod tests {
         let result = format_response(&env, false);
         assert_eq!(result.exit_code, exit_code::SUCCESS);
         assert!(result.stdout.contains("line1\nline2\nline3"));
+    }
+
+    #[test]
+    fn wait_pane_success_text_format() {
+        let env = make_envelope(
+            "WaitPaneResult",
+            json!({
+                "matched": true,
+                "condition": "done",
+                "target": "dev/tests",
+                "data": {
+                    "attention": { "state": "done" },
+                    "metadata": {
+                        "phase": "done",
+                        "statusText": "tests passed",
+                        "queuePending": 0
+                    },
+                    "recentOutput": ["ok"]
+                }
+            }),
+        );
+        let result = format_response(&env, false);
+        assert_eq!(result.exit_code, exit_code::SUCCESS);
+        assert!(result.stdout.contains("matched done"));
+        assert!(result.stdout.contains("attention: done"));
+        assert!(result.stdout.contains("phase: done"));
+        assert!(result.stdout.contains("status: tests passed"));
+        assert!(result.stdout.contains("recent output:\nok\n"));
+    }
+
+    #[test]
+    fn wait_pane_timeout_text_format() {
+        let env = make_envelope(
+            "WaitPaneResult",
+            json!({
+                "matched": false,
+                "condition": "needs-attention",
+                "target": "dev/tests",
+                "data": {
+                    "attention": { "state": "active" },
+                    "metadata": { "phase": "working" },
+                    "recentOutput": ["still running"]
+                }
+            }),
+        );
+        let result = format_response(&env, false);
+        assert_eq!(result.exit_code, exit_code::TIMEOUT);
+        assert!(result
+            .stdout
+            .contains("timeout waiting for needs-attention"));
+        assert!(result.stdout.contains("recent output:\nstill running\n"));
     }
 }

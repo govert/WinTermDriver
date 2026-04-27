@@ -236,6 +236,19 @@ attach snapshots: phase, status text, queue count, completion marker, and source
 WTD also includes runtime metadata such as driver profile, cwd, and terminal
 progress when available.
 
+Coordinators can wait on those states without screen polling:
+
+```bash
+wtd wait build-and-test/tests --for done --timeout 60
+wtd wait build-and-test/tests --for needs-attention --recent-lines 80
+wtd wait build-and-test/tests --for queue-empty --timeout 30
+```
+
+`wtd wait` returns the matched condition and current metadata on success. On
+timeout it exits with the timeout code and still prints a snapshot with attention
+state, metadata, and recent output so the coordinator can decide whether to
+prompt, retry, or surface the pane to a user.
+
 In the UI, use the command palette actions `toggle-pane-metadata-list`,
 `filter-pane-list-attention`, `filter-pane-list-status`,
 `filter-pane-list-driver`, `filter-pane-list-cwd`, and

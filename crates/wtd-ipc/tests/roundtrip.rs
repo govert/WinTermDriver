@@ -789,6 +789,36 @@ fn set_pane_status_roundtrip() {
 }
 
 #[test]
+fn wait_pane_roundtrip() {
+    roundtrip(WaitPane {
+        target: "dev/main/server".into(),
+        condition: WaitCondition::QueueEmpty,
+        timeout_ms: Some(30_000),
+        poll_ms: Some(250),
+        recent_lines: Some(80),
+    });
+}
+
+#[test]
+fn wait_pane_result_roundtrip() {
+    roundtrip(WaitPaneResult {
+        matched: false,
+        condition: WaitCondition::Done,
+        target: "dev/main/server".into(),
+        data: serde_json::json!({
+            "attention": { "state": "active" },
+            "metadata": {
+                "phase": "working",
+                "queuePending": 1,
+                "source": "pi"
+            },
+            "recentOutput": ["running tests"],
+            "stateChanged": false
+        }),
+    });
+}
+
+#[test]
 fn attention_changed_roundtrip() {
     roundtrip(AttentionChanged {
         workspace: "dev".into(),
