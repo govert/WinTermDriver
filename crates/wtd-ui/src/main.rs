@@ -26,12 +26,14 @@ use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
-use wtd_ui::input::{key_event_to_bytes, InputAction, InputClassifier, KeyEvent};
+use wtd_ui::input::{
+    key_event_to_bytes, InputAction, InputClassifier, KeyEvent, KeyName, Modifiers,
+};
 use wtd_ui::mouse_handler::{MouseHandler, MouseOutput};
 use wtd_ui::paint_scheduler::PaintScheduler;
 use wtd_ui::pane_layout::{PaneLayout, PaneLayoutAction, PixelRect};
 use wtd_ui::prefix_state::{PrefixOutput, PrefixStateMachine};
-use wtd_ui::renderer::{RendererConfig, TerminalRenderer};
+use wtd_ui::renderer::{RendererConfig, TerminalRenderer, TextSelection};
 use wtd_ui::snapshot::{rebuild_from_snapshot, PaneSession, SnapshotRebuild, SnapshotTab};
 use wtd_ui::status_bar::{SessionStatus, StatusBar};
 use wtd_ui::tab_strip::{TabAction, TabStrip};
@@ -1252,6 +1254,164 @@ fn navigate_focused_scrollback(
     true
 }
 
+#[derive(Default)]
+struct KeyboardSelectionState {
+    active: bool,
+    pane_id: Option<PaneId>,
+    move_start: bool,
+}
+
+impl KeyboardSelectionState {
+    fn activate(&mut self, pane_id: PaneId) {
+        self.active = true;
+        self.pane_id = Some(pane_id);
+        self.move_start = false;
+    }
+
+    fn deactivate(&mut self) {
+        self.active = false;
+        self.pane_id = None;
+        self.move_start = false;
+    }
+
+    fn switch_endpoint(&mut self) {
+        if self.active {
+            self.move_start = !self.move_start;
+        }
+    }
+}
+
+fn selection_screen_bounds(screen: &ScreenBuffer) -> (usize, usize) {
+    (
+        screen.rows().saturating_sub(1),
+        screen.cols().saturating_sub(1),
+    )
+}
+
+fn clamp_selection_position(row: usize, col: usize, screen: &ScreenBuffer) -> (usize, usize) {
+    let (max_row, max_col) = selection_screen_bounds(screen);
+    (row.min(max_row), col.min(max_col))
+}
+
+fn activate_keyboard_mark_mode(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    keyboard_selection: &mut KeyboardSelectionState,
+) -> bool {
+    let focused = tab.layout_tree.focus();
+    let Some(screen) = tab.screens.get(&focused) else {
+        return true;
+    };
+    let cursor = screen.cursor();
+    let (row, col) = clamp_selection_position(cursor.row, cursor.col, screen);
+    if mouse_handler.selection(&focused).is_none() {
+        mouse_handler.set_selection(
+            &focused,
+            Some(TextSelection {
+                start_row: row,
+                start_col: col,
+                end_row: row,
+                end_col: col,
+            }),
+        );
+    }
+    keyboard_selection.activate(focused);
+    true
+}
+
+fn select_all_focused_pane(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    keyboard_selection: &mut KeyboardSelectionState,
+) -> bool {
+    let focused = tab.layout_tree.focus();
+    let Some(screen) = tab.screens.get(&focused) else {
+        return true;
+    };
+    let (max_row, max_col) = selection_screen_bounds(screen);
+    mouse_handler.set_selection(
+        &focused,
+        Some(TextSelection {
+            start_row: 0,
+            start_col: 0,
+            end_row: max_row,
+            end_col: max_col,
+        }),
+    );
+    keyboard_selection.activate(focused);
+    true
+}
+
+fn move_keyboard_selection(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    keyboard_selection: &mut KeyboardSelectionState,
+    event: &KeyEvent,
+) -> bool {
+    if !keyboard_selection.active {
+        return false;
+    }
+    let focused = tab.layout_tree.focus();
+    if keyboard_selection.pane_id.as_ref() != Some(&focused) {
+        keyboard_selection.deactivate();
+        return false;
+    }
+    let Some(screen) = tab.screens.get(&focused) else {
+        keyboard_selection.deactivate();
+        return false;
+    };
+    if event.modifiers != Modifiers::NONE && event.modifiers != Modifiers::SHIFT {
+        return false;
+    }
+
+    match event.key {
+        KeyName::Escape | KeyName::Enter => {
+            keyboard_selection.deactivate();
+            true
+        }
+        KeyName::Left
+        | KeyName::Right
+        | KeyName::Up
+        | KeyName::Down
+        | KeyName::Home
+        | KeyName::End
+        | KeyName::PageUp
+        | KeyName::PageDown => {
+            let selection = mouse_handler.selection(&focused).unwrap_or_else(|| {
+                let cursor = screen.cursor();
+                let (row, col) = clamp_selection_position(cursor.row, cursor.col, screen);
+                TextSelection {
+                    start_row: row,
+                    start_col: col,
+                    end_row: row,
+                    end_col: col,
+                }
+            });
+            let (mut row, mut col) = if keyboard_selection.move_start {
+                (selection.start_row, selection.start_col)
+            } else {
+                (selection.end_row, selection.end_col)
+            };
+            let (max_row, max_col) = selection_screen_bounds(screen);
+            match event.key {
+                KeyName::Left => col = col.saturating_sub(1),
+                KeyName::Right => col = (col + 1).min(max_col),
+                KeyName::Up => row = row.saturating_sub(1),
+                KeyName::Down => row = (row + 1).min(max_row),
+                KeyName::Home => col = 0,
+                KeyName::End => col = max_col,
+                KeyName::PageUp => row = 0,
+                KeyName::PageDown => row = max_row,
+                _ => {}
+            }
+            mouse_handler.set_selection(&focused, Some(selection));
+            mouse_handler.set_selection_endpoint(&focused, keyboard_selection.move_start, row, col);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Route an action locally or to the host.
 ///
 /// Returns `true` if the action was handled locally.
@@ -1268,6 +1428,7 @@ fn dispatch_action(
     pane_metadata_list_open: &mut bool,
     pass_through_next_key: &mut PassThroughNextKeyState,
     mouse_handler: &mut MouseHandler,
+    keyboard_selection: &mut KeyboardSelectionState,
 ) -> bool {
     let name = action_name(action_ref);
     let args = match action_ref {
@@ -1366,6 +1527,12 @@ fn dispatch_action(
     }
 
     match name {
+        "mark-mode" => activate_keyboard_mark_mode(active_tab, mouse_handler, keyboard_selection),
+        "select-all" => select_all_focused_pane(active_tab, mouse_handler, keyboard_selection),
+        "switch-selection-endpoint" => {
+            keyboard_selection.switch_endpoint();
+            true
+        }
         "toggle-command-palette" => {
             command_palette.toggle();
             true
@@ -1669,6 +1836,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
     // Mouse handler for selection, scrollback, focus, and paste.
     let mut mouse_handler = MouseHandler::new();
+    let mut keyboard_selection = KeyboardSelectionState::default();
     let mut mouse_modes: HashMap<PaneId, MouseMode> = HashMap::new();
     let mut sgr_mouse_modes: HashMap<PaneId, bool> = HashMap::new();
     if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
@@ -2150,6 +2318,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
+                                    &mut keyboard_selection,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2175,6 +2344,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
+                                    &mut keyboard_selection,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2185,6 +2355,19 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             }
                         }
                         continue;
+                    }
+
+                    if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                        if move_keyboard_selection(
+                            active_tab,
+                            &mut mouse_handler,
+                            &mut keyboard_selection,
+                            &event,
+                        ) {
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                            continue;
+                        }
                     }
 
                     if let Some(bytes) = pass_through_next_key.process_key(&event) {
@@ -2228,6 +2411,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mut pane_metadata_list_open,
                                 &mut pass_through_next_key,
                                 &mut mouse_handler,
+                                &mut keyboard_selection,
                             );
                             force_immediate_paint = true;
                             needs_paint = true;
@@ -2287,6 +2471,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
+                                    &mut keyboard_selection,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2340,6 +2525,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         &mut pane_metadata_list_open,
                                         &mut pass_through_next_key,
                                         &mut mouse_handler,
+                                        &mut keyboard_selection,
                                     );
                                 }
                                 PrefixOutput::SendToSession(bytes) => {
@@ -2492,6 +2678,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             &mut pane_metadata_list_open,
                             &mut pass_through_next_key,
                             &mut mouse_handler,
+                            &mut keyboard_selection,
                         );
                     }
                     force_immediate_paint = true;
@@ -3655,6 +3842,142 @@ mod tests {
             ScrollbackNavigation::Top
         ));
         assert_eq!(mouse_handler.scroll_offset(&pane_id), 0);
+    }
+
+    #[test]
+    fn keyboard_mark_mode_moves_endpoint_and_switches_endpoint() {
+        let (tab, pane_id) = scrollback_test_tab(5);
+        let mut mouse_handler = MouseHandler::new();
+        let mut keyboard_selection = KeyboardSelectionState::default();
+
+        assert!(activate_keyboard_mark_mode(
+            &tab,
+            &mut mouse_handler,
+            &mut keyboard_selection
+        ));
+        assert!(keyboard_selection.active);
+        assert_eq!(
+            mouse_handler.selection(&pane_id),
+            Some(TextSelection {
+                start_row: 4,
+                start_col: 0,
+                end_row: 4,
+                end_col: 0,
+            })
+        );
+
+        let right = KeyEvent {
+            key: KeyName::Right,
+            modifiers: Modifiers::NONE,
+            character: None,
+        };
+        assert!(move_keyboard_selection(
+            &tab,
+            &mut mouse_handler,
+            &mut keyboard_selection,
+            &right
+        ));
+        assert_eq!(
+            mouse_handler.selection(&pane_id),
+            Some(TextSelection {
+                start_row: 4,
+                start_col: 0,
+                end_row: 4,
+                end_col: 1,
+            })
+        );
+
+        keyboard_selection.switch_endpoint();
+        let up = KeyEvent {
+            key: KeyName::Up,
+            modifiers: Modifiers::NONE,
+            character: None,
+        };
+        assert!(move_keyboard_selection(
+            &tab,
+            &mut mouse_handler,
+            &mut keyboard_selection,
+            &up
+        ));
+        assert_eq!(
+            mouse_handler.selection(&pane_id),
+            Some(TextSelection {
+                start_row: 3,
+                start_col: 0,
+                end_row: 4,
+                end_col: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn select_all_focused_pane_selects_viewport_and_copy_extracts_text() {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let mut screen = ScreenBuffer::new(8, 2, 10);
+        screen.advance(b"alpha\r\nbeta");
+        let tab = SnapshotTab {
+            layout_tree,
+            pane_sessions: HashMap::new(),
+            screens: HashMap::from([(pane_id.clone(), screen)]),
+        };
+        let mut mouse_handler = MouseHandler::new();
+        let mut keyboard_selection = KeyboardSelectionState::default();
+
+        assert!(select_all_focused_pane(
+            &tab,
+            &mut mouse_handler,
+            &mut keyboard_selection
+        ));
+        let selection = mouse_handler.selection(&pane_id).expect("selection");
+        assert_eq!(
+            selection,
+            TextSelection {
+                start_row: 0,
+                start_col: 0,
+                end_row: 1,
+                end_col: 7,
+            }
+        );
+        let text = wtd_ui::clipboard::extract_selection_text(&tab.screens[&pane_id], &selection);
+        assert!(text.contains("alpha"));
+        assert!(text.contains("beta"));
+    }
+
+    #[test]
+    fn keyboard_selection_survives_scrollback_movement() {
+        let (tab, pane_id) = scrollback_test_tab(5);
+        let mut mouse_handler = MouseHandler::new();
+        let mut keyboard_selection = KeyboardSelectionState::default();
+
+        select_all_focused_pane(&tab, &mut mouse_handler, &mut keyboard_selection);
+        let before = mouse_handler.selection(&pane_id);
+        navigate_focused_scrollback(&tab, &mut mouse_handler, ScrollbackNavigation::PageUp);
+
+        assert_eq!(mouse_handler.selection(&pane_id), before);
+        assert!(mouse_handler.scroll_offset(&pane_id) > 0);
+    }
+
+    #[test]
+    fn keyboard_mark_mode_exits_on_escape_without_clearing_selection() {
+        let (tab, pane_id) = scrollback_test_tab(5);
+        let mut mouse_handler = MouseHandler::new();
+        let mut keyboard_selection = KeyboardSelectionState::default();
+        activate_keyboard_mark_mode(&tab, &mut mouse_handler, &mut keyboard_selection);
+
+        let escape = KeyEvent {
+            key: KeyName::Escape,
+            modifiers: Modifiers::NONE,
+            character: None,
+        };
+        assert!(move_keyboard_selection(
+            &tab,
+            &mut mouse_handler,
+            &mut keyboard_selection,
+            &escape
+        ));
+        assert!(!keyboard_selection.active);
+        assert!(mouse_handler.selection(&pane_id).is_some());
     }
 
     fn attention_test_tab() -> SnapshotTab {

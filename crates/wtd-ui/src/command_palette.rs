@@ -127,6 +127,12 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("restart-session", "Kill and relaunch session"),
     ("copy", "Copy selected text to clipboard"),
     ("paste", "Paste clipboard content"),
+    ("select-all", "Select all text in the focused pane"),
+    ("mark-mode", "Enter keyboard selection mode"),
+    (
+        "switch-selection-endpoint",
+        "Switch the active keyboard selection endpoint",
+    ),
     // UI actions
     ("toggle-command-palette", "Toggle command palette"),
     ("toggle-fullscreen", "Toggle window fullscreen"),

@@ -226,7 +226,7 @@ fn default_confirm_close() -> bool {
 
 /// Returns the tmux-style preset keybindings.
 ///
-/// Ctrl+B prefix, 10 single-stroke keys, 20 chords — the legacy WTD defaults.
+/// Ctrl+B prefix, 12 single-stroke keys, 23 chords — the legacy WTD defaults.
 pub fn tmux_bindings() -> BindingsDefinition {
     let keys: HashMap<String, ActionReference> = [
         ("Ctrl+Shift+T", "new-tab"),
@@ -234,6 +234,8 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("Ctrl+Shift+Space", "toggle-command-palette"),
         ("Ctrl+Shift+C", "copy"),
         ("Ctrl+Shift+V", "paste"),
+        ("Ctrl+Shift+A", "select-all"),
+        ("Ctrl+Shift+M", "mark-mode"),
         ("Ctrl+Tab", "next-tab"),
         ("Ctrl+Shift+Tab", "prev-tab"),
         ("Alt+Shift+D", "split-right"),
@@ -261,6 +263,9 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("Left", "focus-pane-left"),
         ("Right", "focus-pane-right"),
         ("[", "enter-scrollback-mode"),
+        ("Space", "mark-mode"),
+        ("A", "select-all"),
+        ("s", "switch-selection-endpoint"),
         ("PageUp", "scrollback-page-up"),
         ("PageDown", "scrollback-page-down"),
         ("Home", "scrollback-top"),
@@ -284,10 +289,10 @@ pub fn tmux_bindings() -> BindingsDefinition {
 /// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
 /// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
 ///
-/// **35 bindings total:**
+/// **37 bindings total:**
 /// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
 /// - Pane: split right/down, focus up/down/left/right, resize in all directions
-/// - Clipboard: copy/paste (primary + secondary WT bindings)
+/// - Clipboard/selection: copy/paste/select-all/mark-mode
 /// - Scrollback: line/page/top/bottom navigation
 /// - UI: toggle-fullscreen, toggle-command-palette, pass-through-next-key
 pub fn windows_terminal_bindings() -> BindingsDefinition {
@@ -354,6 +359,14 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
         // Secondary WT bindings
         ("Ctrl+Insert", ActionReference::Simple("copy".to_string())),
         ("Shift+Insert", ActionReference::Simple("paste".to_string())),
+        (
+            "Ctrl+Shift+A",
+            ActionReference::Simple("select-all".to_string()),
+        ),
+        (
+            "Ctrl+Shift+M",
+            ActionReference::Simple("mark-mode".to_string()),
+        ),
         // ── UI ──────────────────────────────────────────────────────────────
         (
             "F11",
@@ -657,7 +670,7 @@ mod tests {
         assert!(b.chords.is_none());
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 35, "35 WT-mapped single-stroke bindings");
+        assert_eq!(keys.len(), 37, "37 WT-mapped single-stroke bindings");
 
         // Tab management
         assert_eq!(
@@ -762,6 +775,14 @@ mod tests {
             keys.get("Shift+Insert"),
             Some(&ActionReference::Simple("paste".to_string()))
         );
+        assert_eq!(
+            keys.get("Ctrl+Shift+A"),
+            Some(&ActionReference::Simple("select-all".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+M"),
+            Some(&ActionReference::Simple("mark-mode".to_string()))
+        );
 
         // UI
         assert_eq!(
@@ -833,7 +854,7 @@ mod tests {
         assert_eq!(b.prefix_timeout, Some(2000));
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 10);
+        assert_eq!(keys.len(), 12);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -842,9 +863,17 @@ mod tests {
             keys.get("F11"),
             Some(&ActionReference::Simple("toggle-fullscreen".to_string()))
         );
+        assert_eq!(
+            keys.get("Ctrl+Shift+A"),
+            Some(&ActionReference::Simple("select-all".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+M"),
+            Some(&ActionReference::Simple("mark-mode".to_string()))
+        );
 
         let chords = b.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 20);
+        assert_eq!(chords.len(), 23);
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-right".to_string()))
@@ -859,6 +888,20 @@ mod tests {
             chords.get("k"),
             Some(&ActionReference::Simple(
                 "pass-through-next-key".to_string()
+            ))
+        );
+        assert_eq!(
+            chords.get("Space"),
+            Some(&ActionReference::Simple("mark-mode".to_string()))
+        );
+        assert_eq!(
+            chords.get("A"),
+            Some(&ActionReference::Simple("select-all".to_string()))
+        );
+        assert_eq!(
+            chords.get("s"),
+            Some(&ActionReference::Simple(
+                "switch-selection-endpoint".to_string()
             ))
         );
         assert_eq!(
@@ -893,9 +936,9 @@ mod tests {
         assert_eq!(eff.prefix, Some("Ctrl+B".to_string()));
         assert_eq!(eff.prefix_timeout, Some(2000));
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 10);
+        assert_eq!(keys.len(), 12);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 20);
+        assert_eq!(chords.len(), 23);
     }
 
     #[test]
@@ -909,9 +952,9 @@ mod tests {
         // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
         assert!(eff.chords.is_none());
-        // But it has 35 single-stroke keys.
+        // But it has 37 single-stroke keys.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 35);
+        assert_eq!(keys.len(), 37);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -947,7 +990,7 @@ mod tests {
         let eff = effective_bindings(&def);
         // Tmux preset keys + user extra key.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 11, "tmux 10 + 1 user key");
+        assert_eq!(keys.len(), 13, "tmux 12 + 1 user key");
         assert_eq!(
             keys.get("Ctrl+N"),
             Some(&ActionReference::Simple("new-window".to_string()))
@@ -974,7 +1017,7 @@ mod tests {
         };
         let eff = effective_bindings(&def);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 20, "still 20 chords");
+        assert_eq!(chords.len(), 23, "still 23 chords");
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-down".to_string())),

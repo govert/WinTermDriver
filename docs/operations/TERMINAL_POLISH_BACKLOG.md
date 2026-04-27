@@ -37,14 +37,19 @@ Implemented:
 
 ## P1 Keyboard Selection
 
-Mouse selection and extraction tests exist, but WTD lacks keyboard mark mode,
-select-all, and endpoint switching.
+Status: base keyboard selection is addressed by `mark-mode`, `select-all`, and
+`switch-selection-endpoint`.
 
-Follow-up:
+Implemented:
 
-- Add mark mode and select-all actions.
-- Support keyboard expansion by character, word, line, and viewport.
-- Keep selection state stable through scrollback movement and pane resize.
+- Windows Terminal preset binds Ctrl+Shift+M and Ctrl+Shift+A.
+- Mark mode moves the active endpoint with arrow, Home/End, and PageUp/PageDown.
+- `switch-selection-endpoint` changes which endpoint movement affects.
+
+Remaining polish:
+
+- Add word, line, and block expansion modes.
+- Make selection anchoring smarter across scrollback movement and pane resize.
 
 ## P2 Mouse Selection Polish
 

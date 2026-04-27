@@ -166,12 +166,12 @@ bindings:
         "tmux preset must have 2000ms timeout"
     );
 
-    // 10 single-stroke keys
+    // 12 single-stroke keys
     let keys = eff.keys.as_ref().expect("tmux must have keys");
     assert_eq!(
         keys.len(),
-        10,
-        "tmux preset must have 10 single-stroke keys"
+        12,
+        "tmux preset must have 12 single-stroke keys"
     );
     assert_eq!(
         keys.get("Ctrl+Shift+T"),
@@ -181,10 +181,18 @@ bindings:
         keys.get("F11"),
         Some(&ActionReference::Simple("toggle-fullscreen".to_string()))
     );
+    assert_eq!(
+        keys.get("Ctrl+Shift+A"),
+        Some(&ActionReference::Simple("select-all".to_string()))
+    );
+    assert_eq!(
+        keys.get("Ctrl+Shift+M"),
+        Some(&ActionReference::Simple("mark-mode".to_string()))
+    );
 
-    // 20 chord bindings
+    // 23 chord bindings
     let chords = eff.chords.as_ref().expect("tmux must have chords");
-    assert_eq!(chords.len(), 20, "tmux preset must have 20 chord bindings");
+    assert_eq!(chords.len(), 23, "tmux preset must have 23 chord bindings");
     assert_eq!(
         chords.get("%"),
         Some(&ActionReference::Simple("split-right".to_string()))
@@ -201,6 +209,20 @@ bindings:
         chords.get("["),
         Some(&ActionReference::Simple(
             "enter-scrollback-mode".to_string()
+        ))
+    );
+    assert_eq!(
+        chords.get("Space"),
+        Some(&ActionReference::Simple("mark-mode".to_string()))
+    );
+    assert_eq!(
+        chords.get("A"),
+        Some(&ActionReference::Simple("select-all".to_string()))
+    );
+    assert_eq!(
+        chords.get("s"),
+        Some(&ActionReference::Simple(
+            "switch-selection-endpoint".to_string()
         ))
     );
     assert_eq!(

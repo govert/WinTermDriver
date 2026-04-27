@@ -475,6 +475,12 @@ Terminal preset maps these to Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End; the
 tmux preset maps page/top/bottom navigation under the Ctrl+B prefix. These local
 viewport actions are ignored while the focused pane is on an alternate screen.
 
+Keyboard selection is available through `mark-mode`, `select-all`, and
+`switch-selection-endpoint`. The Windows Terminal preset maps Ctrl+Shift+M to
+mark mode and Ctrl+Shift+A to select-all. In mark mode, arrow, Home/End, and
+PageUp/PageDown move the active selection endpoint; Enter or Escape exits mark
+mode without clearing the selection.
+
 ## Orchestrating multi-session workflows
 
 ### Example: start server, wait for ready, run tests, capture results

@@ -27,6 +27,8 @@
       "Alt+Shift+K":     "pass-through-next-key",
       "Ctrl+Insert":     "copy",
       "Shift+Insert":    "paste",
+      "Ctrl+Shift+A":    "select-all",
+      "Ctrl+Shift+M":    "mark-mode",
       "Ctrl+Shift+Up":       "scrollback-line-up",
       "Ctrl+Shift+Down":     "scrollback-line-down",
       "Ctrl+Shift+PageUp":   "scrollback-page-up",
@@ -86,16 +88,6 @@
       "wt_command": "newTab (profile by index)",
       "wt_keys": ["ctrl+shift+1", "ctrl+shift+2", "ctrl+shift+3", "ctrl+shift+4", "ctrl+shift+5", "ctrl+shift+6", "ctrl+shift+7", "ctrl+shift+8", "ctrl+shift+9"],
       "reason": "WTD new-tab does not support profile-index parameter"
-    },
-    {
-      "wt_command": "selectAll",
-      "wt_keys": ["ctrl+shift+a"],
-      "reason": "No WTD select-all action in v1"
-    },
-    {
-      "wt_command": "markMode",
-      "wt_keys": ["ctrl+shift+m"],
-      "reason": "No WTD mark mode action in v1"
     },
     {
       "wt_command": "clearBuffer",
@@ -170,6 +162,8 @@
     "resizePane_right": "resize-pane-right",
     "resizePane_left": "resize-pane-left",
     "restartConnection": "restart-session",
+    "selectAll": "select-all",
+    "markMode": "mark-mode",
     "scrollUp": "scrollback-line-up",
     "scrollDown": "scrollback-line-down",
     "scrollUpPage": "scrollback-page-up",
@@ -187,8 +181,6 @@
     "find",
     "findMatch",
     "searchWeb",
-    "selectAll",
-    "markMode",
     "toggleBlockSelection",
     "switchSelectionEndpoint",
     "expandSelectionToWord",

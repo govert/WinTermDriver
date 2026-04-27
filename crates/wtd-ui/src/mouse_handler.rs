@@ -122,6 +122,47 @@ impl MouseHandler {
             .map(|d| d.to_text_selection())
     }
 
+    /// Set or clear the current text selection for a pane.
+    pub fn set_selection(&mut self, pane_id: &PaneId, selection: Option<TextSelection>) {
+        let state = self
+            .pane_states
+            .entry(pane_id.clone())
+            .or_insert_with(|| PaneMouseState {
+                scroll_offset: 0,
+                selection: None,
+            });
+        state.selection = selection.map(|sel| SelectionDrag {
+            start_row: sel.start_row,
+            start_col: sel.start_col,
+            end_row: sel.end_row,
+            end_col: sel.end_col,
+        });
+        if self.selecting_pane.as_ref() == Some(pane_id) {
+            self.selecting_pane = None;
+        }
+    }
+
+    /// Update one selection endpoint while preserving the other endpoint.
+    pub fn set_selection_endpoint(
+        &mut self,
+        pane_id: &PaneId,
+        move_start: bool,
+        row: usize,
+        col: usize,
+    ) {
+        if let Some(state) = self.pane_states.get_mut(pane_id) {
+            if let Some(selection) = &mut state.selection {
+                if move_start {
+                    selection.start_row = row;
+                    selection.start_col = col;
+                } else {
+                    selection.end_row = row;
+                    selection.end_col = col;
+                }
+            }
+        }
+    }
+
     /// Remove a pane from tracking (e.g., when closed).
     pub fn remove_pane(&mut self, pane_id: &PaneId) {
         self.pane_states.remove(pane_id);
@@ -1047,6 +1088,43 @@ mod tests {
     fn clear_selection_no_panic_on_unknown_pane() {
         let mut handler = MouseHandler::new();
         handler.clear_selection(&PaneId(99));
+    }
+
+    #[test]
+    fn set_selection_and_endpoint_update_keyboard_selection() {
+        let mut handler = MouseHandler::new();
+        let pane = PaneId(1);
+
+        handler.set_selection(
+            &pane,
+            Some(TextSelection {
+                start_row: 1,
+                start_col: 2,
+                end_row: 3,
+                end_col: 4,
+            }),
+        );
+        handler.set_selection_endpoint(&pane, false, 5, 6);
+        assert_eq!(
+            handler.selection(&pane),
+            Some(TextSelection {
+                start_row: 1,
+                start_col: 2,
+                end_row: 5,
+                end_col: 6,
+            })
+        );
+
+        handler.set_selection_endpoint(&pane, true, 0, 1);
+        assert_eq!(
+            handler.selection(&pane),
+            Some(TextSelection {
+                start_row: 0,
+                start_col: 1,
+                end_row: 5,
+                end_col: 6,
+            })
+        );
     }
 
     #[test]

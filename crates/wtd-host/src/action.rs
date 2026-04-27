@@ -580,6 +580,24 @@ pub fn v1_registry() -> ActionRegistry {
         args: NO_ARGS,
         description: "Paste clipboard content as input to the session",
     });
+    r.register(ActionDef {
+        name: "select-all",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Select all text in the focused pane viewport",
+    });
+    r.register(ActionDef {
+        name: "mark-mode",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Enter keyboard selection mode for the focused pane",
+    });
+    r.register(ActionDef {
+        name: "switch-selection-endpoint",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Switch which keyboard selection endpoint moves",
+    });
 
     // UI actions
     r.register(ActionDef {

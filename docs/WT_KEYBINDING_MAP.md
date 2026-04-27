@@ -125,10 +125,10 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 
 | WT Command | WT Default Keys | WTD Action | WTD Default Key | Status | Notes |
 |---|---|---|---|---|---|
-| `copy` | `ctrl+shift+c`, `ctrl+insert` | `copy` | `Ctrl+Shift+C` | `=` | WTD binds Ctrl+Shift+C only; Ctrl+Insert unbound |
-| `paste` | `ctrl+shift+v`, `shift+insert` | `paste` | `Ctrl+Shift+V` | `=` | WTD binds Ctrl+Shift+V only; Shift+Insert unbound |
-| `selectAll` | `ctrl+shift+a` | (none) | (none) | `✗` | No WTD select-all action |
-| `markMode` | `ctrl+shift+m` | (none) | (none) | `✗` | No WTD mark mode |
+| `copy` | `ctrl+shift+c`, `ctrl+insert` | `copy` | `Ctrl+Shift+C`, `Ctrl+Insert` | `=` | Primary and secondary WT bindings |
+| `paste` | `ctrl+shift+v`, `shift+insert` | `paste` | `Ctrl+Shift+V`, `Shift+Insert` | `=` | Primary and secondary WT bindings |
+| `selectAll` | `ctrl+shift+a` | `select-all` | `Ctrl+Shift+A` | `=` | Selects the focused pane viewport |
+| `markMode` | `ctrl+shift+m` | `mark-mode` | `Ctrl+Shift+M` | `=` | Enters keyboard selection mode |
 | `toggleBlockSelection` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `switchSelectionEndpoint` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 | `expandSelectionToWord` | (none) | (none) | (none) | `✗` | No WTD equivalent |
@@ -197,9 +197,10 @@ WTD action.
 - `findMatch (next/prev)` — Navigate search matches
 
 **Selection / Clipboard** (partial):
-- `selectAll` — Select all text (Ctrl+Shift+A)
-- `markMode` — Keyboard selection mode (Ctrl+Shift+M)
-- `toggleBlockSelection` / `switchSelectionEndpoint` / `expandSelectionToWord` — Advanced selection
+- `selectAll` — `select-all` (Ctrl+Shift+A)
+- `markMode` — `mark-mode` (Ctrl+Shift+M)
+- `switchSelectionEndpoint` — `switch-selection-endpoint` (command palette and tmux prefix+`s`)
+- `toggleBlockSelection` / `expandSelectionToWord` — Advanced selection still missing
 
 **Scrollback** (line/page/top/bottom implemented as inline focused-pane navigation):
 - `scrollUp` / `scrollDown` — `scrollback-line-up` / `scrollback-line-down` (Ctrl+Shift+Up/Down)
@@ -301,8 +302,6 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 - `ctrl+shift+n` (newWindow) — omitted; WTD action exists but opening a new window requires workspace context
 - `ctrl+shift+d` (duplicateTab) — omitted; no WTD equivalent
 - `ctrl+alt+1`..`9` (switchToTab) — omitted; WTD has goto-tab but profile-index launch not supported
-- `ctrl+shift+a` (selectAll) — omitted; no WTD action
-- `ctrl+shift+m` (markMode) — omitted; no WTD action
 - Font size keys (Ctrl+Plus/Minus/0) — omitted; no WTD action
 - `ctrl+shift+k` (clearBuffer) — omitted; no WTD action
 - `alt+f4` (closeWindow) — omitted; OS-level; `close-window` requires workspace context
