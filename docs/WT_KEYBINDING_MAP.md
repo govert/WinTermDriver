@@ -305,6 +305,10 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 - `ctrl+shift+k` (clearBuffer) — omitted; no WTD action
 - `alt+f4` (closeWindow) — omitted; OS-level; `close-window` requires workspace context
 - `alt+enter` (toggleFullscreen) — omitted as secondary; F11 sufficient
+- Clipboard parity is intentionally limited to WT's default `Ctrl+Shift+C`,
+  `Ctrl+Shift+V`, `Ctrl+Insert`, and `Shift+Insert` bindings. WTD does not
+  reserve broader shortcuts such as unmodified `Insert` or `Ctrl+V`; those stay
+  available to terminal applications as regular input.
 
 ---
 

@@ -1239,15 +1239,31 @@ mod tests {
     }
 
     #[test]
-    fn from_windows_terminal_preset_bindings_is_empty() {
-        // Default (windows-terminal preset placeholder) has no active bindings.
+    fn from_windows_terminal_preset_expands_secondary_clipboard_bindings() {
         let bindings = wtd_core::default_bindings();
         let classifier = InputClassifier::from_bindings(&bindings).unwrap();
 
-        // No prefix configured for the windows-terminal placeholder.
         assert!(
             classifier.prefix_key().is_none(),
-            "windows-terminal preset has no prefix yet"
+            "windows-terminal preset is single-stroke only"
+        );
+
+        let ctrl_insert = key(KeyName::Insert, Modifiers::CTRL, None);
+        assert_eq!(
+            classifier.find_single_stroke(&ctrl_insert),
+            Some(&ActionReference::Simple("copy".to_string()))
+        );
+
+        let shift_insert = key(KeyName::Insert, Modifiers::SHIFT, None);
+        assert_eq!(
+            classifier.find_single_stroke(&shift_insert),
+            Some(&ActionReference::Simple("paste".to_string()))
+        );
+
+        let plain_insert = key(KeyName::Insert, Modifiers::NONE, None);
+        assert!(
+            classifier.find_single_stroke(&plain_insert).is_none(),
+            "unmodified Insert must remain application input"
         );
     }
 
