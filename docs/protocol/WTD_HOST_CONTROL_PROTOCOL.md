@@ -69,7 +69,13 @@ The host replies with:
   "type": "HandshakeAck",
   "payload": {
     "hostVersion": "0.1.0",
-    "protocolVersion": 1
+    "protocolVersion": 1,
+    "accessPolicy": {
+      "transport": "windows-named-pipe",
+      "scope": "same-user-local",
+      "identity": "current-user-sid",
+      "remoteAccess": false
+    }
   }
 }
 ```
@@ -77,6 +83,25 @@ The host replies with:
 `protocolVersion` is the current capability discovery boundary. Version `1`
 means the message table below is available. If versions differ, the host returns
 `Error { code: "protocol-error" }` and closes the connection.
+
+## Access Policy
+
+Protocol v1 is local automation only. The host creates
+`\\.\pipe\wtd-{user-SID}` with a DACL for the current user and verifies each
+connecting process resolves to the same user SID before accepting the protocol
+handshake. `HandshakeAck.accessPolicy` reports this enforced model:
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `transport` | `windows-named-pipe` | Local Windows named-pipe IPC |
+| `scope` | `same-user-local` | Only processes running as the host user may connect |
+| `identity` | `current-user-sid` | Client identity is the Windows user SID |
+| `remoteAccess` | `false` | Network, relay, and cross-user access are not enabled |
+
+CLI and UI clients do not need tokens for same-user local automation. Broader
+access, such as cross-user attach, remote relay, or network transport, requires
+a future protocol capability and explicit configuration; it is not implied by
+the v1 pipe name or handshake.
 
 Dynamic capability listing is not implemented yet. Planned capability names for
 the forward push are reserved as:

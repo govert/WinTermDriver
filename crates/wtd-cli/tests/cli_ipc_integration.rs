@@ -49,6 +49,7 @@ async fn run_test_server(
         &HandshakeAck {
             host_version: "test-0.1.0".to_string(),
             protocol_version: PROTOCOL_VERSION,
+            access_policy: wtd_ipc::message::AccessPolicy::same_user_local(),
         },
     );
     write_frame_async(&mut writer, &ack).await.unwrap();

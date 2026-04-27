@@ -99,6 +99,11 @@ async fn connect_handshake_and_list_workspaces() {
     assert_eq!(ack.msg_type, "HandshakeAck");
     let ack_payload: HandshakeAck = ack.extract_payload().unwrap();
     assert_eq!(ack_payload.protocol_version, PROTOCOL_VERSION);
+    assert_eq!(
+        serde_json::to_value(&ack_payload.access_policy).unwrap()["scope"],
+        "same-user-local"
+    );
+    assert!(!ack_payload.access_policy.remote_access);
 
     // ListWorkspaces
     write_frame(&mut client, &Envelope::new("lw-1", &ListWorkspaces {}))
@@ -189,6 +194,11 @@ async fn same_user_sid_accepted() {
         .unwrap();
     let ack = read_frame(&mut client).await.unwrap();
     assert_eq!(ack.msg_type, "HandshakeAck");
+    let ack_payload: HandshakeAck = ack.extract_payload().unwrap();
+    assert_eq!(
+        serde_json::to_value(&ack_payload.access_policy).unwrap()["identity"],
+        "current-user-sid"
+    );
 
     let _ = shutdown_tx.send(true);
     drop(client);

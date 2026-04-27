@@ -407,6 +407,7 @@ async fn handle_handshake(
         &HandshakeAck {
             host_version: HOST_VERSION.to_owned(),
             protocol_version: PROTOCOL_VERSION,
+            access_policy: AccessPolicy::same_user_local(),
         },
     ))
 }

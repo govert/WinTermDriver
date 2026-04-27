@@ -12,7 +12,13 @@ WinTermDriver runs as three processes:
 | **CLI** | `wtd.exe` | Short-lived controller. Every `wtd` command connects to the host, sends one request, prints the result, and exits. This is the primary interface for agents. |
 | **UI** | `wtd-ui.exe` | Graphical window with tabs and split panes. Optional — agents typically don't need it. |
 
-All three communicate over a single Windows named pipe (`\\.\pipe\wtd-{SID}`), restricted to the current user's SID. The host auto-starts when the CLI or UI first connects, so agents never need to launch it manually.
+All three communicate over a single Windows named pipe (`\\.\pipe\wtd-{SID}`),
+restricted to the current user's SID. The host also verifies the connecting
+process SID before accepting a protocol handshake and reports
+`same-user-local` in `HandshakeAck.accessPolicy`. Same-user CLI/UI automation
+does not need tokens; remote, relay, or cross-user access is not enabled unless
+a future protocol capability explicitly adds it. The host auto-starts when the
+CLI or UI first connects, so agents never need to launch it manually.
 
 ## Getting started
 

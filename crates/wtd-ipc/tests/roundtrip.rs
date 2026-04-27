@@ -396,7 +396,17 @@ fn handshake_ack_roundtrip() {
     roundtrip(HandshakeAck {
         host_version: "1.0.0".into(),
         protocol_version: 1,
+        access_policy: AccessPolicy::same_user_local(),
     });
+}
+
+#[test]
+fn access_policy_uses_explicit_wire_values() {
+    let json = serde_json::to_value(AccessPolicy::same_user_local()).unwrap();
+    assert_eq!(json["transport"], "windows-named-pipe");
+    assert_eq!(json["scope"], "same-user-local");
+    assert_eq!(json["identity"], "current-user-sid");
+    assert_eq!(json["remoteAccess"], false);
 }
 
 #[test]

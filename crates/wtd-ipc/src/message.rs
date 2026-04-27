@@ -618,8 +618,54 @@ impl_payload!(RenamePane, "RenamePane");
 pub struct HandshakeAck {
     pub host_version: String,
     pub protocol_version: u32,
+    pub access_policy: AccessPolicy,
 }
 impl_payload!(HandshakeAck, "HandshakeAck");
+
+/// Local access policy enforced by the host for this connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicy {
+    pub transport: AccessTransport,
+    pub scope: AccessScope,
+    pub identity: AccessIdentity,
+    pub remote_access: bool,
+}
+
+impl Default for AccessPolicy {
+    fn default() -> Self {
+        Self::same_user_local()
+    }
+}
+
+impl AccessPolicy {
+    pub fn same_user_local() -> Self {
+        Self {
+            transport: AccessTransport::WindowsNamedPipe,
+            scope: AccessScope::SameUserLocal,
+            identity: AccessIdentity::CurrentUserSid,
+            remote_access: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccessTransport {
+    WindowsNamedPipe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccessScope {
+    SameUserLocal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccessIdentity {
+    CurrentUserSid,
+}
 
 /// Generic success response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
