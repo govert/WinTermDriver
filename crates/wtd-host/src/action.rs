@@ -598,6 +598,24 @@ pub fn v1_registry() -> ActionRegistry {
         args: NO_ARGS,
         description: "Switch which keyboard selection endpoint moves",
     });
+    r.register(ActionDef {
+        name: "find",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Search the focused pane contents",
+    });
+    r.register(ActionDef {
+        name: "find-next",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Move to the next find match",
+    });
+    r.register(ActionDef {
+        name: "find-prev",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Move to the previous find match",
+    });
 
     // UI actions
     r.register(ActionDef {

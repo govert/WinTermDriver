@@ -226,7 +226,7 @@ fn default_confirm_close() -> bool {
 
 /// Returns the tmux-style preset keybindings.
 ///
-/// Ctrl+B prefix, 12 single-stroke keys, 23 chords — the legacy WTD defaults.
+/// Ctrl+B prefix, 14 single-stroke keys, 26 chords — the legacy WTD defaults.
 pub fn tmux_bindings() -> BindingsDefinition {
     let keys: HashMap<String, ActionReference> = [
         ("Ctrl+Shift+T", "new-tab"),
@@ -236,6 +236,8 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("Ctrl+Shift+V", "paste"),
         ("Ctrl+Shift+A", "select-all"),
         ("Ctrl+Shift+M", "mark-mode"),
+        ("Ctrl+Shift+F", "find"),
+        ("F3", "find-next"),
         ("Ctrl+Tab", "next-tab"),
         ("Ctrl+Shift+Tab", "prev-tab"),
         ("Alt+Shift+D", "split-right"),
@@ -266,6 +268,9 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("Space", "mark-mode"),
         ("A", "select-all"),
         ("s", "switch-selection-endpoint"),
+        ("f", "find"),
+        ("F3", "find-next"),
+        ("F4", "find-prev"),
         ("PageUp", "scrollback-page-up"),
         ("PageDown", "scrollback-page-down"),
         ("Home", "scrollback-top"),
@@ -289,7 +294,7 @@ pub fn tmux_bindings() -> BindingsDefinition {
 /// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
 /// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
 ///
-/// **37 bindings total:**
+/// **39 bindings total:**
 /// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
 /// - Pane: split right/down, focus up/down/left/right, resize in all directions
 /// - Clipboard/selection: copy/paste/select-all/mark-mode
@@ -367,6 +372,8 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
             "Ctrl+Shift+M",
             ActionReference::Simple("mark-mode".to_string()),
         ),
+        ("Ctrl+Shift+F", ActionReference::Simple("find".to_string())),
+        ("F3", ActionReference::Simple("find-next".to_string())),
         // ── UI ──────────────────────────────────────────────────────────────
         (
             "F11",
@@ -670,7 +677,7 @@ mod tests {
         assert!(b.chords.is_none());
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 37, "37 WT-mapped single-stroke bindings");
+        assert_eq!(keys.len(), 39, "39 WT-mapped single-stroke bindings");
 
         // Tab management
         assert_eq!(
@@ -783,6 +790,14 @@ mod tests {
             keys.get("Ctrl+Shift+M"),
             Some(&ActionReference::Simple("mark-mode".to_string()))
         );
+        assert_eq!(
+            keys.get("Ctrl+Shift+F"),
+            Some(&ActionReference::Simple("find".to_string()))
+        );
+        assert_eq!(
+            keys.get("F3"),
+            Some(&ActionReference::Simple("find-next".to_string()))
+        );
 
         // UI
         assert_eq!(
@@ -828,8 +843,6 @@ mod tests {
             keys.get("Ctrl+Shift+End"),
             Some(&ActionReference::Simple("scrollback-bottom".to_string()))
         );
-        // Omitted: no find action in WTD v1
-        assert!(!keys.contains_key("Ctrl+Shift+F"));
     }
 
     #[test]
@@ -854,7 +867,7 @@ mod tests {
         assert_eq!(b.prefix_timeout, Some(2000));
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 12);
+        assert_eq!(keys.len(), 14);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -871,9 +884,17 @@ mod tests {
             keys.get("Ctrl+Shift+M"),
             Some(&ActionReference::Simple("mark-mode".to_string()))
         );
+        assert_eq!(
+            keys.get("Ctrl+Shift+F"),
+            Some(&ActionReference::Simple("find".to_string()))
+        );
+        assert_eq!(
+            keys.get("F3"),
+            Some(&ActionReference::Simple("find-next".to_string()))
+        );
 
         let chords = b.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 23);
+        assert_eq!(chords.len(), 26);
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-right".to_string()))
@@ -903,6 +924,18 @@ mod tests {
             Some(&ActionReference::Simple(
                 "switch-selection-endpoint".to_string()
             ))
+        );
+        assert_eq!(
+            chords.get("f"),
+            Some(&ActionReference::Simple("find".to_string()))
+        );
+        assert_eq!(
+            chords.get("F3"),
+            Some(&ActionReference::Simple("find-next".to_string()))
+        );
+        assert_eq!(
+            chords.get("F4"),
+            Some(&ActionReference::Simple("find-prev".to_string()))
         );
         assert_eq!(
             chords.get("PageUp"),
@@ -936,9 +969,9 @@ mod tests {
         assert_eq!(eff.prefix, Some("Ctrl+B".to_string()));
         assert_eq!(eff.prefix_timeout, Some(2000));
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 12);
+        assert_eq!(keys.len(), 14);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 23);
+        assert_eq!(chords.len(), 26);
     }
 
     #[test]
@@ -952,9 +985,9 @@ mod tests {
         // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
         assert!(eff.chords.is_none());
-        // But it has 37 single-stroke keys.
+        // But it has 39 single-stroke keys.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 37);
+        assert_eq!(keys.len(), 39);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -990,7 +1023,7 @@ mod tests {
         let eff = effective_bindings(&def);
         // Tmux preset keys + user extra key.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 13, "tmux 12 + 1 user key");
+        assert_eq!(keys.len(), 15, "tmux 14 + 1 user key");
         assert_eq!(
             keys.get("Ctrl+N"),
             Some(&ActionReference::Simple("new-window".to_string()))
@@ -1017,7 +1050,7 @@ mod tests {
         };
         let eff = effective_bindings(&def);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 23, "still 23 chords");
+        assert_eq!(chords.len(), 26, "still 26 chords");
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-down".to_string())),

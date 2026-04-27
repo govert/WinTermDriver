@@ -748,6 +748,18 @@ impl MouseHandler {
         state.scroll_offset = max_scrollback.max(0);
     }
 
+    /// Set a pane's scrollback offset directly, clamped to valid bounds.
+    pub fn set_scroll_offset(&mut self, pane_id: &PaneId, offset: i32, max_scrollback: i32) {
+        let state = self
+            .pane_states
+            .entry(pane_id.clone())
+            .or_insert_with(|| PaneMouseState {
+                scroll_offset: 0,
+                selection: None,
+            });
+        state.scroll_offset = offset.clamp(0, max_scrollback.max(0));
+    }
+
     /// Clamp scroll offset to valid range given the pane's scrollback length.
     pub fn clamp_scroll(&mut self, pane_id: &PaneId, max_scrollback: i32) {
         if let Some(state) = self.pane_states.get_mut(pane_id) {

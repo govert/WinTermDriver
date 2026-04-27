@@ -64,9 +64,9 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 
 | WT Command | WT Default Keys | WTD Action | WTD Default Key | Status | Notes |
 |---|---|---|---|---|---|
-| `find` | `ctrl+shift+f` | (none) | (none) | `✗` | In-pane search not in WTD v1 |
-| `findMatch (next)` | (none) | (none) | (none) | `✗` | No WTD equivalent |
-| `findMatch (prev)` | (none) | (none) | (none) | `✗` | No WTD equivalent |
+| `find` | `ctrl+shift+f` | `find` | `Ctrl+Shift+F` | `=` | Prompts for in-pane search |
+| `findMatch (next)` | (none) | `find-next` | `F3` | `~` | WTD adds a default next-match key |
+| `findMatch (prev)` | (none) | `find-prev` | (none) | `~` | Available in command palette and tmux preset |
 | `searchWeb` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 
 ### Tab Actions
@@ -192,9 +192,9 @@ WTD action.
 - `openAbout` — About dialog
 - `openCWD` — Open CWD in Explorer
 
-**Search** (should be added in a future action bead):
+**Search** (implemented):
 - `find` — In-pane text search (Ctrl+Shift+F)
-- `findMatch (next/prev)` — Navigate search matches
+- `findMatch (next/prev)` — `find-next` / `find-prev`
 
 **Selection / Clipboard** (partial):
 - `selectAll` — `select-all` (Ctrl+Shift+A)
@@ -298,7 +298,6 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 
 - `ctrl+shift+space` (openNewTabDropdown) — omitted; WT UI element with no WTD equivalent
 - `ctrl+,` / `ctrl+shift+,` / `ctrl+alt+,` (openSettings) — omitted; no WTD settings UI
-- `ctrl+shift+f` (find) — omitted; no WTD find action in v1
 - `ctrl+shift+n` (newWindow) — omitted; WTD action exists but opening a new window requires workspace context
 - `ctrl+shift+d` (duplicateTab) — omitted; no WTD equivalent
 - `ctrl+alt+1`..`9` (switchToTab) — omitted; WTD has goto-tab but profile-index launch not supported

@@ -481,6 +481,11 @@ mark mode and Ctrl+Shift+A to select-all. In mark mode, arrow, Home/End, and
 PageUp/PageDown move the active selection endpoint; Enter or Escape exits mark
 mode without clearing the selection.
 
+In-pane search is available through `find`, `find-next`, and `find-prev`.
+Ctrl+Shift+F opens a prompt for the focused pane; matches are found across
+retained scrollback plus the visible screen, and the current match is highlighted
+with the selection overlay.
+
 ## Orchestrating multi-session workflows
 
 ### Example: start server, wait for ready, run tests, capture results

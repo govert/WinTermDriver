@@ -133,6 +133,9 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
         "switch-selection-endpoint",
         "Switch the active keyboard selection endpoint",
     ),
+    ("find", "Search the focused pane"),
+    ("find-next", "Move to the next search match"),
+    ("find-prev", "Move to the previous search match"),
     // UI actions
     ("toggle-command-palette", "Toggle command palette"),
     ("toggle-fullscreen", "Toggle window fullscreen"),

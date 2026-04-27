@@ -1281,6 +1281,161 @@ impl KeyboardSelectionState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FindMatch {
+    row: usize,
+    col: usize,
+    len: usize,
+}
+
+#[derive(Default)]
+struct FindState {
+    pane_id: Option<PaneId>,
+    query: String,
+    matches: Vec<FindMatch>,
+    current: usize,
+}
+
+impl FindState {
+    fn clear(&mut self) {
+        self.pane_id = None;
+        self.query.clear();
+        self.matches.clear();
+        self.current = 0;
+    }
+
+    fn current_match(&self) -> Option<&FindMatch> {
+        self.matches.get(self.current)
+    }
+}
+
+fn virtual_row_text(screen: &ScreenBuffer, row: usize) -> String {
+    let mut text = String::with_capacity(screen.cols());
+    for col in 0..screen.cols() {
+        if let Some(cell) = screen.cell_at_virtual(row, col) {
+            text.push_str(cell.text.as_str());
+        }
+    }
+    text
+}
+
+fn find_matches(screen: &ScreenBuffer, query: &str) -> Vec<FindMatch> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let needle = query.to_lowercase();
+    let len = query.chars().count().max(1);
+    let mut matches = Vec::new();
+    for row in 0..screen.total_rows() {
+        let haystack = virtual_row_text(screen, row).to_lowercase();
+        let mut start = 0;
+        while let Some(idx) = haystack[start..].find(&needle) {
+            let col = start + idx;
+            matches.push(FindMatch { row, col, len });
+            start = col + needle.len().max(1);
+        }
+    }
+    matches
+}
+
+fn next_find_index(current: usize, len: usize, forward: bool) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if forward {
+        (current + 1) % len
+    } else if current == 0 {
+        len - 1
+    } else {
+        current - 1
+    }
+}
+
+fn apply_find_match(
+    screen: &ScreenBuffer,
+    pane_id: &PaneId,
+    mouse_handler: &mut MouseHandler,
+    find_match: &FindMatch,
+) {
+    let max_scrollback = screen.scrollback_len();
+    let base_row = find_match.row.min(max_scrollback);
+    let offset = max_scrollback.saturating_sub(base_row) as i32;
+    mouse_handler.set_scroll_offset(pane_id, offset, max_scrollback as i32);
+    let viewport_row = find_match.row.saturating_sub(base_row);
+    mouse_handler.set_selection(
+        pane_id,
+        Some(TextSelection {
+            start_row: viewport_row,
+            start_col: find_match.col,
+            end_row: viewport_row,
+            end_col: find_match
+                .col
+                .saturating_add(find_match.len.saturating_sub(1)),
+        }),
+    );
+}
+
+fn start_find(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    find_state: &mut FindState,
+    query: &str,
+    status_bar: &mut StatusBar,
+) -> bool {
+    let focused = tab.layout_tree.focus();
+    let Some(screen) = tab.screens.get(&focused) else {
+        find_state.clear();
+        return true;
+    };
+    let matches = find_matches(screen, query);
+    find_state.pane_id = Some(focused.clone());
+    find_state.query = query.trim().to_string();
+    find_state.matches = matches;
+    find_state.current = 0;
+    if let Some(find_match) = find_state.current_match() {
+        apply_find_match(screen, &focused, mouse_handler, find_match);
+        status_bar.set_pane_path(format!(
+            "find: {} ({}/{})",
+            find_state.query,
+            find_state.current + 1,
+            find_state.matches.len()
+        ));
+    } else {
+        mouse_handler.clear_selection(&focused);
+        status_bar.set_pane_path(format!("find: no matches for {}", find_state.query));
+    }
+    true
+}
+
+fn navigate_find(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    find_state: &mut FindState,
+    status_bar: &mut StatusBar,
+    forward: bool,
+) -> bool {
+    let focused = tab.layout_tree.focus();
+    if find_state.pane_id.as_ref() != Some(&focused) || find_state.matches.is_empty() {
+        return true;
+    }
+    let Some(screen) = tab.screens.get(&focused) else {
+        find_state.clear();
+        return true;
+    };
+    find_state.current = next_find_index(find_state.current, find_state.matches.len(), forward);
+    if let Some(find_match) = find_state.current_match() {
+        apply_find_match(screen, &focused, mouse_handler, find_match);
+        status_bar.set_pane_path(format!(
+            "find: {} ({}/{})",
+            find_state.query,
+            find_state.current + 1,
+            find_state.matches.len()
+        ));
+    }
+    true
+}
+
 fn selection_screen_bounds(screen: &ScreenBuffer) -> (usize, usize) {
     (
         screen.rows().saturating_sub(1),
@@ -1429,6 +1584,7 @@ fn dispatch_action(
     pass_through_next_key: &mut PassThroughNextKeyState,
     mouse_handler: &mut MouseHandler,
     keyboard_selection: &mut KeyboardSelectionState,
+    find_state: &mut FindState,
 ) -> bool {
     let name = action_name(action_ref);
     let args = match action_ref {
@@ -1533,6 +1689,17 @@ fn dispatch_action(
             keyboard_selection.switch_endpoint();
             true
         }
+        "find" => {
+            if args.is_none() {
+                command_palette.show_prompt("find", "Find in focused pane", "Search text", "");
+            } else if let Some(ref a) = args {
+                let query = a.get("name").map(String::as_str).unwrap_or_default();
+                start_find(active_tab, mouse_handler, find_state, query, status_bar);
+            }
+            true
+        }
+        "find-next" => navigate_find(active_tab, mouse_handler, find_state, status_bar, true),
+        "find-prev" => navigate_find(active_tab, mouse_handler, find_state, status_bar, false),
         "toggle-command-palette" => {
             command_palette.toggle();
             true
@@ -1837,6 +2004,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     // Mouse handler for selection, scrollback, focus, and paste.
     let mut mouse_handler = MouseHandler::new();
     let mut keyboard_selection = KeyboardSelectionState::default();
+    let mut find_state = FindState::default();
     let mut mouse_modes: HashMap<PaneId, MouseMode> = HashMap::new();
     let mut sgr_mouse_modes: HashMap<PaneId, bool> = HashMap::new();
     if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
@@ -2319,6 +2487,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
+                                    &mut find_state,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2345,6 +2514,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
+                                    &mut find_state,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2412,6 +2582,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mut pass_through_next_key,
                                 &mut mouse_handler,
                                 &mut keyboard_selection,
+                                &mut find_state,
                             );
                             force_immediate_paint = true;
                             needs_paint = true;
@@ -2472,6 +2643,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
+                                    &mut find_state,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2526,6 +2698,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         &mut pass_through_next_key,
                                         &mut mouse_handler,
                                         &mut keyboard_selection,
+                                        &mut find_state,
                                     );
                                 }
                                 PrefixOutput::SendToSession(bytes) => {
@@ -2679,6 +2852,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             &mut pass_through_next_key,
                             &mut mouse_handler,
                             &mut keyboard_selection,
+                            &mut find_state,
                         );
                     }
                     force_immediate_paint = true;
@@ -3978,6 +4152,56 @@ mod tests {
         ));
         assert!(!keyboard_selection.active);
         assert!(mouse_handler.selection(&pane_id).is_some());
+    }
+
+    #[test]
+    fn find_matches_visible_and_scrollback_rows() {
+        let mut screen = ScreenBuffer::new(20, 3, 20);
+        for line in ["alpha", "needle old", "middle", "needle live"] {
+            screen.advance(format!("{line}\r\n").as_bytes());
+        }
+
+        let matches = find_matches(&screen, "needle");
+        assert_eq!(matches.len(), 2);
+        assert!(matches[0].row < matches[1].row);
+        assert_eq!(find_matches(&screen, "missing"), Vec::<FindMatch>::new());
+    }
+
+    #[test]
+    fn apply_find_match_scrolls_and_highlights_current_match() {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let mut screen = ScreenBuffer::new(20, 3, 20);
+        for line in ["alpha", "needle old", "middle", "tail"] {
+            screen.advance(format!("{line}\r\n").as_bytes());
+        }
+        let first = find_matches(&screen, "needle")
+            .into_iter()
+            .next()
+            .expect("match");
+        let mut mouse_handler = MouseHandler::new();
+
+        apply_find_match(&screen, &pane_id, &mut mouse_handler, &first);
+
+        assert!(mouse_handler.scroll_offset(&pane_id) > 0);
+        assert_eq!(
+            mouse_handler.selection(&pane_id),
+            Some(TextSelection {
+                start_row: 0,
+                start_col: first.col,
+                end_row: 0,
+                end_col: first.col + first.len - 1,
+            })
+        );
+    }
+
+    #[test]
+    fn next_find_index_wraps_forward_and_backward() {
+        assert_eq!(next_find_index(0, 3, true), 1);
+        assert_eq!(next_find_index(2, 3, true), 0);
+        assert_eq!(next_find_index(0, 3, false), 2);
+        assert_eq!(next_find_index(2, 3, false), 1);
+        assert_eq!(next_find_index(0, 0, true), 0);
     }
 
     fn attention_test_tab() -> SnapshotTab {

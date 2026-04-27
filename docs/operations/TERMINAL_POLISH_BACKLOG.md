@@ -12,15 +12,20 @@ The remaining gaps are mostly interactive UI affordances.
 
 ## P1 Search
 
-WTD has no in-pane find UI or actions equivalent to Windows Terminal `find` and
-`findMatch`.
+Status: base in-pane search is addressed by `find`, `find-next`, and
+`find-prev`.
 
-Follow-up:
+Implemented:
 
-- Add in-pane find/search UI and next/previous match actions.
-- Search should operate across visible rows plus retained scrollback.
-- Matches should be visible in scrollback mode and not interfere with terminal
-  selection.
+- Ctrl+Shift+F opens a focused-pane search prompt.
+- Matches are computed across visible rows plus retained scrollback.
+- Next/previous navigation scrolls the viewport to the current match and
+  highlights it with the selection overlay.
+
+Remaining polish:
+
+- Add distinct all-match highlighting separate from the selection overlay.
+- Add richer search UI affordances such as match count and editable query state.
 
 ## P1 Scrollback Navigation
 

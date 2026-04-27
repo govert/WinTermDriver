@@ -29,6 +29,8 @@
       "Shift+Insert":    "paste",
       "Ctrl+Shift+A":    "select-all",
       "Ctrl+Shift+M":    "mark-mode",
+      "Ctrl+Shift+F":    "find",
+      "F3":              "find-next",
       "Ctrl+Shift+Up":       "scrollback-line-up",
       "Ctrl+Shift+Down":     "scrollback-line-down",
       "Ctrl+Shift+PageUp":   "scrollback-page-up",
@@ -58,11 +60,6 @@
       "wt_command": "openSettings (defaultsFile)",
       "wt_keys": ["ctrl+alt+,"],
       "reason": "No WTD defaults file editor"
-    },
-    {
-      "wt_command": "find",
-      "wt_keys": ["ctrl+shift+f"],
-      "reason": "In-pane text search not in WTD v1 action catalog"
     },
     {
       "wt_command": "newWindow",
@@ -164,6 +161,9 @@
     "restartConnection": "restart-session",
     "selectAll": "select-all",
     "markMode": "mark-mode",
+    "find": "find",
+    "findMatch_next": "find-next",
+    "findMatch_prev": "find-prev",
     "scrollUp": "scrollback-line-up",
     "scrollDown": "scrollback-line-down",
     "scrollUpPage": "scrollback-page-up",
@@ -178,8 +178,6 @@
     "toggleAlwaysOnTop",
     "openNewTabDropdown",
     "openSettings",
-    "find",
-    "findMatch",
     "searchWeb",
     "toggleBlockSelection",
     "switchSelectionEndpoint",
