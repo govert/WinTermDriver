@@ -150,6 +150,24 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
         "toggle-notification-center",
         "Show or hide panes needing attention",
     ),
+    (
+        "toggle-pane-metadata-list",
+        "Show or hide pane metadata summary",
+    ),
+    (
+        "filter-pane-list-attention",
+        "Show panes filtered by attention",
+    ),
+    (
+        "filter-pane-list-status",
+        "Show panes filtered by published status",
+    ),
+    (
+        "filter-pane-list-driver",
+        "Show panes filtered by driver profile",
+    ),
+    ("filter-pane-list-cwd", "Show panes filtered by cwd"),
+    ("filter-pane-list-branch", "Show panes filtered by branch"),
 ];
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -1355,6 +1373,16 @@ mod tests {
         assert!(entries
             .iter()
             .any(|e| e.name == "toggle-notification-center"));
+        assert!(entries
+            .iter()
+            .any(|e| e.name == "toggle-pane-metadata-list"));
+        assert!(entries
+            .iter()
+            .any(|e| e.name == "filter-pane-list-attention"));
+        assert!(entries.iter().any(|e| e.name == "filter-pane-list-status"));
+        assert!(entries.iter().any(|e| e.name == "filter-pane-list-driver"));
+        assert!(entries.iter().any(|e| e.name == "filter-pane-list-cwd"));
+        assert!(entries.iter().any(|e| e.name == "filter-pane-list-branch"));
     }
 
     #[test]

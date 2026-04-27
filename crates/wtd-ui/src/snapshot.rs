@@ -18,6 +18,13 @@ pub struct PaneSession {
     pub progress: Option<ProgressInfo>,
     pub attention: AttentionState,
     pub attention_message: Option<String>,
+    pub phase: Option<String>,
+    pub status_text: Option<String>,
+    pub queue_pending: Option<u32>,
+    pub source: Option<String>,
+    pub driver_profile: Option<String>,
+    pub cwd: Option<String>,
+    pub branch: Option<String>,
 }
 
 /// Snapshot of one tab after attach.
@@ -57,6 +64,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let session_titles = state["sessionTitles"].as_object();
     let session_progress = state["sessionProgress"].as_object();
     let pane_attention = state["paneAttention"].as_object();
+    let pane_metadata = state["paneMetadata"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
     for tab in tabs {
@@ -157,6 +165,41 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                     attention_message: pane_attention
                                         .and_then(|attention_map| attention_map.get(&host_pane_key))
                                         .and_then(|value| value.get("message"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    phase: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("phase"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    status_text: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("statusText"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    queue_pending: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("queuePending"))
+                                        .and_then(|value| value.as_u64())
+                                        .and_then(|value| value.try_into().ok()),
+                                    source: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("source"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    driver_profile: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("driverProfile"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    cwd: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("cwd"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
+                                    branch: pane_metadata
+                                        .and_then(|metadata_map| metadata_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("branch"))
                                         .and_then(|value| value.as_str())
                                         .map(str::to_string),
                                 },
@@ -303,6 +346,17 @@ mod tests {
                     "message": "review requested",
                     "source": "pi"
                 }
+            },
+            "paneMetadata": {
+                "11": {
+                    "phase": "working",
+                    "statusText": "running tests",
+                    "queuePending": 1,
+                    "source": "codex",
+                    "driverProfile": "codex",
+                    "cwd": "C:/Work/WinTermDriver",
+                    "branch": "main"
+                }
             }
         });
 
@@ -322,6 +376,13 @@ mod tests {
         assert_eq!(ps.pane_path, "dev/main/shell");
         assert_eq!(ps.attention, AttentionState::NeedsAttention);
         assert_eq!(ps.attention_message.as_deref(), Some("review requested"));
+        assert_eq!(ps.phase.as_deref(), Some("working"));
+        assert_eq!(ps.status_text.as_deref(), Some("running tests"));
+        assert_eq!(ps.queue_pending, Some(1));
+        assert_eq!(ps.source.as_deref(), Some("codex"));
+        assert_eq!(ps.driver_profile.as_deref(), Some("codex"));
+        assert_eq!(ps.cwd.as_deref(), Some("C:/Work/WinTermDriver"));
+        assert_eq!(ps.branch.as_deref(), Some("main"));
         assert!(tab.screens.contains_key(&focused));
     }
 

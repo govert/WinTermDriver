@@ -390,6 +390,107 @@ fn notification_center_label(tabs: &[SnapshotTab]) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneListFilter {
+    All,
+    Attention,
+    Status,
+    DriverProfile,
+    Cwd,
+    Branch,
+}
+
+fn pane_metadata_summary(tabs: &[SnapshotTab], filter: PaneListFilter) -> String {
+    let mut items = Vec::new();
+    for tab in tabs {
+        for pane_id in tab.layout_tree.panes() {
+            let Some(pane_session) = tab.pane_sessions.get(&pane_id) else {
+                continue;
+            };
+            let has_status = pane_session.phase.is_some()
+                || pane_session.status_text.is_some()
+                || pane_session.queue_pending.is_some();
+            let include = match filter {
+                PaneListFilter::All => true,
+                PaneListFilter::Attention => pane_is_unread_attention(pane_session),
+                PaneListFilter::Status => has_status,
+                PaneListFilter::DriverProfile => pane_session.driver_profile.is_some(),
+                PaneListFilter::Cwd => pane_session.cwd.is_some(),
+                PaneListFilter::Branch => pane_session.branch.is_some(),
+            };
+            if !include {
+                continue;
+            }
+            let sort_key = match filter {
+                PaneListFilter::All => pane_session.pane_path.clone(),
+                PaneListFilter::Attention => {
+                    format!("{:?}:{}", pane_session.attention, pane_session.pane_path)
+                }
+                PaneListFilter::Status => format!(
+                    "{}:{}:{}",
+                    pane_session.phase.as_deref().unwrap_or_default(),
+                    pane_session.status_text.as_deref().unwrap_or_default(),
+                    pane_session.pane_path
+                ),
+                PaneListFilter::DriverProfile => format!(
+                    "{}:{}",
+                    pane_session.driver_profile.as_deref().unwrap_or_default(),
+                    pane_session.pane_path
+                ),
+                PaneListFilter::Cwd => format!(
+                    "{}:{}",
+                    pane_session.cwd.as_deref().unwrap_or_default(),
+                    pane_session.pane_path
+                ),
+                PaneListFilter::Branch => format!(
+                    "{}:{}",
+                    pane_session.branch.as_deref().unwrap_or_default(),
+                    pane_session.pane_path
+                ),
+            };
+            let mut parts = vec![pane_session.pane_path.clone()];
+            if pane_is_unread_attention(pane_session) {
+                parts.push(format!("{:?}", pane_session.attention).to_lowercase());
+            }
+            if let Some(phase) = pane_session.phase.as_deref() {
+                parts.push(format!("phase={phase}"));
+            }
+            if let Some(status) = pane_session.status_text.as_deref() {
+                parts.push(status.to_string());
+            }
+            if let Some(queue) = pane_session.queue_pending {
+                parts.push(format!("queue={queue}"));
+            }
+            if let Some(source) = pane_session.source.as_deref() {
+                parts.push(format!("source={source}"));
+            }
+            if let Some(driver_profile) = pane_session.driver_profile.as_deref() {
+                parts.push(format!("driver={driver_profile}"));
+            }
+            if let Some(cwd) = pane_session.cwd.as_deref() {
+                parts.push(format!("cwd={cwd}"));
+            }
+            if let Some(branch) = pane_session.branch.as_deref() {
+                parts.push(format!("branch={branch}"));
+            }
+            items.push((sort_key, parts.join(" ")));
+        }
+    }
+    if items.is_empty() {
+        "Panes: none".to_string()
+    } else {
+        items.sort_by(|left, right| left.0.cmp(&right.0));
+        format!(
+            "Panes: {}",
+            items
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
+    }
+}
+
 fn next_attention_target(
     tabs: &[SnapshotTab],
     active_tab_index: usize,
@@ -1111,6 +1212,7 @@ fn dispatch_action(
     bridge: Option<&HostBridge>,
     connected: bool,
     notification_center_open: &mut bool,
+    pane_metadata_list_open: &mut bool,
     pass_through_next_key: &mut PassThroughNextKeyState,
     mouse_handler: &mut MouseHandler,
 ) -> bool {
@@ -1160,6 +1262,43 @@ fn dispatch_action(
                     status_bar.set_pane_path(pane_session.pane_path.clone());
                 }
             }
+            return true;
+        }
+        "toggle-pane-metadata-list" => {
+            *pane_metadata_list_open = !*pane_metadata_list_open;
+            if *pane_metadata_list_open {
+                status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::All));
+            } else if let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) {
+                let focused = active_tab.layout_tree.focus();
+                if let Some(pane_session) = active_tab.pane_sessions.get(&focused) {
+                    status_bar.set_pane_path(pane_session.pane_path.clone());
+                }
+            }
+            return true;
+        }
+        "filter-pane-list-attention" => {
+            *pane_metadata_list_open = true;
+            status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::Attention));
+            return true;
+        }
+        "filter-pane-list-status" => {
+            *pane_metadata_list_open = true;
+            status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::Status));
+            return true;
+        }
+        "filter-pane-list-driver" => {
+            *pane_metadata_list_open = true;
+            status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::DriverProfile));
+            return true;
+        }
+        "filter-pane-list-cwd" => {
+            *pane_metadata_list_open = true;
+            status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::Cwd));
+            return true;
+        }
+        "filter-pane-list-branch" => {
+            *pane_metadata_list_open = true;
+            status_bar.set_pane_path(pane_metadata_summary(tabs, PaneListFilter::Branch));
             return true;
         }
         _ => {}
@@ -1377,6 +1516,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut tabs: Vec<SnapshotTab> = Vec::new();
     let mut active_tab_index = 0usize;
     let mut notification_center_open = false;
+    let mut pane_metadata_list_open = false;
 
     if bridge.is_none() {
         let mut layout_tree = LayoutTree::new();
@@ -1950,6 +2090,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     bridge.as_ref(),
                                     connected,
                                     &mut notification_center_open,
+                                    &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                 );
@@ -1974,6 +2115,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     bridge.as_ref(),
                                     connected,
                                     &mut notification_center_open,
+                                    &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                 );
@@ -2026,6 +2168,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 bridge.as_ref(),
                                 connected,
                                 &mut notification_center_open,
+                                &mut pane_metadata_list_open,
                                 &mut pass_through_next_key,
                                 &mut mouse_handler,
                             );
@@ -2084,6 +2227,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     bridge.as_ref(),
                                     connected,
                                     &mut notification_center_open,
+                                    &mut pane_metadata_list_open,
                                     &mut pass_through_next_key,
                                     &mut mouse_handler,
                                 );
@@ -2136,6 +2280,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         bridge.as_ref(),
                                         connected,
                                         &mut notification_center_open,
+                                        &mut pane_metadata_list_open,
                                         &mut pass_through_next_key,
                                         &mut mouse_handler,
                                     );
@@ -2287,6 +2432,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             bridge.as_ref(),
                             connected,
                             &mut notification_center_open,
+                            &mut pane_metadata_list_open,
                             &mut pass_through_next_key,
                             &mut mouse_handler,
                         );
@@ -3387,6 +3533,13 @@ mod tests {
                     progress: None,
                     attention: state,
                     attention_message: message,
+                    phase: None,
+                    status_text: None,
+                    queue_pending: None,
+                    source: None,
+                    driver_profile: None,
+                    cwd: None,
+                    branch: None,
                 },
             );
         }
@@ -3404,6 +3557,58 @@ mod tests {
         let label = notification_center_label(&tabs);
         assert!(label.contains("dev/main/two: input requested"));
         assert!(label.contains("dev/main/three"));
+    }
+
+    #[test]
+    fn pane_metadata_summary_filters_status_and_attention() {
+        let mut tab = attention_test_tab();
+        let pane_id = tab
+            .pane_sessions
+            .iter()
+            .find_map(|(pane_id, session)| {
+                session
+                    .pane_path
+                    .ends_with("/two")
+                    .then_some(pane_id.clone())
+            })
+            .expect("test pane must exist");
+        let session = tab.pane_sessions.get_mut(&pane_id).unwrap();
+        session.phase = Some("working".to_string());
+        session.status_text = Some("running tests".to_string());
+        session.queue_pending = Some(2);
+        session.source = Some("codex".to_string());
+        session.driver_profile = Some("pi".to_string());
+        session.cwd = Some("C:/Work/WinTermDriver".to_string());
+        session.branch = Some("main".to_string());
+
+        let tabs = vec![tab];
+        let status = pane_metadata_summary(&tabs, PaneListFilter::Status);
+        assert!(status.contains("dev/main/two"));
+        assert!(status.contains("phase=working"));
+        assert!(status.contains("running tests"));
+        assert!(status.contains("queue=2"));
+        assert!(status.contains("source=codex"));
+        assert!(status.contains("driver=pi"));
+        assert!(status.contains("cwd=C:/Work/WinTermDriver"));
+        assert!(status.contains("branch=main"));
+        assert!(!status.contains("dev/main/one"));
+
+        let attention = pane_metadata_summary(&tabs, PaneListFilter::Attention);
+        assert!(attention.contains("dev/main/two"));
+        assert!(attention.contains("dev/main/three"));
+        assert!(!attention.contains("dev/main/one"));
+
+        let driver = pane_metadata_summary(&tabs, PaneListFilter::DriverProfile);
+        assert!(driver.contains("driver=pi"));
+        assert!(!driver.contains("dev/main/one"));
+
+        let cwd = pane_metadata_summary(&tabs, PaneListFilter::Cwd);
+        assert!(cwd.contains("cwd=C:/Work/WinTermDriver"));
+        assert!(!cwd.contains("dev/main/one"));
+
+        let branch = pane_metadata_summary(&tabs, PaneListFilter::Branch);
+        assert!(branch.contains("branch=main"));
+        assert!(!branch.contains("dev/main/one"));
     }
 
     #[test]

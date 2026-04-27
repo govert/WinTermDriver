@@ -264,7 +264,37 @@ impl WorkspaceInstance {
             pane_metadata: self
                 .panes
                 .iter()
-                .map(|(id, rec)| (id.clone(), rec.metadata.clone()))
+                .map(|(id, rec)| {
+                    let mut metadata = serde_json::to_value(&rec.metadata)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(obj) = metadata.as_object_mut() {
+                        if let PaneState::Attached { session_id } = &rec.state {
+                            if let Some(session) = self.sessions.get(session_id) {
+                                obj.insert(
+                                    "cwd".to_string(),
+                                    session
+                                        .config()
+                                        .cwd
+                                        .as_ref()
+                                        .map(|cwd| serde_json::Value::String(cwd.clone()))
+                                        .unwrap_or(serde_json::Value::Null),
+                                );
+                                obj.insert(
+                                    "progress".to_string(),
+                                    serde_json::to_value(progress_info_from_screen(
+                                        session.screen().progress(),
+                                    ))
+                                    .unwrap_or(serde_json::Value::Null),
+                                );
+                            }
+                        }
+                        obj.insert(
+                            "driverProfile".to_string(),
+                            serde_json::Value::String(rec.driver.profile.clone()),
+                        );
+                    }
+                    (id.clone(), metadata)
+                })
                 .collect(),
             workspace_attention: self.workspace_attention(),
             session_states: self
@@ -1345,7 +1375,7 @@ pub struct AttachSnapshot {
     pub tabs: Vec<TabSnapshot>,
     pub pane_states: HashMap<PaneId, PaneState>,
     pub pane_attention: HashMap<PaneId, AttentionRecord>,
-    pub pane_metadata: HashMap<PaneId, PaneMetadataRecord>,
+    pub pane_metadata: HashMap<PaneId, serde_json::Value>,
     pub workspace_attention: AttentionRecord,
     pub session_states: HashMap<SessionId, SessionState>,
     /// Current terminal title per session (OSC 2).

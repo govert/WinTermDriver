@@ -224,6 +224,14 @@ attach snapshots: phase, status text, queue count, completion marker, and source
 WTD also includes runtime metadata such as driver profile, cwd, and terminal
 progress when available.
 
+In the UI, use the command palette actions `toggle-pane-metadata-list`,
+`filter-pane-list-attention`, `filter-pane-list-status`,
+`filter-pane-list-driver`, `filter-pane-list-cwd`, and
+`filter-pane-list-branch` to surface pane metadata in the status area. The list
+includes pane path, attention state, published phase/status/queue/source, and
+runtime driver profile, cwd, or branch when those fields are available in the
+attach snapshot. Filtered lists are sorted by the selected metadata field.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |
