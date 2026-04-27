@@ -4432,4 +4432,17 @@ mod tests {
             Some("pass-through-next-key")
         );
     }
+
+    #[test]
+    fn built_in_profile_entries_are_available_for_profile_selectors() {
+        let entries = builtin_profile_entries();
+        let names = entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["powershell", "cmd", "wsl", "ssh"]);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.description.contains("Command Prompt")));
+    }
 }

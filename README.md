@@ -13,7 +13,10 @@ WinTermDriver combines three ideas:
 
 ### Command palette
 
-Press `Ctrl+Shift+Space` to open the command palette. Fuzzy search filters the full action catalog in real time:
+Press `Ctrl+Shift+P` with the default Windows Terminal-style preset, or
+`Ctrl+Shift+Space` with the tmux preset, to open the command palette. Fuzzy
+search filters the full action catalog in real time and shows keybinding hints
+for actions that have shortcuts:
 
 ![Command palette overlay with fuzzy search filtering actions](docs/images/command-palette.png)
 
@@ -268,7 +271,28 @@ tabs:
 
 In `wtd-ui`, creating a new tab or split opens a profile selector. This applies to the command palette actions and the default split shortcuts. Use the `change-profile` action from the command palette to relaunch the focused pane with a different launch profile.
 
+Profile actions are discoverable from the command palette:
+
+- `new-tab`, `split-right`, and `split-down` prompt for a launch profile when
+  run without explicit arguments.
+- `change-profile` relaunches the focused pane with a selected profile.
+- Automation can skip the selector with explicit action arguments, for example
+  `wtd action dev/server split-right profile=cmd`.
+
 When you need one keypress to bypass WTD shortcuts entirely, use the `pass-through-next-key` action. The default `windows-terminal` preset binds it to `Alt+Shift+K`, and the command palette exposes the same action name for rebinding or discovery.
+
+Keybinding presets:
+
+- `windows-terminal` is the default preset and uses single-stroke shortcuts such
+  as `Ctrl+Shift+P` for the command palette, `Ctrl+Shift+F` for find, and
+  `Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End` for scrollback navigation.
+- `tmux` keeps the `Ctrl+B` prefix workflow and adds prefix chords for pane,
+  selection, search, and scrollback actions.
+- Workspace YAML can override either preset with `bindings.keys` and
+  `bindings.chords`.
+
+See `docs/operations/PROFILE_AND_KEYBINDING_DISCOVERY.md` for a compact operator
+guide to profile selection and keybinding customization.
 
 ### Prompt driver profiles
 

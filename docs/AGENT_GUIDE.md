@@ -486,6 +486,9 @@ Ctrl+Shift+F opens a prompt for the focused pane; matches are found across
 retained scrollback plus the visible screen, and the current match is highlighted
 with the selection overlay.
 
+For profile selection and binding customization details, see
+`docs/operations/PROFILE_AND_KEYBINDING_DISCOVERY.md`.
+
 ## Orchestrating multi-session workflows
 
 ### Example: start server, wait for ready, run tests, capture results

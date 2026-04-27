@@ -1319,6 +1319,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn default_bindings_expose_search_selection_and_scrollback_hints() {
+        let hints = build_keybinding_hints(&wtd_core::global_settings::default_bindings());
+        assert_eq!(hints.get("find"), Some(&"Ctrl+Shift+F".to_string()));
+        assert_eq!(hints.get("find-next"), Some(&"F3".to_string()));
+        assert_eq!(hints.get("select-all"), Some(&"Ctrl+Shift+A".to_string()));
+        assert_eq!(hints.get("mark-mode"), Some(&"Ctrl+Shift+M".to_string()));
+        assert_eq!(
+            hints.get("scrollback-page-up"),
+            Some(&"Ctrl+Shift+PageUp".to_string())
+        );
+    }
+
     // ── Palette entries ──
 
     #[test]
