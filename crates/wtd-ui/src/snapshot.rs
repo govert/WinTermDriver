@@ -542,4 +542,108 @@ mod tests {
         assert_eq!(session.pane_path, "focus-restore-test/main/bottom");
         assert_eq!(session.session_id, "101");
     }
+
+    #[test]
+    fn rebuild_snapshot_restores_multi_pane_layout_identity_and_buffers() {
+        let left_history = base64_encode(b"left-history-1\r\nleft-history-2\r\n");
+        let left_visible = base64_encode(b"\x1b[2J\x1b[Hleft-visible-tail\r\n");
+        let right_visible = base64_encode(b"right-startup-burst\r\nright-ready\r\n");
+        let state = json!({
+            "name": "restore-suite",
+            "tabs": [{
+                "name": "agents",
+                "focus": "tests",
+                "layout": {
+                    "type": "split",
+                    "orientation": "horizontal",
+                    "ratio": 0.45,
+                    "children": [
+                        {
+                            "type": "pane",
+                            "name": "server"
+                        },
+                        {
+                            "type": "pane",
+                            "name": "tests"
+                        }
+                    ]
+                },
+                "panes": [7, 8]
+            }],
+            "paneStates": {
+                "7": { "type": "attached", "sessionId": "left-session" },
+                "8": { "type": "attached", "sessionId": "right-session" }
+            },
+            "sessionSizes": {
+                "left-session": { "cols": 100, "rows": 3 },
+                "right-session": { "cols": 100, "rows": 3 }
+            },
+            "sessionHistory": {
+                "left-session": {
+                    "scrollbackRows": 2,
+                    "scrollbackVt": left_history
+                }
+            },
+            "sessionScreens": {
+                "left-session": left_visible,
+                "right-session": right_visible
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let tab = &rebuilt.tabs[0];
+        let pane_paths = tab
+            .pane_sessions
+            .values()
+            .map(|session| session.pane_path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tab.layout_tree.panes().len(), 2);
+        assert!(pane_paths.contains(&"restore-suite/agents/server"));
+        assert!(pane_paths.contains(&"restore-suite/agents/tests"));
+
+        let focused = tab.layout_tree.focus();
+        let focused_session = tab
+            .pane_sessions
+            .get(&focused)
+            .expect("focused pane should map to a session");
+        assert_eq!(focused_session.pane_path, "restore-suite/agents/tests");
+
+        let server_pane = tab
+            .pane_sessions
+            .iter()
+            .find_map(|(pane_id, session)| {
+                (session.pane_path == "restore-suite/agents/server").then_some(pane_id)
+            })
+            .expect("server pane should exist");
+        let server_screen = tab
+            .screens
+            .get(server_pane)
+            .expect("server pane should have a screen");
+        assert!(
+            server_screen.visible_text().contains("left-visible-tail"),
+            "server visible buffer should be replayed; got:\n{}",
+            server_screen.visible_text()
+        );
+        let oldest = server_screen
+            .scrollback_row(0)
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>()
+                    .trim_end_matches(' ')
+                    .to_string()
+            })
+            .expect("server scrollback should be replayed");
+        assert_eq!(oldest, "left-history-1");
+
+        let tests_screen = tab
+            .screens
+            .get(&focused)
+            .expect("tests pane should have a screen");
+        assert!(
+            tests_screen.visible_text().contains("right-ready"),
+            "tests startup burst should be replayed; got:\n{}",
+            tests_screen.visible_text()
+        );
+    }
 }
