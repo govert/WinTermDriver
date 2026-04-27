@@ -164,6 +164,9 @@ WTD is easy to control safely from other tools and other agents.
 - `prompt`/`capture`/`inspect` as the standard agent workflow
 - per-driver capabilities and status publication
 - first-class waiting primitive for cross-pane coordination
+- Responses-style state continuity considerations for GPT-5.5-backed
+  orchestration, including preserving assistant `phase` values if WTD ever
+  manually replays assistant items across turns
 
 ### Why It Matters
 
@@ -203,6 +206,8 @@ recipes.
 - trust confirmation when checked-in workflow files change before auto-run
 - driver-aware pane targeting
 - shared conventions for common multi-agent workflows
+- outcome-first recipe prompts with explicit success criteria, validation
+  checks, and stop rules instead of long procedural scripts
 
 ### Why It Matters
 

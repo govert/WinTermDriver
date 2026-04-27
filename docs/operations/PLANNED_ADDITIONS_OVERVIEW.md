@@ -144,6 +144,36 @@ No additional beads are required before implementation starts; these details can
 be resolved inside the existing beads unless discovery shows a larger split is
 needed.
 
+## GPT-5.5/Codex Planning Implications
+
+The GPT-5.5 guidance reinforces the existing WTD direction, but it sharpens a
+few design requirements:
+
+- Prompts and bead instructions should be outcome-first: goal, success criteria,
+  constraints, validation, and stop rules. Avoid long implementation scripts
+  unless the sequence is truly required.
+- Agent workflows should use concise preambles or progress updates for
+  tool-heavy work so users can see what is happening without reading internal
+  reasoning.
+- The `wtd wait`, `inspect`, metadata, and attention work should produce
+  state-rich snapshots that let agents stop polling once they have enough
+  evidence to act.
+- If WTD implements GPT-5.5-backed orchestration through the Responses API, it
+  should prefer `previous_response_id` for state continuity. If WTD manually
+  replays assistant items, it must preserve assistant `phase` values exactly so
+  intermediate commentary and final answers remain distinct.
+- Tool behavior should live in stable WTD protocol/tool descriptions where
+  possible. Project recipes and prompts should describe outcomes and constraints
+  rather than duplicating low-level tool instructions.
+- Validation should be explicit in beads and recipes: targeted tests, build
+  checks, smoke tests, timeout behavior, and what to do when validation cannot
+  run.
+
+Reference docs:
+
+- `https://developers.openai.com/api/docs/guides/latest-model`
+- `https://developers.openai.com/api/docs/guides/prompt-guidance`
+
 ## Current Risk Notes
 
 - There is one stale unrelated in-progress bead,

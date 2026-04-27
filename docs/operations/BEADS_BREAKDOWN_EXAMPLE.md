@@ -196,22 +196,31 @@ The important principle is:
 
 Nothing should disappear into narrative text.
 
-## Auto-Run Bead Runner Prompt
+## GPT-5.5-Friendly Auto-Run Prompt
 
-Use a stricter runner prompt for this style of bead graph:
+Use a stricter runner prompt for this style of bead graph, but keep it
+outcome-first. The runner should know what success means and when to stop
+without being forced through an unnecessary implementation script.
 
 ```text
 Work exactly one bead at a time.
 
 You are operating in auto-run-friendly bead mode.
 
-For the assigned bead:
-1. read the bead carefully
-2. verify its dependencies are satisfied
-3. complete the full stated outcome of the bead
-4. verify the completion evidence
+Goal:
+- Complete the assigned bead's stated outcome.
+- Verify the bead's completion evidence.
+- Keep the bead graph honest.
 
-When the bead is finished, do exactly one of these:
+Context gathering:
+- Read the bead, cross-bead memory, and only the spec/code sections needed for this bead.
+- Stop gathering context once the files, interfaces, and validation checks are clear.
+- Search again only if implementation or validation reveals a new unknown.
+
+Stop rules:
+- If the bead outcome is fully achieved, close the bead.
+- If the bead cannot be fully completed, create and link follow-up beads for blocking or newly discovered required work.
+- Do not start the next bead until the current bead has either been completed or had its blocking follow-up beads created.
 
 A. If the bead outcome is fully achieved:
 - close the bead
@@ -228,7 +237,6 @@ B. If the bead cannot be fully completed:
 
 Do not leave necessary follow-up work untracked.
 Do not silently broaden the bead beyond its intended scope unless that work is still necessary to complete the bead outcome directly.
-Do not start the next bead until the current bead has either been completed or had its blocking follow-up beads created.
 ```
 
 ## What Makes This Different from a Looser Breakdown

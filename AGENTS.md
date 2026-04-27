@@ -1,3 +1,52 @@
+# WinTermDriver Agent Guide
+
+## GPT-5.5 / Codex Working Guidance
+
+Use this repository guidance as stable context for GPT-5.5 and Codex-style
+agents. Bead details, user requests, and command output are dynamic context and
+should be read after these rules.
+
+### Outcome First
+
+- Treat the user's request or current bead as the goal, with the bead's
+  expected outcome and completion evidence as the success criteria.
+- Choose the implementation path from the codebase context. Do not turn the
+  documentation into a rigid step-by-step script unless a step is a true safety
+  or correctness requirement.
+- Ask only when missing information materially changes the outcome or creates
+  meaningful risk. Otherwise, make a reasonable assumption, proceed, and record
+  it in the final summary or `tools/MEMORY.md` when future beads need it.
+
+### Context Gathering
+
+- Start with `bv --robot-triage` or the assigned bead, then use focused `br`,
+  `rg`, and targeted file reads.
+- Stop gathering context once the relevant files, commands, and acceptance
+  checks are clear. Search again only when validation fails or new uncertainty
+  appears.
+- Keep stable project knowledge in docs and `tools/MEMORY.md`; keep bead-specific
+  discoveries in the bead, commit, and closure notes.
+
+### Validation And Stop Rules
+
+- Before finishing code changes, run the most relevant validation available:
+  targeted tests for changed behavior, build/type checks for touched crates, or
+  a smoke test when full validation is too expensive.
+- If validation cannot be run, state why and name the next best check.
+- A bead is done only when its stated outcome is implemented, completion
+  evidence is satisfied, follow-up work is either unnecessary or tracked in new
+  beads, and changes are committed.
+
+### GPT-5.5 API Notes For WTD Work
+
+- If WTD later hosts GPT-5.5 through the Responses API, prefer
+  `previous_response_id` for continuing multi-turn state.
+- If WTD manually replays assistant items for long-running or tool-heavy
+  workflows, preserve assistant `phase` values exactly so commentary/preambles
+  and final answers remain distinct.
+- Put durable tool behavior in tool descriptions or WTD protocol docs. Keep
+  prompts focused on outcomes, constraints, validation, and stop rules.
+
 <!-- br-agent-instructions-v1 -->
 
 ---
@@ -200,6 +249,18 @@ MAX_BEADS=10 CLAUDE_FLAGS="--dangerously-skip-permissions" ./tools/bead-runner.s
 5. Checks if the bead was closed by the agent
 6. Syncs bead state and commits
 7. After the loop, closes any epics whose children are all done (`br epic close-eligible`)
+
+### Prompt Assembly Guidance
+
+For Codex/GPT-5.5-compatible runners, keep stable instructions first and
+dynamic context last:
+
+1. `tools/bead-instructions.md`
+2. relevant durable excerpts from `tools/MEMORY.md`
+3. current bead details and command output
+
+This layout improves prompt-cache reuse and keeps the model focused on the
+current outcome without duplicating stable tool behavior in every bead.
 
 ### Key Files
 

@@ -113,7 +113,7 @@ The thin slice is the backbone for the first workset.
 Reduce the spec into a small number of capability outcomes.
 
 A good target is usually:
-- 3 to 7 worksets for a phase,
+- 3 to 7 worksets for a coherent push or thin slice,
 - not 20 to 40.
 
 Each workset should answer:
@@ -294,6 +294,34 @@ At the end of bead work, ask:
 - what remains?
 
 This keeps the method anchored in engineering outcomes rather than task theater.
+
+## GPT-5.5-Friendly Bead Instructions
+
+GPT-5.5 works best when the prompt defines the destination and constraints, then
+lets the model choose an efficient path through the codebase. Bead docs should
+therefore be outcome-first rather than process-heavy.
+
+For each executable bead, prefer:
+
+- expected outcome
+- completion evidence
+- relevant files, APIs, or docs to inspect
+- validation commands or checks
+- important failure behavior
+- security, persistence, or data-shape constraints when relevant
+
+Avoid stuffing beads with long implementation scripts. Use hard sequencing only
+for real prerequisites, safety rules, or externally visible contracts. If a
+bead needs exploration, say what question must be answered and what artifact
+should be produced.
+
+For automated runners, the prompt should have clear stop rules:
+
+- stop context gathering once the files and checks are clear
+- finish the bead if the stated outcome is achievable
+- create and link follow-up beads for discovered required work
+- do not close the bead if completion evidence is not met
+- record durable decisions in `tools/MEMORY.md`, not transient narration
 
 ## Parent Beads and Child Beads
 
