@@ -175,7 +175,7 @@ Client-to-host:
 | `Notify` | `target`, `state`, optional `message`, optional `source` | Set pane attention/status |
 | `ClearAttention` | `target` | Reset pane attention to `active` |
 | `SetPaneStatus` | `target` plus optional metadata fields | Publish pane phase/status/progress metadata |
-| `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/restart/etc.; `restart-session` restarts a managed pane session |
+| `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/restart/clear/etc.; `restart-session` restarts a managed pane session, `clear-buffer` clears visible text plus scrollback, and `clear-scrollback` preserves visible text |
 | `SessionInput` | `workspace`, `sessionId`, `data` | UI raw input |
 | `PaneResize` | `paneId`, `cols`, `rows` | UI resize |
 | `FocusPane` | `paneId` | UI focus |

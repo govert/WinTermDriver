@@ -498,6 +498,9 @@ For operator navigation in the UI, the command palette and presets expose
 Terminal preset maps these to Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End; the
 tmux preset maps page/top/bottom navigation under the Ctrl+B prefix. These local
 viewport actions are ignored while the focused pane is on an alternate screen.
+`clear-buffer` clears retained scrollback plus the current visible buffer for the
+focused pane and is bound to Ctrl+Shift+K in the Windows Terminal preset.
+`clear-scrollback` is command-palette only and preserves visible text.
 
 Keyboard selection is available through `mark-mode`, `select-all`, and
 `switch-selection-endpoint`. The Windows Terminal preset maps Ctrl+Shift+M to

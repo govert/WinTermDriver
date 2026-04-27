@@ -875,6 +875,23 @@ impl ScreenBuffer {
         self.scrollback.len() + self.rows
     }
 
+    /// Clear retained scrollback history without changing visible cells.
+    pub fn clear_scrollback(&mut self) {
+        self.scrollback.clear();
+    }
+
+    /// Clear the active visible grid and retained scrollback.
+    ///
+    /// This leaves terminal modes, title, hyperlinks table, and other negotiated
+    /// state intact; it only changes the user-visible buffer content and cursor.
+    pub fn clear_buffer(&mut self) {
+        self.clear_scrollback();
+        self.active_grid_mut().clear_from(0, 0);
+        self.cursor.row = 0;
+        self.cursor.col = 0;
+        self.pending_print.clear();
+    }
+
     /// Cell at `(row, col)` in the combined buffer where rows are addressed as
     /// `scrollback[0..N]` followed by visible screen rows `0..rows`.
     pub fn cell_at_virtual(&self, row: usize, col: usize) -> Option<&Cell> {
@@ -2681,6 +2698,28 @@ mod tests {
         // Visible rows keep full width (trailing spaces to cols=10)
         assert!(r.text.contains("line4     "), "got: {:?}", r.text);
         assert!(r.text.contains("line5     "), "got: {:?}", r.text);
+    }
+
+    #[test]
+    fn clear_actions_have_explicit_scope() {
+        let mut b = make_capture_buf();
+        assert!(b.scrollback_len() > 0);
+        assert!(b.visible_text().contains("line5"));
+
+        b.clear_scrollback();
+        assert_eq!(b.scrollback_len(), 0);
+        assert!(b.visible_text().contains("line5"));
+        assert_eq!(
+            b.capture_extended(None, true, None, None, None, false)
+                .total_lines,
+            3
+        );
+
+        b.clear_buffer();
+        assert_eq!(b.scrollback_len(), 0);
+        assert!(!b.visible_text().contains("line5"));
+        assert_eq!(b.cursor().row, 0);
+        assert_eq!(b.cursor().col, 0);
     }
 
     #[test]

@@ -2576,7 +2576,8 @@ mod tests {
     };
     use wtd_ipc::message::{
         AttentionState, Capture, CaptureResult, ClearAttention, Inspect, InspectResult, Mouse,
-        MouseButton, MouseKind, Notify, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
+        MouseButton, MouseKind, Notify, Scrollback, ScrollbackResult, SetPaneStatus, WaitCondition,
+        WaitPane, WaitPaneResult,
     };
     use wtd_pty::PtySize;
 
@@ -3029,6 +3030,76 @@ mod tests {
         };
         let response = handler.handle_invoke_action("test", &request);
         assert!(response.is_some(), "expected action response");
+    }
+
+    #[test]
+    fn clear_actions_update_capture_and_scrollback_scope() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            let mut session = test_session(RestartPolicy::Never);
+            for i in 0..30 {
+                session
+                    .screen_mut()
+                    .advance(format!("clear-line-{i}\r\n").as_bytes());
+            }
+            inst.attach_test_session_by_pane_name("shell", session)
+                .expect("test pane should exist");
+            state.workspaces.insert("alpha".to_string(), inst);
+        }
+
+        invoke_action(&handler, "clear-scrollback", Some("shell"), json!({}));
+
+        let scrollback = handler
+            .handle_scrollback(
+                "scrollback-1",
+                &Scrollback {
+                    target: "shell".to_string(),
+                    tail: 50,
+                },
+            )
+            .expect("scrollback response");
+        let scrollback: ScrollbackResult = scrollback.extract_payload().unwrap();
+        assert!(
+            scrollback.lines.is_empty(),
+            "clear-scrollback should remove retained history"
+        );
+
+        let capture = handler
+            .handle_capture(
+                "capture-1",
+                &Capture {
+                    target: "shell".to_string(),
+                    ..Default::default()
+                },
+            )
+            .expect("capture response");
+        let capture: CaptureResult = capture.extract_payload().unwrap();
+        assert!(
+            capture.text.contains("clear-line-29"),
+            "clear-scrollback should preserve visible text"
+        );
+
+        invoke_action(&handler, "clear-buffer", Some("shell"), json!({}));
+
+        let capture = handler
+            .handle_capture(
+                "capture-2",
+                &Capture {
+                    target: "shell".to_string(),
+                    all: Some(true),
+                    ..Default::default()
+                },
+            )
+            .expect("capture response");
+        let capture: CaptureResult = capture.extract_payload().unwrap();
+        assert!(
+            !capture.text.contains("clear-line-29"),
+            "clear-buffer should remove visible text"
+        );
+        assert_eq!(capture.total_lines, 24);
     }
 
     #[test]

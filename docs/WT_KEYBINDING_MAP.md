@@ -138,13 +138,13 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 
 | WT Command | WT Default Keys | WTD Action | WTD Default Key | Status | Notes |
 |---|---|---|---|---|---|
-| `scrollDown` | `ctrl+shift+down` | (none) | (none) | `✗` | WTD enters scrollback mode but has no scroll actions |
-| `scrollDownPage` | `ctrl+shift+pgdn` | (none) | (none) | `✗` | No WTD equivalent |
-| `scrollUp` | `ctrl+shift+up` | (none) | (none) | `✗` | No WTD equivalent |
-| `scrollUpPage` | `ctrl+shift+pgup` | (none) | (none) | `✗` | No WTD equivalent |
-| `scrollToTop` | `ctrl+shift+home` | (none) | (none) | `✗` | No WTD equivalent |
-| `scrollToBottom` | `ctrl+shift+end` | (none) | (none) | `✗` | No WTD equivalent |
-| `clearBuffer` | `ctrl+shift+k` | (none) | (none) | `✗` | No WTD equivalent |
+| `scrollDown` | `ctrl+shift+down` | `scrollback-line-down` | `Ctrl+Shift+Down` | `=` | Focused-pane inline scrollback navigation |
+| `scrollDownPage` | `ctrl+shift+pgdn` | `scrollback-page-down` | `Ctrl+Shift+PageDown` | `=` | Focused-pane inline scrollback navigation |
+| `scrollUp` | `ctrl+shift+up` | `scrollback-line-up` | `Ctrl+Shift+Up` | `=` | Focused-pane inline scrollback navigation |
+| `scrollUpPage` | `ctrl+shift+pgup` | `scrollback-page-up` | `Ctrl+Shift+PageUp` | `=` | Focused-pane inline scrollback navigation |
+| `scrollToTop` | `ctrl+shift+home` | `scrollback-top` | `Ctrl+Shift+Home` | `=` | Focused-pane inline scrollback navigation |
+| `scrollToBottom` | `ctrl+shift+end` | `scrollback-bottom` | `Ctrl+Shift+End` | `=` | Focused-pane inline scrollback navigation |
+| `clearBuffer` | `ctrl+shift+k` | `clear-buffer` | `Ctrl+Shift+K` | `=` | Clears retained scrollback and the current visible buffer |
 | `exportBuffer` | (none) | (none) | (none) | `✗` | No WTD equivalent |
 
 ### Font / View
@@ -206,7 +206,7 @@ WTD action.
 - `scrollUp` / `scrollDown` — `scrollback-line-up` / `scrollback-line-down` (Ctrl+Shift+Up/Down)
 - `scrollUpPage` / `scrollDownPage` — `scrollback-page-up` / `scrollback-page-down` (Ctrl+Shift+PgUp/PgDn)
 - `scrollToTop` / `scrollToBottom` — `scrollback-top` / `scrollback-bottom` (Ctrl+Shift+Home/End)
-- `clearBuffer` — Clear scrollback (Ctrl+Shift+K; still missing)
+- `clearBuffer` — `clear-buffer` (Ctrl+Shift+K) clears retained scrollback and the current visible buffer. `clear-scrollback` is also available from the command palette when visible text should be preserved.
 
 **Font size** (should be added in a future action bead):
 - `adjustFontSize {delta: ±1}` — Zoom in/out (Ctrl+Plus / Ctrl+Minus)
@@ -293,6 +293,7 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 | `Ctrl+Shift+PageDown` | `scrollback-page-down` | `ctrl+shift+pgdn` | Scrolls the focused pane toward live output one page |
 | `Ctrl+Shift+Home` | `scrollback-top` | `ctrl+shift+home` | Jumps to the oldest retained scrollback row |
 | `Ctrl+Shift+End` | `scrollback-bottom` | `ctrl+shift+end` | Jumps back to live output |
+| `Ctrl+Shift+K` | `clear-buffer` | `ctrl+shift+k` | Clears retained scrollback and the current visible buffer |
 
 ### Notes on omitted WT bindings in the preset
 
@@ -302,7 +303,6 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 - `ctrl+shift+d` (duplicateTab) — omitted; no WTD equivalent
 - `ctrl+alt+1`..`9` (switchToTab) — omitted; WTD has goto-tab but profile-index launch not supported
 - Font size keys (Ctrl+Plus/Minus/0) — omitted; no WTD action
-- `ctrl+shift+k` (clearBuffer) — omitted; no WTD action
 - `alt+f4` (closeWindow) — omitted; OS-level; `close-window` requires workspace context
 - `alt+enter` (toggleFullscreen) — omitted as secondary; F11 sufficient
 - Clipboard parity is intentionally limited to WT's default `Ctrl+Shift+C`,

@@ -125,6 +125,8 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("resize-pane-shrink-down", "Shrink pane from above"),
     // Session & clipboard
     ("restart-session", "Kill and relaunch session"),
+    ("clear-buffer", "Clear visible buffer and scrollback"),
+    ("clear-scrollback", "Clear retained scrollback"),
     ("copy", "Copy selected text to clipboard"),
     ("paste", "Paste clipboard content"),
     ("select-all", "Select all text in the focused pane"),
@@ -1326,6 +1328,7 @@ mod tests {
         assert_eq!(hints.get("find-next"), Some(&"F3".to_string()));
         assert_eq!(hints.get("select-all"), Some(&"Ctrl+Shift+A".to_string()));
         assert_eq!(hints.get("mark-mode"), Some(&"Ctrl+Shift+M".to_string()));
+        assert_eq!(hints.get("clear-buffer"), Some(&"Ctrl+Shift+K".to_string()));
         assert_eq!(
             hints.get("scrollback-page-up"),
             Some(&"Ctrl+Shift+PageUp".to_string())
@@ -1345,6 +1348,20 @@ mod tests {
         };
         let entries = build_palette_entries(&bindings);
         assert_eq!(entries.len(), RUNNABLE_ACTIONS.len());
+    }
+
+    #[test]
+    fn palette_entries_include_clear_actions() {
+        let entries = build_palette_entries(&wtd_core::global_settings::default_bindings());
+        let clear_buffer = entries
+            .iter()
+            .find(|e| e.name == "clear-buffer")
+            .expect("clear-buffer should be in command palette");
+        assert_eq!(clear_buffer.keybinding, Some("Ctrl+Shift+K".to_string()));
+        assert!(
+            entries.iter().any(|e| e.name == "clear-scrollback"),
+            "clear-scrollback should be in command palette"
+        );
     }
 
     #[test]

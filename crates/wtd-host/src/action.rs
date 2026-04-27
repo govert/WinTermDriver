@@ -566,6 +566,18 @@ pub fn v1_registry() -> ActionRegistry {
         args: NO_ARGS,
         description: "Kill current session and launch a new one from the same definition",
     });
+    r.register(ActionDef {
+        name: "clear-buffer",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Clear retained scrollback and the current visible buffer",
+    });
+    r.register(ActionDef {
+        name: "clear-scrollback",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Clear retained scrollback without changing visible text",
+    });
 
     // Clipboard actions
     r.register(ActionDef {
@@ -1054,6 +1066,16 @@ impl ActionDispatcher {
                 workspace.restart_pane_session(&pane_id)?;
                 Ok(ActionResult::Ok)
             }
+            "clear-buffer" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                workspace.clear_pane_buffer(&pane_id)?;
+                Ok(ActionResult::Ok)
+            }
+            "clear-scrollback" => {
+                let pane_id = self.resolve_pane(workspace, target_pane_id)?;
+                workspace.clear_pane_scrollback(&pane_id)?;
+                Ok(ActionResult::Ok)
+            }
 
             // Actions that require full host context (workspace lifecycle,
             // window/tab management, clipboard, UI) are dispatched at a
@@ -1140,8 +1162,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, change-profile, and pass-through totals 56 actions.
-        assert_eq!(r.len(), 56);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, change-profile, pass-through, attention, metadata, and clear actions totals 70 actions.
+        assert_eq!(r.len(), 70);
     }
 
     #[test]

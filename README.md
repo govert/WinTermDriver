@@ -286,6 +286,9 @@ Keybinding presets:
 - `windows-terminal` is the default preset and uses single-stroke shortcuts such
   as `Ctrl+Shift+P` for the command palette, `Ctrl+Shift+F` for find, and
   `Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End` for scrollback navigation.
+  It also maps `Ctrl+Shift+K` to `clear-buffer`, which clears the focused pane's
+  retained scrollback and current visible buffer. Use the command palette action
+  `clear-scrollback` when visible text should be preserved.
 - `tmux` keeps the `Ctrl+B` prefix workflow and adds prefix chords for pane,
   selection, search, and scrollback actions.
 - Workspace YAML can override either preset with `bindings.keys` and

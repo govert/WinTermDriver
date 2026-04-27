@@ -1694,6 +1694,28 @@ fn dispatch_action(
         _ => {}
     }
 
+    if matches!(name, "clear-buffer" | "clear-scrollback") {
+        if let Some(active_tab) = active_tab_mut(tabs, *active_tab_index) {
+            let focused = active_tab.layout_tree.focus();
+            if let Some(screen) = active_tab.screens.get_mut(&focused) {
+                if name == "clear-buffer" {
+                    screen.clear_buffer();
+                } else {
+                    screen.clear_scrollback();
+                }
+            }
+            mouse_handler.set_scroll_offset(&focused, 0, 0);
+            mouse_handler.clear_selection(&focused);
+            keyboard_selection.deactivate();
+            if let Some(bridge) = bridge {
+                if connected {
+                    send_ui_action(bridge, active_tab, name, action_args_to_value(&args));
+                }
+            }
+        }
+        return true;
+    }
+
     let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) else {
         return false;
     };

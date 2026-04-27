@@ -842,6 +842,40 @@ impl WorkspaceInstance {
         Ok(())
     }
 
+    /// Clear retained scrollback for the session attached to a pane.
+    pub fn clear_pane_scrollback(&mut self, pane_id: &PaneId) -> Result<(), WorkspaceError> {
+        let session_id = self.attached_session_id(pane_id)?;
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| WorkspaceError::SessionOperation("session not found".to_string()))?;
+        session.screen_mut().clear_scrollback();
+        Ok(())
+    }
+
+    /// Clear retained scrollback and the current visible buffer for a pane.
+    pub fn clear_pane_buffer(&mut self, pane_id: &PaneId) -> Result<(), WorkspaceError> {
+        let session_id = self.attached_session_id(pane_id)?;
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| WorkspaceError::SessionOperation("session not found".to_string()))?;
+        session.screen_mut().clear_buffer();
+        Ok(())
+    }
+
+    fn attached_session_id(&self, pane_id: &PaneId) -> Result<SessionId, WorkspaceError> {
+        match self.panes.get(pane_id) {
+            Some(rec) => match &rec.state {
+                PaneState::Attached { session_id } => Ok(session_id.clone()),
+                PaneState::Detached { .. } => Err(WorkspaceError::SessionOperation(
+                    "pane is detached".to_string(),
+                )),
+            },
+            None => Err(WorkspaceError::PaneNotFound(format!("{}", pane_id.0))),
+        }
+    }
+
     /// Estimate an effective viewport from the largest known session dimensions.
     ///
     /// Used by the action dispatcher as a fallback when exact UI geometry

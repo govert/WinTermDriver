@@ -294,11 +294,11 @@ pub fn tmux_bindings() -> BindingsDefinition {
 /// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
 /// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
 ///
-/// **39 bindings total:**
+/// **40 bindings total:**
 /// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
 /// - Pane: split right/down, focus up/down/left/right, resize in all directions
 /// - Clipboard/selection: copy/paste/select-all/mark-mode
-/// - Scrollback: line/page/top/bottom navigation
+/// - Scrollback: line/page/top/bottom navigation and clear buffer
 /// - UI: toggle-fullscreen, toggle-command-palette, pass-through-next-key
 pub fn windows_terminal_bindings() -> BindingsDefinition {
     let mut keys: HashMap<String, ActionReference> = [
@@ -374,6 +374,10 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
         ),
         ("Ctrl+Shift+F", ActionReference::Simple("find".to_string())),
         ("F3", ActionReference::Simple("find-next".to_string())),
+        (
+            "Ctrl+Shift+K",
+            ActionReference::Simple("clear-buffer".to_string()),
+        ),
         // ── UI ──────────────────────────────────────────────────────────────
         (
             "F11",
@@ -677,7 +681,7 @@ mod tests {
         assert!(b.chords.is_none());
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 39, "39 WT-mapped single-stroke bindings");
+        assert_eq!(keys.len(), 40, "40 WT-mapped single-stroke bindings");
 
         // Tab management
         assert_eq!(
@@ -797,6 +801,10 @@ mod tests {
         assert_eq!(
             keys.get("F3"),
             Some(&ActionReference::Simple("find-next".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+K"),
+            Some(&ActionReference::Simple("clear-buffer".to_string()))
         );
 
         // UI
@@ -985,9 +993,9 @@ mod tests {
         // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
         assert!(eff.chords.is_none());
-        // But it has 39 single-stroke keys.
+        // But it has 40 single-stroke keys.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 39);
+        assert_eq!(keys.len(), 40);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))

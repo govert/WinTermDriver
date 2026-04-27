@@ -31,6 +31,7 @@
       "Ctrl+Shift+M":    "mark-mode",
       "Ctrl+Shift+F":    "find",
       "F3":              "find-next",
+      "Ctrl+Shift+K":    "clear-buffer",
       "Ctrl+Shift+Up":       "scrollback-line-up",
       "Ctrl+Shift+Down":     "scrollback-line-down",
       "Ctrl+Shift+PageUp":   "scrollback-page-up",
@@ -85,11 +86,6 @@
       "wt_command": "newTab (profile by index)",
       "wt_keys": ["ctrl+shift+1", "ctrl+shift+2", "ctrl+shift+3", "ctrl+shift+4", "ctrl+shift+5", "ctrl+shift+6", "ctrl+shift+7", "ctrl+shift+8", "ctrl+shift+9"],
       "reason": "WTD new-tab does not support profile-index parameter"
-    },
-    {
-      "wt_command": "clearBuffer",
-      "wt_keys": ["ctrl+shift+k"],
-      "reason": "No WTD clear-buffer action in v1"
     },
     {
       "wt_command": "adjustFontSize (increase)",
@@ -183,7 +179,6 @@
     "switchSelectionEndpoint",
     "expandSelectionToWord",
     "showContextMenu",
-    "clearBuffer",
     "exportBuffer",
     "adjustFontSize",
     "resetFontSize",
