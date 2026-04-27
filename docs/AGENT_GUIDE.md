@@ -259,7 +259,9 @@ attach snapshot. Filtered lists are sorted by the selected metadata field.
 
 For reusable Pi, Codex, Claude Code, Gemini CLI, and Copilot CLI hook patterns,
 see `docs/operations/AGENT_NOTIFICATION_HOOKS.md` and the helper scripts in
-`tools/agent-hooks/`.
+`tools/agent-hooks/`. For Pi-specific extension wiring, see
+`docs/operations/PI_WTD_EXTENSION_PATTERN.md` and
+`tools/agent-hooks/pi/`.
 
 Built-in prompt driver profiles:
 

@@ -58,7 +58,8 @@ a user.
 
 Pi is the preferred first-class integration target because Pi extensions can
 publish status and notification events without screen parsing. A Pi extension or
-wrapper should call the helper with:
+wrapper can call the generic helper directly, or use the Pi-specific bridge in
+`tools/agent-hooks/pi/`:
 
 - `--event working` when a task starts or a queued item begins running.
 - `--event queued --queue-pending <n>` when Pi has pending queued work.
@@ -69,6 +70,9 @@ wrapper should call the helper with:
 Pi extension packages should keep the WTD target configurable. Use the pane path
 when known, for example `workspace/tab/pane`; otherwise pass a workspace/pane
 target assigned by the operator.
+
+See `docs/operations/PI_WTD_EXTENSION_PATTERN.md` for the reference Pi
+extension pattern and the `wtd-pi-event` bridge event mapping.
 
 ## Codex
 
