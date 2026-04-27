@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# bead-runner.sh — Sequential bead execution loop
+# bead-runner.sh — Legacy Claude sequential bead execution loop
 #
 # Picks the next ready bead, constructs context, invokes `claude -p`,
 # logs the full run, and repeats until no ready beads remain.
+#
+# This runner is intentionally disabled by default. WinTermDriver's Codex
+# workflow should use a manual br-driven loop in the current agent session:
+# triage, claim one bead, implement, validate, close, sync, commit, repeat.
+# Set WTD_ALLOW_LEGACY_CLAUDE_BEAD_RUNNER=1 only when you explicitly want the
+# old Claude subprocess runner.
 #
 # Environment variables:
 #   MAX_BEADS      Stop after N beads (default: 0 = unlimited)
@@ -19,6 +25,22 @@
 #     MAX_BEADS=3 ./tools/bead-runner.sh            # three beads, unattended
 
 set -euo pipefail
+
+if [[ "${WTD_ALLOW_LEGACY_CLAUDE_BEAD_RUNNER:-}" != "1" ]]; then
+  cat >&2 <<'EOF'
+[runner] ERROR: tools/bead-runner.sh is the legacy Claude subprocess runner.
+[runner] It is disabled by default for Codex/GPT-5.5 work.
+[runner]
+[runner] Use the manual bead loop instead:
+[runner]   bv --robot-triage
+[runner]   br update <bead-id> --status in_progress
+[runner]   # implement, validate, br close, br sync --flush-only, git commit
+[runner]
+[runner] To intentionally run the legacy Claude runner, set:
+[runner]   WTD_ALLOW_LEGACY_CLAUDE_BEAD_RUNNER=1
+EOF
+  exit 2
+fi
 
 # ── Guard against nested invocation ──────────────────────────────
 # A bead agent once ran `bash bead-runner.sh close ...` (confusing it

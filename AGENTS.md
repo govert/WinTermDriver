@@ -216,31 +216,39 @@ git push                # Push to remote
 
 ---
 
-## Bead Runner
+## Bead Execution
 
-The bead runner (`tools/bead-runner.sh`) automates sequential bead execution. It picks the next ready bead, invokes `claude -p` with full context (instructions, cross-bead memory, bead details), and repeats until done.
+Do not use `tools/bead-runner.sh` for Codex/GPT-5.5 work. It is a legacy
+Claude subprocess runner that invokes `claude -p` in a separate agent session,
+which bypasses the current Codex context and makes it easy to start the wrong
+implementation loop.
 
-### Running from PowerShell
-
-```powershell
-$env:MAX_BEADS="10"; $env:CLAUDE_FLAGS="--dangerously-skip-permissions"; & "C:\Program Files\Git\bin\bash.exe" ./tools/bead-runner.sh
-```
-
-### Running from Git Bash
+Use a manual sequential `br` loop in the current agent session instead:
 
 ```bash
-MAX_BEADS=10 CLAUDE_FLAGS="--dangerously-skip-permissions" ./tools/bead-runner.sh
+bv --robot-triage
+br show <bead-id>
+br update <bead-id> --status in_progress
+# implement the bead
+# run targeted validation
+br close <bead-id> --reason "Completed: <summary>"
+br sync --flush-only
+git status
+git add <files>
+git commit -m "bead <bead-id>: <summary>"
 ```
 
-### Environment Variables
+Repeat this loop until `bv --robot-triage` or `br ready` shows no ready task
+beads. Keep each bead in the same active agent session that is doing the code
+work, unless the user explicitly asks for a different runner.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAX_BEADS` | 0 (unlimited) | Stop after N beads |
-| `CLAUDE_MODEL` | (unset) | Model override (e.g., `sonnet`, `opus`) |
-| `CLAUDE_FLAGS` | (unset) | Extra flags for `claude` CLI |
+### Legacy Claude Runner
 
-### How It Works
+`tools/bead-runner.sh` is retained only for historical/reference use. It is
+disabled by default and exits unless `WTD_ALLOW_LEGACY_CLAUDE_BEAD_RUNNER=1` is
+set deliberately.
+
+If it is explicitly enabled, it:
 
 1. Picks the first ready task bead via `br ready --json --limit 1 --type task`
 2. Marks it `in_progress`
@@ -266,13 +274,14 @@ current outcome without duplicating stable tool behavior in every bead.
 
 | File | Purpose |
 |------|---------|
-| `tools/bead-runner.sh` | Main loop script |
+| `tools/bead-runner.sh` | Legacy Claude subprocess runner; disabled by default |
 | `tools/bead-instructions.md` | Agent instructions included in every bead prompt |
 | `tools/MEMORY.md` | Cross-bead persistent memory (agents read and append) |
 | `logs/bead-runs/*.jsonl` | Full stream-json log per bead run |
 
 ### Safety
 
+- **Disabled by default**: The legacy runner exits unless `WTD_ALLOW_LEGACY_CLAUDE_BEAD_RUNNER=1` is set.
 - **Nested invocation guard**: The runner sets `BEAD_RUNNER_PID` and aborts if it detects it is already set, preventing accidental recursive runner loops.
 - **Stops on failure**: If a bead agent exits without closing the bead, the runner stops and prints recovery instructions.
 - Agents are instructed to use `br close`, never `bead-runner.sh`.
