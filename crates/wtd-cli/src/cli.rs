@@ -435,6 +435,9 @@ pub enum RecipeCommand {
         /// Path to a recipe manifest.
         #[arg(long)]
         file: Option<PathBuf>,
+        /// Template variable override as key=value. May be repeated.
+        #[arg(long = "var")]
+        vars: Vec<String>,
         /// Print the WTD operations without sending them to the host.
         #[arg(long)]
         dry_run: bool,

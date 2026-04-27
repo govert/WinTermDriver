@@ -39,6 +39,8 @@ pub struct ProjectRecipe {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vars: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<RecipeTarget>,
     #[serde(default = "default_palette")]
     pub palette: bool,
@@ -54,6 +56,12 @@ pub struct RecipeTarget {
     pub tab: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "driverProfile"
+    )]
+    pub driver_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,6 +98,19 @@ pub enum RecipeStep {
         action: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<HashMap<String, String>>,
+    },
+    Macro {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        condition: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lines: Option<u32>,
     },
 }
 
@@ -155,6 +176,88 @@ pub fn resolve_step_target(recipe: &ProjectRecipe, step_target: Option<&str>) ->
     recipe.target.as_ref().and_then(RecipeTarget::to_path)
 }
 
+pub fn expand_recipe_steps(recipe: &ProjectRecipe) -> Result<Vec<RecipeStep>, RecipeLoadError> {
+    let mut expanded = Vec::new();
+    for step in &recipe.steps {
+        match step {
+            RecipeStep::Macro {
+                name,
+                target,
+                text,
+                condition,
+                timeout,
+                lines,
+            } if name == "prompt-wait-capture" => {
+                let text = text.clone().ok_or_else(|| RecipeLoadError::Validation {
+                    file: recipe.name.clone(),
+                    message: "macro prompt-wait-capture requires text".to_string(),
+                })?;
+                expanded.push(RecipeStep::Prompt {
+                    target: target.clone(),
+                    text,
+                });
+                expanded.push(RecipeStep::Wait {
+                    target: target.clone(),
+                    condition: condition.clone().unwrap_or_else(default_wait_condition),
+                    timeout: *timeout,
+                    recent_lines: *lines,
+                });
+                expanded.push(RecipeStep::Capture {
+                    target: target.clone(),
+                    lines: *lines,
+                });
+            }
+            RecipeStep::Macro { name, .. } => {
+                return Err(RecipeLoadError::Validation {
+                    file: recipe.name.clone(),
+                    message: format!("unsupported recipe macro '{name}'"),
+                });
+            }
+            other => expanded.push(other.clone()),
+        }
+    }
+    Ok(expanded)
+}
+
+pub fn render_recipe_template(
+    recipe: &ProjectRecipe,
+    template: &str,
+    overrides: &HashMap<String, String>,
+) -> Result<String, RecipeLoadError> {
+    let mut vars = recipe.vars.clone().unwrap_or_default();
+    vars.extend(
+        overrides
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+    if let Some(cwd) = &recipe.cwd {
+        vars.entry("cwd".to_string()).or_insert_with(|| cwd.clone());
+    }
+    if let Some(target) = recipe.target.as_ref().and_then(RecipeTarget::to_path) {
+        vars.entry("target".to_string()).or_insert(target);
+    }
+
+    let mut output = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            output.push_str(&rest[start..]);
+            return Ok(output);
+        };
+        let key = after_start[..end].trim();
+        let value = vars.get(key).ok_or_else(|| RecipeLoadError::Validation {
+            file: recipe.name.clone(),
+            message: format!("missing template variable '{key}'"),
+        })?;
+        output.push_str(value);
+        rest = &after_start[end + 2..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
 impl RecipeTarget {
     pub fn to_path(&self) -> Option<String> {
         let mut parts = Vec::new();
@@ -169,6 +272,9 @@ impl RecipeTarget {
         }
         if parts.is_empty() {
             None
+        } else if self.pane.is_none() && self.driver_profile.is_some() {
+            let driver = self.driver_profile.as_deref().unwrap_or_default();
+            Some(format!("{}/driver:{driver}", parts.join("/")))
         } else {
             Some(parts.join("/"))
         }
@@ -225,6 +331,9 @@ fn validate_step(file: &str, recipe: &str, step: &RecipeStep) -> Result<(), Reci
         RecipeStep::Action { action, .. } if action.trim().is_empty() => {
             validation_error(file, format!("recipe '{recipe}' has empty action"))
         }
+        RecipeStep::Macro { name, .. } if name.trim().is_empty() => {
+            validation_error(file, format!("recipe '{recipe}' has empty macro name"))
+        }
         _ => Ok(()),
     }
 }
@@ -248,6 +357,8 @@ commands:
     cwd: .
     env:
       RUST_LOG: info
+    vars:
+      crate: wtd-core
     target:
       workspace: dev
       tab: main
@@ -264,6 +375,9 @@ commands:
       - type: action
         action: focus-pane
         target: dev/main/reviewer
+      - type: macro
+        name: prompt-wait-capture
+        text: cargo test -p {{crate}}
 "#;
 
     #[test]
@@ -299,5 +413,27 @@ commands:
         )
         .unwrap_err();
         assert!(err.to_string().contains("unsupported wait condition"));
+    }
+
+    #[test]
+    fn renders_templates_and_expands_macros() {
+        let manifest = load_recipe_manifest("wtd-recipes.yaml", VALID).unwrap();
+        let recipe = find_recipe(&manifest, "test-and-review").unwrap();
+        let rendered =
+            render_recipe_template(recipe, "Run {{crate}} in {{target}}", &HashMap::new()).unwrap();
+        assert_eq!(rendered, "Run wtd-core in dev/main/tests");
+        let steps = expand_recipe_steps(recipe).unwrap();
+        assert!(steps.len() > recipe.steps.len());
+    }
+
+    #[test]
+    fn driver_profile_target_renders_selector_path() {
+        let target = RecipeTarget {
+            workspace: Some("agents".to_string()),
+            tab: None,
+            pane: None,
+            driver_profile: Some("pi".to_string()),
+        };
+        assert_eq!(target.to_path().as_deref(), Some("agents/driver:pi"));
     }
 }

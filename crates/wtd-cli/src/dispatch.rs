@@ -17,8 +17,8 @@ use crate::exit_code;
 use crate::input_bytes::{encode_input_payload, InputEncoding};
 use crate::output::{self, OutputResult};
 use wtd_core::{
-    find_recipe, find_recipe_manifest_from, load_recipe_manifest_file, resolve_step_target,
-    ProjectRecipe, RecipeManifest, RecipeStep,
+    expand_recipe_steps, find_recipe, find_recipe_manifest_from, load_recipe_manifest_file,
+    render_recipe_template, resolve_step_target, ProjectRecipe, RecipeManifest, RecipeStep,
 };
 use wtd_ipc::connect;
 use wtd_ipc::message::{
@@ -231,7 +231,12 @@ async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duratio
             }
             exit_code::SUCCESS
         }
-        RecipeCommand::Run { name, dry_run, .. } => {
+        RecipeCommand::Run {
+            name,
+            dry_run,
+            vars,
+            ..
+        } => {
             let recipe = match find_recipe(&manifest, name) {
                 Some(recipe) => recipe,
                 None => {
@@ -239,7 +244,14 @@ async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duratio
                     return exit_code::TARGET_NOT_FOUND;
                 }
             };
-            run_recipe(recipe, *dry_run, json, timeout).await
+            let vars = match parse_recipe_vars(vars) {
+                Ok(vars) => vars,
+                Err(e) => {
+                    eprintln!("wtd: {e}");
+                    return exit_code::GENERAL_ERROR;
+                }
+            };
+            run_recipe(recipe, &vars, *dry_run, json, timeout).await
         }
     }
 }
@@ -270,8 +282,14 @@ fn load_recipe_for_command(
     Ok((path, manifest))
 }
 
-async fn run_recipe(recipe: &ProjectRecipe, dry_run: bool, json: bool, timeout: Duration) -> i32 {
-    let requests = match recipe_requests(recipe) {
+async fn run_recipe(
+    recipe: &ProjectRecipe,
+    vars: &std::collections::HashMap<String, String>,
+    dry_run: bool,
+    json: bool,
+    timeout: Duration,
+) -> i32 {
+    let requests = match recipe_requests_with_vars(recipe, vars) {
         Ok(requests) => requests,
         Err(e) => {
             eprintln!("wtd: {e}");
@@ -311,26 +329,33 @@ async fn run_recipe(recipe: &ProjectRecipe, dry_run: bool, json: bool, timeout: 
     exit_code::SUCCESS
 }
 
+#[cfg(test)]
 fn recipe_requests(recipe: &ProjectRecipe) -> Result<Vec<Envelope>, String> {
-    recipe
-        .steps
+    recipe_requests_with_vars(recipe, &std::collections::HashMap::new())
+}
+
+fn recipe_requests_with_vars(
+    recipe: &ProjectRecipe,
+    vars: &std::collections::HashMap<String, String>,
+) -> Result<Vec<Envelope>, String> {
+    let steps = expand_recipe_steps(recipe).map_err(|e| e.to_string())?;
+    steps
         .iter()
-        .map(|step| recipe_step_request(recipe, step))
+        .map(|step| recipe_step_request(recipe, step, vars))
         .collect()
 }
 
-fn recipe_step_request(recipe: &ProjectRecipe, step: &RecipeStep) -> Result<Envelope, String> {
+fn recipe_step_request(
+    recipe: &ProjectRecipe,
+    step: &RecipeStep,
+    vars: &std::collections::HashMap<String, String>,
+) -> Result<Envelope, String> {
     let id = next_id();
     match step {
         RecipeStep::Prompt { target, text } => {
             let target = require_recipe_target(recipe, target.as_deref(), "prompt")?;
-            Ok(Envelope::new(
-                &id,
-                &Prompt {
-                    target,
-                    text: text.clone(),
-                },
-            ))
+            let text = render_recipe_template(recipe, text, vars).map_err(|e| e.to_string())?;
+            Ok(Envelope::new(&id, &Prompt { target, text }))
         }
         RecipeStep::Capture { target, lines } => {
             let target = require_recipe_target(recipe, target.as_deref(), "capture")?;
@@ -377,11 +402,42 @@ fn recipe_step_request(recipe: &ProjectRecipe, step: &RecipeStep) -> Result<Enve
                 target_pane_id: resolve_step_target(recipe, target.as_deref()),
                 args: args
                     .as_ref()
+                    .map(|args| render_action_args(recipe, args, vars))
+                    .transpose()?
                     .map(|args| serde_json::to_value(args).unwrap_or_default())
                     .unwrap_or_else(|| serde_json::json!({})),
             },
         )),
+        RecipeStep::Macro { .. } => Err("recipe macro was not expanded".to_string()),
     }
+}
+
+fn render_action_args(
+    recipe: &ProjectRecipe,
+    args: &std::collections::HashMap<String, String>,
+    vars: &std::collections::HashMap<String, String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    args.iter()
+        .map(|(key, value)| {
+            render_recipe_template(recipe, value, vars)
+                .map(|value| (key.clone(), value))
+                .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+fn parse_recipe_vars(vars: &[String]) -> Result<std::collections::HashMap<String, String>, String> {
+    vars.iter()
+        .map(|entry| {
+            let Some((key, value)) = entry.split_once('=') else {
+                return Err(format!("recipe variable '{entry}' must be key=value"));
+            };
+            if key.trim().is_empty() {
+                return Err("recipe variable key must not be empty".to_string());
+            }
+            Ok((key.to_string(), value.to_string()))
+        })
+        .collect()
 }
 
 fn require_recipe_target(
@@ -1314,7 +1370,7 @@ commands:
       pane: tests
     steps:
       - type: prompt
-        text: cargo test
+        text: cargo test -p {{crate}}
       - type: wait
         condition: done
         timeout: 1.5
@@ -1323,15 +1379,21 @@ commands:
       - type: action
         target: dev/main/reviewer
         action: focus-pane
+      - type: macro
+        name: prompt-wait-capture
+        text: summarize {{crate}}
+    vars:
+      crate: wtd-core
 "#,
         )
         .unwrap();
         let recipe = wtd_core::find_recipe(&manifest, "test-and-review").unwrap();
         let requests = recipe_requests(recipe).unwrap();
 
-        assert_eq!(requests.len(), 4);
+        assert_eq!(requests.len(), 7);
         assert_eq!(requests[0].msg_type, Prompt::TYPE_NAME);
         assert_eq!(requests[0].payload["target"], "dev/main/tests");
+        assert_eq!(requests[0].payload["text"], "cargo test -p wtd-core");
         assert_eq!(requests[1].msg_type, WaitPane::TYPE_NAME);
         assert_eq!(requests[1].payload["condition"], "done");
         assert_eq!(requests[1].payload["timeoutMs"], 1500);
@@ -1339,6 +1401,7 @@ commands:
         assert_eq!(requests[2].payload["lines"], 20);
         assert_eq!(requests[3].msg_type, InvokeAction::TYPE_NAME);
         assert_eq!(requests[3].payload["targetPaneId"], "dev/main/reviewer");
+        assert_eq!(requests[4].payload["text"], "summarize wtd-core");
     }
 
     #[test]

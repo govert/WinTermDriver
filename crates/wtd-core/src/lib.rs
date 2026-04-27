@@ -23,9 +23,9 @@ pub use global_settings::{
 };
 pub use profile_resolver::{resolve_launch_spec, ResolveError, ResolvedLaunchSpec};
 pub use recipe::{
-    find_recipe, find_recipe_manifest_from, load_recipe_manifest, load_recipe_manifest_file,
-    recipe_manifest_candidates, resolve_step_target, ProjectRecipe, RecipeLoadError,
-    RecipeManifest, RecipeStep, RecipeTarget,
+    expand_recipe_steps, find_recipe, find_recipe_manifest_from, load_recipe_manifest,
+    load_recipe_manifest_file, recipe_manifest_candidates, render_recipe_template,
+    resolve_step_target, ProjectRecipe, RecipeLoadError, RecipeManifest, RecipeStep, RecipeTarget,
 };
 pub use target::{TargetPath, TargetPathError};
 pub use workspace::BindingPreset;

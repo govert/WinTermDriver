@@ -266,7 +266,8 @@ see `docs/operations/AGENT_NOTIFICATION_HOOKS.md` and the helper scripts in
 Project-local workflows can be checked in as `.wtd/recipes.yaml` or
 `wtd-recipes.yaml` and run with `wtd recipe list`, `wtd recipe show <name>`, and
 `wtd recipe run <name>`. Recipes support prompt, capture, wait, and action
-steps, with palette visibility metadata. See
+steps, template variables (`{{name}}`), the `prompt-wait-capture` macro, and
+palette visibility metadata. See
 `docs/operations/PROJECT_RECIPES.md`.
 
 Built-in prompt driver profiles:

@@ -19,6 +19,8 @@ commands:
     cwd: .
     env:
       RUST_LOG: info
+    vars:
+      crate: wtd-core
     target:
       workspace: build-and-test
       tab: main
@@ -26,7 +28,7 @@ commands:
     palette: true
     steps:
       - type: prompt
-        text: cargo test
+        text: cargo test -p {{crate}}
       - type: wait
         condition: done
         timeout: 60
@@ -44,6 +46,7 @@ Command fields:
 - `description`: human-readable summary for list and palette surfaces.
 - `cwd`: intended working directory for future auto-run trust checks.
 - `env`: intended environment overlay for future auto-run trust checks.
+- `vars`: default template variables for prompt text and action args.
 - `target`: default workspace/tab/pane selector used by steps without an
   explicit target.
 - `palette`: whether UI palette surfaces should expose the recipe.
@@ -56,6 +59,22 @@ Step types:
 - `wait`: waits for `idle`, `done`, `needs-attention`, `error`,
   `queue-empty`, or `state-change`.
 - `action`: invokes a WTD workspace/pane action.
+- `macro`: expands a named workflow macro. The first built-in macro is
+  `prompt-wait-capture`.
+
+Targets can use a semantic pane path through `workspace`, `tab`, and `pane`.
+They can also declare a driver selector for workflows that should target a pane
+by agent type:
+
+```yaml
+target:
+  workspace: agents
+  driverProfile: pi
+```
+
+Driver selectors are represented as `workspace/driver:<profile>` in dry-run and
+palette metadata. Use an explicit pane target for current direct execution when
+multiple panes share the same driver.
 
 ## CLI
 
@@ -63,6 +82,7 @@ Step types:
 wtd recipe list
 wtd recipe show test-and-review
 wtd recipe run test-and-review --dry-run
+wtd recipe run test-and-review --var crate=wtd-cli
 wtd recipe run test-and-review
 ```
 
@@ -89,15 +109,15 @@ commands:
       workspace: agents
       tab: main
       pane: worker
+    vars:
+      scope: focused tests
     palette: true
     steps:
-      - type: prompt
-        text: Run the focused tests and publish WTD status when complete.
-      - type: wait
+      - type: macro
+        name: prompt-wait-capture
+        text: Run the {{scope}} and publish WTD status when complete.
         condition: done
         timeout: 120
-        recentLines: 120
-      - type: capture
         lines: 120
       - type: prompt
         target: agents/main/reviewer
