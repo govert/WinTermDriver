@@ -157,11 +157,17 @@ wtd open build-and-test --file ./workspace.yaml
 # Tear down and recreate from the same definition
 wtd open build-and-test --recreate
 
+# Persist the running layout and pane/session definitions
+wtd save build-and-test --file ./saved-workspace.yaml
+
 # Close and destroy the instance
 wtd close build-and-test --kill
 ```
 
 `wtd start <name>` is the ergonomic entry point for interactive use. `wtd open` remains the lower-level command for headless automation or when you want to launch `wtd-ui` separately.
+The UI command palette action `save-workspace` uses the same host save path as
+`wtd save`, so saving from the UI or CLI writes a YAML definition that can be
+opened again with the same tab layout, pane names, and session definitions.
 
 ### Sending commands
 

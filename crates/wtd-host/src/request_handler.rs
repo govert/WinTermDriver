@@ -592,6 +592,29 @@ fn load_workspace_from_disk(
     })
 }
 
+fn save_workspace_definition_to_file(
+    inst: &WorkspaceInstance,
+    workspace: &str,
+    file: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let def = inst.save();
+
+    let path = if let Some(file) = file {
+        std::path::PathBuf::from(file)
+    } else {
+        let dir = wtd_core::ensure_user_workspaces_dir()
+            .map_err(|e| format!("failed to create workspaces directory: {e}"))?;
+        dir.join(format!("{workspace}.yaml"))
+    };
+
+    let yaml =
+        serde_yaml::to_string(&def).map_err(|e| format!("failed to serialize workspace: {e}"))?;
+
+    std::fs::write(&path, &yaml).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+
+    Ok(path)
+}
+
 // ── RequestHandler impl ──────────────────────────────────────────────────
 
 impl RequestHandler for HostRequestHandler {
@@ -867,44 +890,11 @@ impl HostRequestHandler {
         let state = self.lock_state();
         match state.workspaces.get(&save.workspace) {
             Some(inst) => {
-                let def = inst.save();
-
-                let path = if let Some(ref file) = save.file {
-                    std::path::PathBuf::from(file)
-                } else {
-                    let dir = match wtd_core::ensure_user_workspaces_dir() {
-                        Ok(d) => d,
-                        Err(e) => {
-                            return Some(error_envelope(
-                                id,
-                                ErrorCode::InternalError,
-                                &format!("failed to create workspaces directory: {}", e),
-                            ));
-                        }
-                    };
-                    dir.join(format!("{}.yaml", save.workspace))
-                };
-
-                let yaml = match serde_yaml::to_string(&def) {
-                    Ok(y) => y,
-                    Err(e) => {
-                        return Some(error_envelope(
-                            id,
-                            ErrorCode::InternalError,
-                            &format!("failed to serialize workspace: {}", e),
-                        ));
-                    }
-                };
-
-                if let Err(e) = std::fs::write(&path, &yaml) {
-                    return Some(error_envelope(
-                        id,
-                        ErrorCode::InternalError,
-                        &format!("failed to write {}: {}", path.display(), e),
-                    ));
+                match save_workspace_definition_to_file(inst, &save.workspace, save.file.as_deref())
+                {
+                    Ok(_) => Some(Envelope::new(id, &OkResponse {})),
+                    Err(message) => Some(error_envelope(id, ErrorCode::InternalError, &message)),
                 }
-
-                Some(Envelope::new(id, &OkResponse {}))
             }
             None => Some(error_envelope(
                 id,
@@ -2037,6 +2027,30 @@ impl HostRequestHandler {
                         pane_id: None,
                     },
                 ));
+            }
+            "save-workspace" => {
+                if let Err(e) = v1_registry().validate_args("save-workspace", &action.args) {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::InvalidArgument,
+                        &e.to_string(),
+                    ));
+                }
+                let file = action.args.get("file").and_then(|v| v.as_str());
+                match save_workspace_definition_to_file(inst, &workspace_name, file) {
+                    Ok(path) => {
+                        return Some(Envelope::new(
+                            id,
+                            &InvokeActionResult {
+                                result: format!("workspace-saved:{}", path.display()),
+                                pane_id: None,
+                            },
+                        ));
+                    }
+                    Err(message) => {
+                        return Some(error_envelope(id, ErrorCode::InternalError, &message));
+                    }
+                }
             }
             "close-tab" => {
                 let idx = inst.active_tab_index();

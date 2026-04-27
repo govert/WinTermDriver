@@ -679,6 +679,33 @@ tabs:
     assert!(pane_names.contains(&"left"));
     assert!(pane_names.contains(&"right"));
 
+    // Save through the same InvokeAction path used by the UI command palette.
+    let saved_path = tmp_dir.join("saved-from-ui-action.yaml");
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "save-action-1",
+            &InvokeAction {
+                action: "save-workspace".to_string(),
+                target_pane_id: Some("left".to_string()),
+                args: serde_json::json!({
+                    "file": saved_path.to_string_lossy().to_string(),
+                }),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    let save_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(save_resp.msg_type, InvokeActionResult::TYPE_NAME);
+    let saved_yaml = std::fs::read_to_string(&saved_path).unwrap();
+    assert!(saved_yaml.contains("orientation: horizontal"));
+    assert!(saved_yaml.contains("name: left"));
+    assert!(saved_yaml.contains("name: right"));
+    assert!(saved_yaml.contains("startupCommand: echo LEFT_PANE_OK"));
+    assert!(saved_yaml.contains("startupCommand: echo RIGHT_PANE_OK"));
+
     // Close workspace.
     write_frame(
         &mut client,
@@ -695,6 +722,42 @@ tabs:
 
     let close_resp = read_frame(&mut client).await.unwrap();
     assert_eq!(close_resp.msg_type, OkResponse::TYPE_NAME);
+
+    // Re-open from the saved file and verify the split layout/pane identities survive.
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "reopen-1",
+            &OpenWorkspace {
+                name: Some("split-file-test".to_string()),
+                file: Some(saved_path.to_string_lossy().to_string()),
+                recreate: false,
+                profile: None,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let reopen_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(reopen_resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
+            "lp-reopen",
+            &ListPanes {
+                workspace: "split-file-test".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let panes_resp = read_frame(&mut client).await.unwrap();
+    let panes: ListPanesResult = panes_resp.extract_payload().unwrap();
+    assert_eq!(panes.panes.len(), 2);
+    let pane_names: Vec<&str> = panes.panes.iter().map(|p| p.name.as_str()).collect();
+    assert!(pane_names.contains(&"left"));
+    assert!(pane_names.contains(&"right"));
 
     teardown(shutdown_tx, client, task).await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
