@@ -244,6 +244,10 @@ includes pane path, attention state, published phase/status/queue/source, and
 runtime driver profile, cwd, or branch when those fields are available in the
 attach snapshot. Filtered lists are sorted by the selected metadata field.
 
+For reusable Pi, Codex, Claude Code, Gemini CLI, and Copilot CLI hook patterns,
+see `docs/operations/AGENT_NOTIFICATION_HOOKS.md` and the helper scripts in
+`tools/agent-hooks/`.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |
