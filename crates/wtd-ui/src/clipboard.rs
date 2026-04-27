@@ -68,6 +68,145 @@ pub fn extract_selection_text_at_offset(
     result
 }
 
+/// Extract a rectangular block selection without line-wise widening between
+/// start and end rows.
+pub fn extract_block_selection_text_at_offset(
+    screen: &ScreenBuffer,
+    selection: &TextSelection,
+    scrollback_offset: usize,
+) -> String {
+    let (sr, sc, er, ec) = selection.normalised();
+    let rows = screen.rows();
+    let cols = screen.cols();
+    let base_row = screen.scrollback_len().saturating_sub(scrollback_offset);
+    let col_start = sc.min(ec).min(cols.saturating_sub(1));
+    let col_end = sc.max(ec).min(cols.saturating_sub(1));
+    let mut result = String::new();
+
+    for row in sr..=er {
+        if row >= rows {
+            break;
+        }
+        let mut line = String::new();
+        for col in col_start..=col_end {
+            if let Some(cell) = screen.cell_at_virtual(base_row + row, col) {
+                if !cell.attrs.is_wide_continuation() {
+                    line.push_str(cell.text.as_str());
+                }
+            }
+        }
+        result.push_str(line.trim_end());
+        if row < er {
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
+/// Expand a cell position to a word-like selection on the same visual row.
+///
+/// Hyperlink cells expand to the whole contiguous hyperlink run. Otherwise WTD
+/// expands over Unicode-alphanumeric cells plus `_` and `-`. Wide-character
+/// continuation cells are mapped back to their base cell before expansion.
+pub fn expand_selection_to_word_at_offset(
+    screen: &ScreenBuffer,
+    row: usize,
+    col: usize,
+    scrollback_offset: usize,
+) -> Option<TextSelection> {
+    if row >= screen.rows() || col >= screen.cols() {
+        return None;
+    }
+    let base_row = screen.scrollback_len().saturating_sub(scrollback_offset) + row;
+    let col = base_col_for_virtual_cell(screen, base_row, col)?;
+    let class = selection_cell_class(screen, base_row, col)?;
+    if class == SelectionCellClass::Blank {
+        return None;
+    }
+
+    let mut start_col = col;
+    while start_col > 0
+        && base_col_for_virtual_cell(screen, base_row, start_col - 1)
+            .and_then(|candidate| selection_cell_class(screen, base_row, candidate))
+            == Some(class)
+    {
+        start_col -= 1;
+    }
+
+    let mut end_col = col;
+    while end_col + 1 < screen.cols()
+        && base_col_for_virtual_cell(screen, base_row, end_col + 1)
+            .and_then(|candidate| selection_cell_class(screen, base_row, candidate))
+            == Some(class)
+    {
+        end_col += 1;
+    }
+
+    Some(TextSelection {
+        start_row: row,
+        start_col,
+        end_row: row,
+        end_col,
+    })
+}
+
+/// Expand a row position to the complete visual line.
+pub fn expand_selection_to_line(screen: &ScreenBuffer, row: usize) -> Option<TextSelection> {
+    if row >= screen.rows() || screen.cols() == 0 {
+        return None;
+    }
+    Some(TextSelection {
+        start_row: row,
+        start_col: 0,
+        end_row: row,
+        end_col: screen.cols().saturating_sub(1),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionCellClass {
+    Blank,
+    Word,
+    Other(char),
+    Hyperlink(u16),
+}
+
+fn base_col_for_virtual_cell(screen: &ScreenBuffer, row: usize, col: usize) -> Option<usize> {
+    let cell = screen.cell_at_virtual(row, col)?;
+    if !cell.attrs.is_wide_continuation() {
+        return Some(col);
+    }
+    (0..col).rev().find(|candidate| {
+        screen
+            .cell_at_virtual(row, *candidate)
+            .is_some_and(|candidate_cell| candidate_cell.attrs.is_wide())
+    })
+}
+
+fn selection_cell_class(
+    screen: &ScreenBuffer,
+    row: usize,
+    col: usize,
+) -> Option<SelectionCellClass> {
+    let cell = screen.cell_at_virtual(row, col)?;
+    if cell.attrs.is_wide_continuation() {
+        return None;
+    }
+    if cell.hyperlink_id != 0 {
+        return Some(SelectionCellClass::Hyperlink(cell.hyperlink_id));
+    }
+    let text = cell.text.as_str();
+    let ch = text.chars().next().unwrap_or(' ');
+    if text.trim().is_empty() {
+        Some(SelectionCellClass::Blank)
+    } else if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+        Some(SelectionCellClass::Word)
+    } else {
+        Some(SelectionCellClass::Other(ch))
+    }
+}
+
 // ── VT stripping ────────────────────────────────────────────────────────────
 
 /// Strip ANSI/VT escape sequences from text.
@@ -468,6 +607,52 @@ mod tests {
             extract_selection_text_at_offset(&screen, &sel, 1),
             "22222\n33333"
         );
+    }
+
+    #[test]
+    fn expand_word_handles_wide_and_combining_cells() {
+        let mut screen = ScreenBuffer::new(16, 2, 0);
+        screen.advance("ab 界 e\u{301}clair".as_bytes());
+
+        let wide = expand_selection_to_word_at_offset(&screen, 0, 3, 0).unwrap();
+        assert_eq!(extract_selection_text(&screen, &wide), "界");
+
+        let combining = expand_selection_to_word_at_offset(&screen, 0, 6, 0).unwrap();
+        assert_eq!(extract_selection_text(&screen, &combining), "e\u{301}clair");
+    }
+
+    #[test]
+    fn expand_word_selects_contiguous_hyperlink_run() {
+        let mut screen = ScreenBuffer::new(20, 2, 0);
+        screen.advance(b"\x1b]8;;https://example.test\x07link\x1b]8;;\x07 plain");
+
+        let link = expand_selection_to_word_at_offset(&screen, 0, 2, 0).unwrap();
+        assert_eq!(extract_selection_text(&screen, &link), "link");
+        let first = screen.cell(0, 0).unwrap().hyperlink_id;
+        let last = screen.cell(0, 3).unwrap().hyperlink_id;
+        assert_ne!(first, 0);
+        assert_eq!(first, last);
+    }
+
+    #[test]
+    fn line_and_block_selection_have_distinct_scope() {
+        let mut screen = ScreenBuffer::new(8, 3, 0);
+        screen.advance(b"abcdef\r\n123456\r\nXYZ");
+
+        let line = expand_selection_to_line(&screen, 1).unwrap();
+        assert_eq!(extract_selection_text(&screen, &line), "123456");
+
+        let block = TextSelection {
+            start_row: 0,
+            start_col: 1,
+            end_row: 1,
+            end_col: 3,
+        };
+        assert_eq!(
+            extract_block_selection_text_at_offset(&screen, &block, 0),
+            "bcd\n234"
+        );
+        assert_eq!(extract_selection_text(&screen, &block), "bcdef\n1234");
     }
 
     // ── Win32 clipboard round-trip (integration) ────────────────────────

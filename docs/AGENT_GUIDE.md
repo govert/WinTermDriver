@@ -505,6 +505,13 @@ mark mode and Ctrl+Shift+A to select-all. In mark mode, arrow, Home/End, and
 PageUp/PageDown move the active selection endpoint; Enter or Escape exits mark
 mode without clearing the selection.
 
+Mouse selection uses the pane's parsed screen buffer, so copied text strips VT
+formatting and skips wide-character continuation cells. Selection primitives
+cover word expansion, full-line expansion, rectangular block extraction, and
+endpoint switching. If an application enables VT mouse tracking, WTD forwards
+mouse presses, drags, and wheel events to the application instead of treating
+them as local selection or scrollback gestures.
+
 In-pane search is available through `find`, `find-next`, and `find-prev`.
 Ctrl+Shift+F opens a prompt for the focused pane; matches are found across
 retained scrollback plus the visible screen, and the current match is highlighted

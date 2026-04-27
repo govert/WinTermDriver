@@ -200,7 +200,7 @@ WTD action.
 - `selectAll` — `select-all` (Ctrl+Shift+A)
 - `markMode` — `mark-mode` (Ctrl+Shift+M)
 - `switchSelectionEndpoint` — `switch-selection-endpoint` (command palette and tmux prefix+`s`)
-- `toggleBlockSelection` / `expandSelectionToWord` — Advanced selection still missing
+- `toggleBlockSelection` / `expandSelectionToWord` — Selection primitives exist for block, line, and word expansion; direct WT parity bindings are still omitted.
 
 **Scrollback** (line/page/top/bottom implemented as inline focused-pane navigation):
 - `scrollUp` / `scrollDown` — `scrollback-line-up` / `scrollback-line-down` (Ctrl+Shift+Up/Down)
