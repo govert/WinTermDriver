@@ -165,17 +165,17 @@ Client-to-host:
 | `Keys` | `target`, `keys` | Semantic key specs |
 | `Mouse` | `target`, `kind`, `col`, `row` | Semantic mouse input |
 | `PaneInput` | `target`, `data` | Base64 raw bytes |
-| `Capture` | `target` plus optional capture flags | Visible, scrollback, anchors, VT |
+| `Capture` | `target` plus optional capture flags | Visible, scrollback, anchors, VT; results include `processHealth` for managed panes |
 | `Scrollback` | `target`, `tail` | Tail scrollback |
 | `Follow` | `target`, `raw` | Streaming output |
 | `CancelFollow` | `id` | Cancels a follow request |
 | `Inspect` | `target` | Full pane/session metadata |
-| `WaitPane` | `target`, `condition`, optional `timeoutMs`, optional `pollMs`, optional `recentLines` | Waitable pane coordination |
+| `WaitPane` | `target`, `condition`, optional `timeoutMs`, optional `pollMs`, optional `recentLines` | Waitable pane coordination; snapshots include attention, metadata, recent output, and managed process health |
 | `ConfigurePane` | `target` plus optional driver fields | Prompt-driver metadata |
 | `Notify` | `target`, `state`, optional `message`, optional `source` | Set pane attention/status |
 | `ClearAttention` | `target` | Reset pane attention to `active` |
 | `SetPaneStatus` | `target` plus optional metadata fields | Publish pane phase/status/progress metadata |
-| `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/etc. |
+| `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/restart/etc.; `restart-session` restarts a managed pane session |
 | `SessionInput` | `workspace`, `sessionId`, `data` | UI raw input |
 | `PaneResize` | `paneId`, `cols`, `rows` | UI resize |
 | `FocusPane` | `paneId` | UI focus |
@@ -195,10 +195,10 @@ Host-to-client:
 | `ListInstancesResult` | Running instance summaries |
 | `ListPanesResult` | Pane summaries |
 | `ListSessionsResult` | Session summaries |
-| `CaptureResult` | Captured text/VT metadata |
+| `CaptureResult` | Captured text/VT metadata plus optional `processHealth` |
 | `ScrollbackResult` | Scrollback lines |
 | `InspectResult` | Full metadata JSON |
-| `WaitPaneResult` | Matched condition or timeout snapshot |
+| `WaitPaneResult` | Matched condition or timeout snapshot, including optional `processHealth` |
 | `InvokeActionResult` | Action outcome |
 | `FollowData` | Follow stream chunk |
 | `FollowEnd` | Follow stream end |
@@ -221,6 +221,25 @@ Host-to-client:
   "payload": {
     "target": "dev/server",
     "text": "Run the focused tests and summarize failures."
+  }
+}
+```
+
+### Agent Recovery
+
+Managed panes expose the same `processHealth` object in `InspectResult`,
+`CaptureResult`, and `WaitPaneResult.data`. Agents can inspect the state before
+prompting, include health context while polling with `wait`, and restart a
+failed managed pane through the action surface:
+
+```json
+{
+  "id": "restart-1",
+  "type": "InvokeAction",
+  "payload": {
+    "action": "restart-session",
+    "targetPaneId": "dev/server",
+    "args": {}
   }
 }
 ```

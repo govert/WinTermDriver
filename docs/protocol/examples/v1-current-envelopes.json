@@ -113,7 +113,21 @@
       "cursorRow": 29,
       "cursorCol": 0,
       "cursorVisible": true,
-      "cursorShape": "block"
+      "cursorShape": "block",
+      "processHealth": {
+        "managed": true,
+        "state": "running",
+        "restartPolicy": "never",
+        "restartAttempt": null,
+        "exitCode": null,
+        "error": null,
+        "resourceHints": {
+          "available": false,
+          "pid": null,
+          "cpuPercent": null,
+          "memoryBytes": null
+        }
+      }
     }
   },
   {
@@ -137,7 +151,21 @@
           "source": "codex"
         },
         "recentOutput": ["running test crate::integration ..."],
-        "stateChanged": false
+        "stateChanged": false,
+        "processHealth": {
+          "managed": true,
+          "state": "running",
+          "restartPolicy": "never",
+          "restartAttempt": null,
+          "exitCode": null,
+          "error": null,
+          "resourceHints": {
+            "available": false,
+            "pid": null,
+            "cpuPercent": null,
+            "memoryBytes": null
+          }
+        }
       }
     }
   },
@@ -159,7 +187,38 @@
       "rows": 30,
       "onAlternate": false,
       "mouseMode": "none",
-      "cursorShape": "block"
+      "cursorShape": "block",
+      "processHealth": {
+        "managed": true,
+        "state": "running",
+        "restartPolicy": "never",
+        "restartAttempt": null,
+        "exitCode": null,
+        "error": null,
+        "resourceHints": {
+          "available": false,
+          "pid": null,
+          "cpuPercent": null,
+          "memoryBytes": null
+        }
+      }
+    }
+  },
+  {
+    "id": "restart-1",
+    "type": "InvokeAction",
+    "payload": {
+      "action": "restart-session",
+      "targetPaneId": "dev/server",
+      "args": {}
+    }
+  },
+  {
+    "id": "restart-1",
+    "type": "InvokeActionResult",
+    "payload": {
+      "result": "ok",
+      "paneId": null
     }
   },
   {

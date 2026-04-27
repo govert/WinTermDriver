@@ -567,6 +567,11 @@ fn capture_result_roundtrip() {
         cursor_col: Some(7),
         cursor_visible: Some(true),
         cursor_shape: Some("block".into()),
+        process_health: Some(serde_json::json!({
+            "managed": true,
+            "state": "running",
+            "restartPolicy": "never"
+        })),
     });
 }
 
@@ -593,6 +598,7 @@ fn capture_result_with_anchor_roundtrip() {
         cursor_col: Some(42),
         cursor_visible: Some(false),
         cursor_shape: Some("bar".into()),
+        process_health: None,
     });
 }
 
@@ -619,6 +625,7 @@ fn capture_result_anchor_not_found_roundtrip() {
         cursor_col: Some(0),
         cursor_visible: Some(true),
         cursor_shape: Some("underline".into()),
+        process_health: None,
     });
 }
 
@@ -642,6 +649,7 @@ fn capture_result_count_mode_roundtrip() {
         cursor_col: None,
         cursor_visible: None,
         cursor_shape: None,
+        process_health: None,
     });
 }
 
@@ -659,6 +667,7 @@ fn capture_result_legacy_json_deserializes() {
     assert_eq!(result.rows, 0);
     assert!(!result.on_alternate);
     assert!(result.title.is_none());
+    assert!(result.process_health.is_none());
 }
 
 #[test]

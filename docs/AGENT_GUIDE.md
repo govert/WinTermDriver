@@ -256,6 +256,12 @@ policy, restart attempt when available, exit code or spawn error when relevant,
 and placeholder resource hints. CPU and memory hints are reported as unavailable
 until platform-specific sampling is added.
 
+Agent-facing `inspect`, JSON `capture`, and `wait` snapshots carry this same
+`processHealth` context for managed panes. Recovery should use the regular
+action surface: `wtd action <target> restart-session` restarts the pane's
+managed session from its original definition, while plain terminal panes without
+a managed session have no process to restart.
+
 In the UI, use the command palette actions `toggle-pane-metadata-list`,
 `filter-pane-list-attention`, `filter-pane-list-status`,
 `filter-pane-list-driver`, `filter-pane-list-cwd`, and
@@ -631,6 +637,9 @@ echo "$STATE" | jq '.sessions[] | select(.state != "running")'
 
 # Inspect a specific pane for health details
 wtd inspect myws/server --json | jq '.processHealth'
+
+# Poll a pane and keep recent output plus health context together
+wtd wait myws/server --for error --json | jq '.data | {processHealth, recentOutput}'
 ```
 
 Restart policies are configured per workspace:
@@ -682,6 +691,7 @@ sleep 1
 
 # If that doesn't work, restart the session via action
 wtd action myws/shell restart-session
+wtd wait myws/shell --for state-change --json | jq '.data.processHealth'
 
 # Nuclear option: recreate the entire workspace
 wtd open myws --recreate

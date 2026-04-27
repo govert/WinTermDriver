@@ -1146,6 +1146,26 @@ impl WorkspaceInstance {
         inst
     }
 
+    #[cfg(test)]
+    pub(crate) fn attach_test_session_by_pane_name(
+        &mut self,
+        pane_name: &str,
+        session: Session,
+    ) -> Option<SessionId> {
+        let pane_id = self
+            .panes
+            .iter()
+            .find_map(|(pane_id, record)| (record.name == pane_name).then_some(pane_id.clone()))?;
+        let session_id = session.id();
+        self.sessions.insert(session_id.clone(), session);
+        if let Some(record) = self.panes.get_mut(&pane_id) {
+            record.state = PaneState::Attached {
+                session_id: session_id.clone(),
+            };
+        }
+        Some(session_id)
+    }
+
     // ── Internal ─────────────────────────────────────────────────────────────
 
     fn tear_down(&mut self) {

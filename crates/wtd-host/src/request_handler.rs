@@ -1480,6 +1480,7 @@ impl HostRequestHandler {
                             cursor_col: metadata["cursorCol"].as_u64().map(|v| v as u16),
                             cursor_visible: metadata["cursorVisible"].as_bool(),
                             cursor_shape: metadata["cursorShape"].as_str().map(str::to_owned),
+                            process_health: Some(session_health_metadata(session)),
                         }
                     }
                     None => CaptureResult {
@@ -1500,6 +1501,7 @@ impl HostRequestHandler {
                         cursor_col: None,
                         cursor_visible: None,
                         cursor_shape: None,
+                        process_health: None,
                     },
                 }
             }
@@ -1521,6 +1523,7 @@ impl HostRequestHandler {
                 cursor_col: None,
                 cursor_visible: None,
                 cursor_shape: None,
+                process_health: None,
             },
         };
 
@@ -1633,7 +1636,7 @@ impl HostRequestHandler {
         let changed = initial_signature
             .map(|initial| initial != signature)
             .unwrap_or(false);
-        let data = serde_json::json!({
+        let mut data = serde_json::json!({
             "paneName": pane_name,
             "paneId": format!("{}", pane_id),
             "workspace": inst.name(),
@@ -1642,6 +1645,16 @@ impl HostRequestHandler {
             "recentOutput": recent_output,
             "stateChanged": changed,
         });
+        if let Some(PaneState::Attached { session_id }) = inst.pane_state(&pane_id) {
+            if let Some(session) = inst.session(session_id) {
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert(
+                        "processHealth".to_string(),
+                        session_health_metadata(session),
+                    );
+                }
+            }
+        }
         Ok((Some(signature), data))
     }
 
@@ -2562,8 +2575,8 @@ mod tests {
         PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
     };
     use wtd_ipc::message::{
-        AttentionState, ClearAttention, Inspect, InspectResult, Mouse, MouseButton, MouseKind,
-        Notify, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
+        AttentionState, Capture, CaptureResult, ClearAttention, Inspect, InspectResult, Mouse,
+        MouseButton, MouseKind, Notify, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
     };
     use wtd_pty::PtySize;
 
@@ -2620,6 +2633,36 @@ mod tests {
         assert_eq!(health["restartPolicy"], "on-failure");
         assert!(health["restartAttempt"].is_null());
         assert!(health["resourceHints"]["available"].as_bool() == Some(false));
+    }
+
+    #[test]
+    fn capture_result_includes_process_health_for_agents() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+
+        let response = handler
+            .handle_capture(
+                "capture-1",
+                &Capture {
+                    target: "alpha/main/shell".to_string(),
+                    count: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let result: CaptureResult = response.extract_payload().unwrap();
+
+        let health = result
+            .process_health
+            .expect("managed panes expose process health in capture");
+        assert_eq!(health["managed"], true);
+        assert_eq!(health["state"], "creating");
     }
 
     #[test]
@@ -2732,10 +2775,11 @@ mod tests {
         let handler = HostRequestHandler::new(GlobalSettings::default());
         {
             let mut state = handler.state.lock().unwrap();
-            state.workspaces.insert(
-                "alpha".to_string(),
-                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
-            );
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            inst.attach_test_session_by_pane_name("shell", test_session(RestartPolicy::Never))
+                .expect("test pane should exist");
+            state.workspaces.insert("alpha".to_string(), inst);
         }
 
         let response = handler.handle_notify(
@@ -2781,10 +2825,11 @@ mod tests {
         let handler = HostRequestHandler::new(GlobalSettings::default());
         {
             let mut state = handler.state.lock().unwrap();
-            state.workspaces.insert(
-                "alpha".to_string(),
-                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
-            );
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            inst.attach_test_session_by_pane_name("shell", test_session(RestartPolicy::Never))
+                .expect("test pane should exist");
+            state.workspaces.insert("alpha".to_string(), inst);
         }
 
         let response = handler.handle_set_pane_status(
@@ -2863,10 +2908,11 @@ mod tests {
         let handler = HostRequestHandler::new(GlobalSettings::default());
         {
             let mut state = handler.state.lock().unwrap();
-            state.workspaces.insert(
-                "alpha".to_string(),
-                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
-            );
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            inst.attach_test_session_by_pane_name("shell", test_session(RestartPolicy::Never))
+                .expect("test pane should exist");
+            state.workspaces.insert("alpha".to_string(), inst);
         }
 
         let response = handler
@@ -2886,6 +2932,8 @@ mod tests {
         assert_eq!(result.condition, WaitCondition::Error);
         assert_eq!(result.data["attention"]["state"], "active");
         assert!(result.data["metadata"].is_object());
+        assert_eq!(result.data["processHealth"]["managed"], true);
+        assert_eq!(result.data["processHealth"]["state"], "creating");
         assert!(result.data["recentOutput"].is_array());
     }
 

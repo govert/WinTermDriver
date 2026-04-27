@@ -893,6 +893,9 @@ pub struct CaptureResult {
     /// Current cursor shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_shape: Option<String>,
+    /// Managed process health for the captured pane, when backed by a WTD session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_health: Option<Value>,
 }
 impl_payload!(CaptureResult, "CaptureResult");
 

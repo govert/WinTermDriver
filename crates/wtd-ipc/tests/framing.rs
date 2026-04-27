@@ -116,6 +116,7 @@ fn oversize_message_rejected_on_encode() {
             cursor_col: None,
             cursor_visible: None,
             cursor_shape: None,
+            process_health: None,
         },
     );
 
