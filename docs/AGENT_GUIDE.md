@@ -203,6 +203,21 @@ For agent-aware panes, WTD also exports a capability-oriented contract:
 
 For full probe-driven compatibility diagnostics, see `docs/AGENT_HOST_COMPATIBILITY.md` and `tools/run-agent-host-diagnostics.ps1`.
 
+Hosted agents can publish pane attention and completion state for the UI and
+inspection tools:
+
+```bash
+wtd notify build-and-test/tests --source pi "input requested"
+wtd notify build-and-test/tests --state done --source codex "tests passed"
+wtd notify build-and-test/tests --state error --source codex "tests failed"
+wtd clear-attention build-and-test/tests
+```
+
+Attention states are `active`, `needs-attention`, `done`, and `error` in the
+CLI. The protocol uses snake_case (`needs_attention`). Terminal applications can
+also raise attention with OSC 9 or OSC 777 `notify` sequences; WTD records those
+as `needs_attention` from source `osc`.
+
 Built-in prompt driver profiles:
 
 | Profile | Submit key | Multiline strategy | Notes |

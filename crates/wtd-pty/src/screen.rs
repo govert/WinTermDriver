@@ -272,6 +272,12 @@ pub enum TerminalProgress {
     Warning(u8),
 }
 
+/// Notification requested by the application via OSC sequences.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalNotification {
+    pub message: String,
+}
+
 // ── CaptureExtendedResult ─────────────────────────────────────────────────────
 
 /// Result returned by [`ScreenBuffer::capture_extended`].
@@ -671,6 +677,9 @@ pub struct ScreenBuffer {
     /// Progress indicator state from OSC 9;4.
     progress: Option<TerminalProgress>,
 
+    /// Pending notifications from OSC 9 and OSC 777.
+    notifications: Vec<TerminalNotification>,
+
     /// Mouse tracking mode (DECSET 1000/1002/1003).
     mouse_mode: MouseMode,
     /// SGR extended mouse format (DECSET 1006).
@@ -718,6 +727,7 @@ impl ScreenBuffer {
             active_hyperlink_id: None,
             inline_images: Vec::new(),
             progress: None,
+            notifications: Vec::new(),
             mouse_mode: MouseMode::None,
             sgr_mouse: false,
             bracketed_paste: false,
@@ -756,6 +766,11 @@ impl ScreenBuffer {
     /// Current progress indicator requested by the application, if any.
     pub fn progress(&self) -> Option<TerminalProgress> {
         self.progress
+    }
+
+    /// Drain pending terminal notifications detected from OSC sequences.
+    pub fn drain_notifications(&mut self) -> Vec<TerminalNotification> {
+        std::mem::take(&mut self.notifications)
     }
 
     /// Current cursor state.
@@ -1930,6 +1945,43 @@ impl Perform for ScreenBuffer {
                     _ => self.progress,
                 };
                 self.progress = next_progress;
+                return;
+            }
+            if code_str == "9" && params.len() >= 2 {
+                if let Ok(message) = std::str::from_utf8(params[1]) {
+                    let message = message.trim();
+                    if !message.is_empty() {
+                        self.notifications.push(TerminalNotification {
+                            message: message.to_string(),
+                        });
+                    }
+                }
+                return;
+            }
+            if code_str == "777"
+                && params.len() >= 2
+                && std::str::from_utf8(params[1]).unwrap_or("") == "notify"
+            {
+                let message = match (params.get(2), params.get(3)) {
+                    (Some(title), Some(body)) => {
+                        let title = std::str::from_utf8(title).unwrap_or("").trim();
+                        let body = std::str::from_utf8(body).unwrap_or("").trim();
+                        match (title.is_empty(), body.is_empty()) {
+                            (true, true) => String::new(),
+                            (true, false) => body.to_string(),
+                            (false, true) => title.to_string(),
+                            (false, false) => format!("{title}: {body}"),
+                        }
+                    }
+                    (Some(message), None) => std::str::from_utf8(message)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                    _ => String::new(),
+                };
+                if !message.is_empty() {
+                    self.notifications.push(TerminalNotification { message });
+                }
             }
         }
     }
@@ -2290,6 +2342,27 @@ mod tests {
         feed(&mut b, "\x1b]9;4;4;75\x07");
         feed(&mut b, "\x1b]9;4;0\x07");
         assert_eq!(b.progress(), None);
+    }
+
+    #[test]
+    fn osc9_notification_can_be_drained() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]9;Tests complete\x07");
+
+        let notifications = b.drain_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].message, "Tests complete");
+        assert!(b.drain_notifications().is_empty());
+    }
+
+    #[test]
+    fn osc777_notify_combines_title_and_body() {
+        let mut b = buf(80, 24);
+        feed(&mut b, "\x1b]777;notify;Build;Failed\x07");
+
+        let notifications = b.drain_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].message, "Build: Failed");
     }
 
     // ── Wide characters ───────────────────────────────────────────────────────

@@ -326,6 +326,8 @@ impl RequestHandler for GateHandler {
                             name,
                             tab: tab.name().to_string(),
                             session_state,
+                            attention: AttentionState::Active,
+                            attention_message: None,
                         });
                     }
                 }

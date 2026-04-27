@@ -97,6 +97,8 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         Follow              => Follow,
         CancelFollow        => CancelFollow,
         Inspect             => Inspect,
+        Notify              => Notify,
+        ClearAttention      => ClearAttention,
         ConfigurePane       => ConfigurePane,
         InvokeAction        => InvokeAction,
         SessionInput        => SessionInput,
@@ -117,6 +119,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         CaptureResult       => CaptureResult,
         ScrollbackResult    => ScrollbackResult,
         InspectResult       => InspectResult,
+        AttentionChanged    => AttentionChanged,
         InvokeActionResult  => InvokeActionResult,
         FollowData          => FollowData,
         FollowEnd           => FollowEnd,
@@ -162,6 +165,8 @@ pub enum TypedMessage {
     Follow(Follow),
     CancelFollow(CancelFollow),
     Inspect(Inspect),
+    Notify(Notify),
+    ClearAttention(ClearAttention),
     ConfigurePane(ConfigurePane),
     InvokeAction(InvokeAction),
     SessionInput(SessionInput),
@@ -182,6 +187,7 @@ pub enum TypedMessage {
     CaptureResult(CaptureResult),
     ScrollbackResult(ScrollbackResult),
     InspectResult(InspectResult),
+    AttentionChanged(AttentionChanged),
     InvokeActionResult(InvokeActionResult),
     FollowData(FollowData),
     FollowEnd(FollowEnd),
@@ -475,6 +481,43 @@ pub struct Inspect {
 }
 impl_payload!(Inspect, "Inspect");
 
+/// Structured attention state for panes and workspaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionState {
+    Active,
+    NeedsAttention,
+    Done,
+    Error,
+}
+
+impl Default for AttentionState {
+    fn default() -> Self {
+        Self::Active
+    }
+}
+
+/// §13.14 — Publish an attention notification for a target pane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notify {
+    pub target: String,
+    pub state: AttentionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+impl_payload!(Notify, "Notify");
+
+/// §13.14 — Clear a target pane's attention state back to active.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearAttention {
+    pub target: String,
+}
+impl_payload!(ClearAttention, "ClearAttention");
+
 /// §13.14 — Update pane-local metadata such as prompt driver settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -675,6 +718,10 @@ pub struct PaneInfo {
     pub name: String,
     pub tab: String,
     pub session_state: String,
+    #[serde(default)]
+    pub attention: AttentionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attention_message: Option<String>,
 }
 
 /// §13.14 — List of sessions with metadata.
@@ -768,6 +815,21 @@ pub struct InspectResult {
     pub data: Value,
 }
 impl_payload!(InspectResult, "InspectResult");
+
+/// §13.13 — Pane or workspace attention changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttentionChanged {
+    pub workspace: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    pub state: AttentionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+impl_payload!(AttentionChanged, "AttentionChanged");
 
 /// Result of invoking an action (§18.1–18.3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

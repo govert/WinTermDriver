@@ -118,9 +118,15 @@ impl HostRequestHandler {
         events.append(&mut state.pending_broadcasts);
 
         for (workspace_name, inst) in state.workspaces.iter_mut() {
-            for (session_id, session) in inst.sessions_mut().iter_mut() {
+            let session_ids: Vec<SessionId> = inst.sessions().keys().cloned().collect();
+            for session_id in session_ids {
                 let sid = format!("{}", session_id.0);
                 let scope_key = scoped_session_key(workspace_name, &sid);
+                let pane_id = inst.pane_for_session(&session_id);
+
+                let Some(session) = inst.session_mut(&session_id) else {
+                    continue;
+                };
 
                 // Drain output and feed to screen buffer.
                 let raw_bytes = session.process_pending_output_collecting();
@@ -166,6 +172,31 @@ impl HostRequestHandler {
                         new_state: "exited".to_string(),
                         exit_code: Some(exit_code as i32),
                     });
+                }
+
+                let notifications = session.screen_mut().drain_notifications();
+                if let Some(pane_id) = pane_id {
+                    for notification in notifications {
+                        let message = Some(notification.message);
+                        let source = Some("osc".to_string());
+                        if inst
+                            .set_pane_attention(
+                                &pane_id,
+                                AttentionState::NeedsAttention,
+                                message.clone(),
+                                source.clone(),
+                            )
+                            .is_ok()
+                        {
+                            events.push(BroadcastEvent::AttentionChange {
+                                workspace: workspace_name.clone(),
+                                pane_id: Some(format!("{}", pane_id.0)),
+                                state: AttentionState::NeedsAttention,
+                                message,
+                                source,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -617,6 +648,10 @@ impl RequestHandler for HostRequestHandler {
                 self.handle_configure_pane(&envelope.id, configure)
             }
 
+            TypedMessage::Notify(notify) => self.handle_notify(&envelope.id, notify),
+
+            TypedMessage::ClearAttention(clear) => self.handle_clear_attention(&envelope.id, clear),
+
             TypedMessage::InvokeAction(action) => self.handle_invoke_action(&envelope.id, action),
 
             TypedMessage::SessionInput(input) => {
@@ -945,10 +980,13 @@ impl HostRequestHandler {
                     }
                     None => "none".to_string(),
                 };
+                let attention = inst.pane_attention(&pane_id).cloned().unwrap_or_default();
                 panes.push(PaneInfo {
                     name,
                     tab: tab.name().to_string(),
                     session_state,
+                    attention: attention.state,
+                    attention_message: attention.message,
                 });
             }
         }
@@ -1499,6 +1537,13 @@ impl HostRequestHandler {
         };
         if let Some(obj) = data.as_object_mut() {
             obj.insert("sessionState".to_string(), Value::String(session_state));
+            if let Some(attention) = inst.pane_attention(&pane_id) {
+                obj.insert(
+                    "attention".to_string(),
+                    serde_json::to_value(attention)
+                        .unwrap_or_else(|_| serde_json::json!({ "state": "active" })),
+                );
+            }
             if let Some(driver) = inst.pane_driver(&pane_id) {
                 obj.insert(
                     "driverProfile".to_string(),
@@ -1520,6 +1565,97 @@ impl HostRequestHandler {
         }
 
         Some(Envelope::new(id, &InspectResult { data }))
+    }
+
+    fn handle_notify(&self, id: &str, notify: &Notify) -> Option<Envelope> {
+        let mut state = self.lock_state();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &notify.target) {
+                Some((workspace_name, pane_id)) => (workspace_name, pane_id),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", notify.target),
+                    ));
+                }
+            };
+
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
+
+        match inst.set_pane_attention(
+            &pane_id,
+            notify.state,
+            notify.message.clone(),
+            notify.source.clone(),
+        ) {
+            Ok(record) => {
+                state
+                    .pending_broadcasts
+                    .push(BroadcastEvent::AttentionChange {
+                        workspace: workspace_name,
+                        pane_id: Some(format!("{}", pane_id.0)),
+                        state: record.state,
+                        message: record.message,
+                        source: record.source,
+                    });
+                Some(Envelope::new(id, &OkResponse {}))
+            }
+            Err(e) => Some(error_envelope(
+                id,
+                ErrorCode::InternalError,
+                &format!("failed to set attention: {}", e),
+            )),
+        }
+    }
+
+    fn handle_clear_attention(&self, id: &str, clear: &ClearAttention) -> Option<Envelope> {
+        let mut state = self.lock_state();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &clear.target) {
+                Some((workspace_name, pane_id)) => (workspace_name, pane_id),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", clear.target),
+                    ));
+                }
+            };
+
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
+
+        match inst.clear_pane_attention(&pane_id) {
+            Ok(record) => {
+                state
+                    .pending_broadcasts
+                    .push(BroadcastEvent::AttentionChange {
+                        workspace: workspace_name,
+                        pane_id: Some(format!("{}", pane_id.0)),
+                        state: record.state,
+                        message: record.message,
+                        source: record.source,
+                    });
+                Some(Envelope::new(id, &OkResponse {}))
+            }
+            Err(e) => Some(error_envelope(
+                id,
+                ErrorCode::InternalError,
+                &format!("failed to clear attention: {}", e),
+            )),
+        }
     }
 
     fn handle_configure_pane(&self, id: &str, configure: &ConfigurePane) -> Option<Envelope> {
@@ -2153,7 +2289,7 @@ mod tests {
     use wtd_core::workspace::{
         PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
     };
-    use wtd_ipc::message::{Mouse, MouseButton, MouseKind};
+    use wtd_ipc::message::{AttentionState, ClearAttention, Mouse, MouseButton, MouseKind, Notify};
 
     fn encode_b64(input: &[u8]) -> String {
         const CHARS: &[u8; 64] =
@@ -2283,6 +2419,55 @@ mod tests {
     fn scoped_session_key_includes_workspace_namespace() {
         assert_eq!(scoped_session_key("dev", "1"), "dev:1");
         assert_eq!(scoped_session_key("ops", "1"), "ops:1");
+    }
+
+    #[test]
+    fn notify_and_clear_attention_update_pane_state_and_broadcast() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+
+        let response = handler.handle_notify(
+            "notify-1",
+            &Notify {
+                target: "alpha/main/shell".to_string(),
+                state: AttentionState::NeedsAttention,
+                message: Some("input requested".to_string()),
+                source: Some("pi".to_string()),
+            },
+        );
+        assert!(response.is_some());
+
+        {
+            let state = handler.state.lock().unwrap();
+            let inst = state.workspaces.get("alpha").unwrap();
+            let pane_id = inst.find_pane_by_name("shell").unwrap();
+            let attention = inst.pane_attention(&pane_id).unwrap();
+            assert_eq!(attention.state, AttentionState::NeedsAttention);
+            assert_eq!(attention.message.as_deref(), Some("input requested"));
+            assert_eq!(state.pending_broadcasts.len(), 1);
+        }
+
+        let response = handler.handle_clear_attention(
+            "clear-1",
+            &ClearAttention {
+                target: "shell".to_string(),
+            },
+        );
+        assert!(response.is_some());
+
+        let state = handler.state.lock().unwrap();
+        let inst = state.workspaces.get("alpha").unwrap();
+        let pane_id = inst.find_pane_by_name("shell").unwrap();
+        let attention = inst.pane_attention(&pane_id).unwrap();
+        assert_eq!(attention.state, AttentionState::Active);
+        assert!(attention.message.is_none());
+        assert_eq!(state.pending_broadcasts.len(), 2);
     }
 
     fn single_session_workspace(

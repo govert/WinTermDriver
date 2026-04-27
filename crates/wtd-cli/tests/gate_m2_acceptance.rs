@@ -297,6 +297,8 @@ impl RequestHandler for M2Handler {
                             name,
                             tab: tab.name().to_string(),
                             session_state,
+                            attention: AttentionState::Active,
+                            attention_message: None,
                         });
                     }
                 }

@@ -12,6 +12,7 @@ use windows::core::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use wtd_ipc::message::AttentionState;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ const STATE_RUNNING_COLOR: (u8, u8, u8) = (100, 200, 120);
 const STATE_EXITED_COLOR: (u8, u8, u8) = (200, 170, 80);
 const STATE_FAILED_COLOR: (u8, u8, u8) = (204, 120, 120); // matches failed pane msg color
 const STATE_CREATING_COLOR: (u8, u8, u8) = (180, 180, 180);
+const ATTENTION_COLOR: (u8, u8, u8) = (220, 190, 80);
 const PREFIX_BG: (u8, u8, u8) = (78, 201, 176); // accent bg
 const PREFIX_TEXT: (u8, u8, u8) = (20, 20, 30); // dark text on accent bg
 const PREFIX_PADDING_H: f32 = 6.0;
@@ -71,6 +73,19 @@ impl SessionStatus {
     }
 }
 
+fn attention_label(state: AttentionState, message: Option<&str>) -> Option<String> {
+    let base = match state {
+        AttentionState::Active => return None,
+        AttentionState::NeedsAttention => "needs attention",
+        AttentionState::Done => "done",
+        AttentionState::Error => "error",
+    };
+    match message.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(message) => Some(format!("{base}: {message}")),
+        None => Some(base.to_string()),
+    }
+}
+
 // ── StatusBar ────────────────────────────────────────────────────────────────
 
 /// Bottom status bar: workspace name, pane path, prefix indicator, session state.
@@ -78,6 +93,8 @@ pub struct StatusBar {
     workspace_name: String,
     pane_path: String,
     session_status: SessionStatus,
+    attention_state: AttentionState,
+    attention_message: Option<String>,
     prefix_active: bool,
     prefix_label: String,
     available_width: f32,
@@ -130,6 +147,8 @@ impl StatusBar {
             workspace_name: String::new(),
             pane_path: String::new(),
             session_status: SessionStatus::Running,
+            attention_state: AttentionState::Active,
+            attention_message: None,
             prefix_active: false,
             prefix_label: "PREFIX".to_string(),
             available_width: 0.0,
@@ -177,6 +196,17 @@ impl StatusBar {
     /// Get the current session status.
     pub fn session_status(&self) -> &SessionStatus {
         &self.session_status
+    }
+
+    /// Set attention/status for the focused pane.
+    pub fn set_attention(&mut self, state: AttentionState, message: Option<String>) {
+        self.attention_state = state;
+        self.attention_message = message;
+    }
+
+    /// Get the focused pane attention state.
+    pub fn attention_state(&self) -> AttentionState {
+        self.attention_state
     }
 
     /// Show or hide the prefix-active indicator.
@@ -256,7 +286,7 @@ impl StatusBar {
             }
 
             // 4. Session state (right-aligned)
-            let state_label = self.session_status.label();
+            let state_label = self.combined_state_label();
             let state_width = self.measure_text_with(&state_label, &self.tf_regular);
             let state_x = (width - PADDING_H - state_width).max(x);
 
@@ -271,7 +301,7 @@ impl StatusBar {
                 state_x,
                 y,
                 &self.tf_regular,
-                self.session_status.color(),
+                self.combined_state_color(),
             )?;
         }
 
@@ -279,6 +309,25 @@ impl StatusBar {
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    fn combined_state_label(&self) -> String {
+        let session = self.session_status.label();
+        let Some(attention) =
+            attention_label(self.attention_state, self.attention_message.as_deref())
+        else {
+            return session;
+        };
+        format!("{attention} · {session}")
+    }
+
+    fn combined_state_color(&self) -> (u8, u8, u8) {
+        match self.attention_state {
+            AttentionState::Error => STATE_FAILED_COLOR,
+            AttentionState::NeedsAttention => ATTENTION_COLOR,
+            AttentionState::Done => STATE_RUNNING_COLOR,
+            AttentionState::Active => self.session_status.color(),
+        }
+    }
 
     /// Draw text and return the width consumed.
     unsafe fn draw_text(
@@ -445,6 +494,21 @@ mod tests {
             bar.session_status(),
             &SessionStatus::Exited { exit_code: 1 }
         );
+    }
+
+    #[test]
+    fn set_attention_updates_combined_state() {
+        let mut bar = make_bar();
+        bar.set_attention(
+            AttentionState::NeedsAttention,
+            Some("input requested".to_string()),
+        );
+        assert_eq!(bar.attention_state(), AttentionState::NeedsAttention);
+        assert_eq!(
+            bar.combined_state_label(),
+            "needs attention: input requested · running"
+        );
+        assert_eq!(bar.combined_state_color(), ATTENTION_COLOR);
     }
 
     #[test]

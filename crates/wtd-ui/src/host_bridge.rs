@@ -9,7 +9,8 @@ use std::sync::mpsc;
 
 use serde_json::Value;
 use wtd_ipc::message::{
-    self, AttachWorkspace, AttachWorkspaceResult, ErrorResponse, MessagePayload, ProgressInfo,
+    self, AttachWorkspace, AttachWorkspaceResult, AttentionState, ErrorResponse, MessagePayload,
+    ProgressInfo,
 };
 use wtd_ipc::{parse_envelope, Envelope, TypedMessage};
 
@@ -46,6 +47,14 @@ pub enum HostEvent {
         workspace: String,
         session_id: String,
         progress: Option<ProgressInfo>,
+    },
+    /// A pane or workspace attention state changed.
+    AttentionChanged {
+        workspace: String,
+        pane_id: Option<String>,
+        state: AttentionState,
+        message: Option<String>,
+        source: Option<String>,
     },
     /// The layout tree for a tab changed.
     LayoutChanged {
@@ -435,6 +444,18 @@ fn envelope_to_event(attached_workspace: &str, envelope: &Envelope) -> Option<Ho
                 progress: pc.progress,
             })
         }
+        TypedMessage::AttentionChanged(ac) => {
+            if ac.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::AttentionChanged {
+                workspace: ac.workspace,
+                pane_id: ac.pane_id,
+                state: ac.state,
+                message: ac.message,
+                source: ac.source,
+            })
+        }
         TypedMessage::LayoutChanged(lc) => {
             if lc.workspace != attached_workspace {
                 return None;
@@ -709,6 +730,37 @@ mod tests {
                 assert_eq!(title, "bash");
             }
             _ => panic!("expected TitleChanged"),
+        }
+    }
+
+    #[test]
+    fn envelope_to_event_attention_changed() {
+        let envelope = Envelope::new(
+            "test-attention",
+            &message::AttentionChanged {
+                workspace: "dev".into(),
+                pane_id: Some("11".into()),
+                state: AttentionState::Done,
+                message: Some("tests passed".into()),
+                source: Some("codex".into()),
+            },
+        );
+        let event = envelope_to_event("dev", &envelope).unwrap();
+        match event {
+            HostEvent::AttentionChanged {
+                workspace,
+                pane_id,
+                state,
+                message,
+                source,
+            } => {
+                assert_eq!(workspace, "dev");
+                assert_eq!(pane_id.as_deref(), Some("11"));
+                assert_eq!(state, AttentionState::Done);
+                assert_eq!(message.as_deref(), Some("tests passed"));
+                assert_eq!(source.as_deref(), Some("codex"));
+            }
+            _ => panic!("expected AttentionChanged"),
         }
     }
 

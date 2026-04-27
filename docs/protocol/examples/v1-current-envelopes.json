@@ -43,6 +43,23 @@
     }
   },
   {
+    "id": "notify-1",
+    "type": "Notify",
+    "payload": {
+      "target": "dev/server",
+      "state": "needs_attention",
+      "message": "input requested",
+      "source": "pi"
+    }
+  },
+  {
+    "id": "clear-attention-1",
+    "type": "ClearAttention",
+    "payload": {
+      "target": "dev/server"
+    }
+  },
+  {
     "id": "action-1",
     "type": "InvokeAction",
     "payload": {
@@ -88,6 +105,9 @@
       "driverProfile": "codex",
       "submitKey": "Enter",
       "softBreakKey": null,
+      "attention": {
+        "state": "active"
+      },
       "cols": 120,
       "rows": 30,
       "onAlternate": false,
@@ -101,6 +121,17 @@
     "payload": {
       "result": "pane-created",
       "paneId": "2"
+    }
+  },
+  {
+    "id": "evt-42",
+    "type": "AttentionChanged",
+    "payload": {
+      "workspace": "dev",
+      "paneId": "1",
+      "state": "done",
+      "message": "tests passed",
+      "source": "codex"
     }
   },
   {

@@ -4,17 +4,20 @@ use serde_json::Value;
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
 use wtd_core::workspace::PaneNode;
-use wtd_ipc::message::ProgressInfo;
+use wtd_ipc::message::{AttentionState, ProgressInfo};
 use wtd_pty::ScreenBuffer;
 
 /// Session mapping: pane ID -> session ID/path pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneSession {
+    pub host_pane_id: Option<String>,
     pub session_id: String,
     pub pane_path: String,
     pub title: Option<String>,
     pub session_size: Option<(u16, u16)>,
     pub progress: Option<ProgressInfo>,
+    pub attention: AttentionState,
+    pub attention_message: Option<String>,
 }
 
 /// Snapshot of one tab after attach.
@@ -53,6 +56,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let session_sizes = state["sessionSizes"].as_object();
     let session_titles = state["sessionTitles"].as_object();
     let session_progress = state["sessionProgress"].as_object();
+    let pane_attention = state["paneAttention"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
     for tab in tabs {
@@ -131,6 +135,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                             pane_sessions.insert(
                                 ui_pane_id.clone(),
                                 PaneSession {
+                                    host_pane_id: Some(host_pane_key.clone()),
                                     progress: session_progress
                                         .and_then(|progress_map| progress_map.get(&session_id))
                                         .and_then(|value| {
@@ -141,6 +146,19 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                     pane_path: format!("{workspace_name}/{tab_name}/{pane_name}",),
                                     title: session_title,
                                     session_size,
+                                    attention: pane_attention
+                                        .and_then(|attention_map| attention_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("state"))
+                                        .and_then(|value| {
+                                            serde_json::from_value::<AttentionState>(value.clone())
+                                                .ok()
+                                        })
+                                        .unwrap_or(AttentionState::Active),
+                                    attention_message: pane_attention
+                                        .and_then(|attention_map| attention_map.get(&host_pane_key))
+                                        .and_then(|value| value.get("message"))
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_string),
                                 },
                             );
                         }
@@ -278,6 +296,13 @@ mod tests {
                     "type": "attached",
                     "sessionId": 21
                 }
+            },
+            "paneAttention": {
+                "11": {
+                    "state": "needs_attention",
+                    "message": "review requested",
+                    "source": "pi"
+                }
             }
         });
 
@@ -293,7 +318,10 @@ mod tests {
         assert_eq!(rebuilt.tab_names, vec!["main"]);
         assert_eq!(rebuilt.active_tab_index, 0);
         assert_eq!(ps.session_id, "21");
+        assert_eq!(ps.host_pane_id.as_deref(), Some("11"));
         assert_eq!(ps.pane_path, "dev/main/shell");
+        assert_eq!(ps.attention, AttentionState::NeedsAttention);
+        assert_eq!(ps.attention_message.as_deref(), Some("review requested"));
         assert!(tab.screens.contains_key(&focused));
     }
 

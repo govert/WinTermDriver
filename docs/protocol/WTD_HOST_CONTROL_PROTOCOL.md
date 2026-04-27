@@ -114,6 +114,8 @@ Human-facing commands map to protocol messages as follows:
 | `wtd inspect <target>` | `Inspect` |
 | `wtd configure-pane <target>` | `ConfigurePane` |
 | `wtd action <target> <action>` | `InvokeAction` |
+| `wtd notify <target> [--state <state>] [--source <source>] [message]` | `Notify` |
+| `wtd clear-attention <target>` | `ClearAttention` |
 
 ## Current Messages
 
@@ -142,6 +144,8 @@ Client-to-host:
 | `CancelFollow` | `id` | Cancels a follow request |
 | `Inspect` | `target` | Full pane/session metadata |
 | `ConfigurePane` | `target` plus optional driver fields | Prompt-driver metadata |
+| `Notify` | `target`, `state`, optional `message`, optional `source` | Set pane attention/status |
+| `ClearAttention` | `target` | Reset pane attention to `active` |
 | `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/etc. |
 | `SessionInput` | `workspace`, `sessionId`, `data` | UI raw input |
 | `PaneResize` | `paneId`, `cols`, `rows` | UI resize |
@@ -172,6 +176,7 @@ Host-to-client:
 | `SessionStateChanged` | UI session state event |
 | `TitleChanged` | UI title event |
 | `ProgressChanged` | UI OSC progress event |
+| `AttentionChanged` | UI attention/status event |
 | `LayoutChanged` | UI layout event |
 | `WorkspaceStateChanged` | UI workspace state event |
 
@@ -255,6 +260,28 @@ Successful pane creation returns:
 }
 ```
 
+### Attention And Completion
+
+Hosted agents can publish pane attention state directly:
+
+```json
+{
+  "id": "notify-1",
+  "type": "Notify",
+  "payload": {
+    "target": "dev/server",
+    "state": "needs_attention",
+    "message": "input requested",
+    "source": "pi"
+  }
+}
+```
+
+Accepted states are `active`, `needs_attention`, `done`, and `error`.
+`ClearAttention` is equivalent to setting `active` with no message. The host
+also ingests terminal notifications from OSC 9 and OSC 777 `notify` sequences as
+`needs_attention` with source `osc`.
+
 ### CLI Timeout
 
 Request timeout is enforced by the CLI client, not by the host protocol. The
@@ -264,12 +291,11 @@ snapshots for pane coordination.
 
 ## Planned Agent Coordination Messages
 
-The following messages are reserved for upcoming beads and are not accepted by
-the current `wtd-ipc` dispatcher yet:
+The following messages remain reserved for upcoming beads and are not accepted
+by the current `wtd-ipc` dispatcher yet:
 
 | Planned type | CLI shape | Purpose |
 |--------------|-----------|---------|
-| `Notify` | `wtd notify <target> ...` | Publish an attention notification |
 | `SetPaneStatus` | `wtd status <target> ...` | Publish status text/progress/phase |
 | `WaitPane` | `wtd wait <target> --for <condition>` | Wait for idle/done/error/attention/queue-empty |
 

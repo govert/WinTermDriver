@@ -168,6 +168,10 @@ impl Session {
         &self.screen
     }
 
+    pub fn screen_mut(&mut self) -> &mut ScreenBuffer {
+        &mut self.screen
+    }
+
     pub fn config(&self) -> &SessionConfig {
         &self.config
     }

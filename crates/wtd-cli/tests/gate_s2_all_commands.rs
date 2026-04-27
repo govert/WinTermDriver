@@ -433,6 +433,8 @@ impl RequestHandler for S2Handler {
                             name,
                             tab: tab.name().to_string(),
                             session_state,
+                            attention: AttentionState::Active,
+                            attention_message: None,
                         });
                     }
                 }

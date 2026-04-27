@@ -509,11 +509,15 @@ fn list_panes_result_roundtrip() {
                 name: "editor".into(),
                 tab: "backend".into(),
                 session_state: "running".into(),
+                attention: AttentionState::Active,
+                attention_message: None,
             },
             PaneInfo {
                 name: "server".into(),
                 tab: "backend".into(),
                 session_state: "running".into(),
+                attention: AttentionState::NeedsAttention,
+                attention_message: Some("review needed".into()),
             },
         ],
     });
@@ -742,6 +746,34 @@ fn progress_changed_roundtrip() {
 }
 
 #[test]
+fn notify_roundtrip() {
+    roundtrip(Notify {
+        target: "dev/main/server".into(),
+        state: AttentionState::NeedsAttention,
+        message: Some("input requested".into()),
+        source: Some("pi".into()),
+    });
+}
+
+#[test]
+fn clear_attention_roundtrip() {
+    roundtrip(ClearAttention {
+        target: "dev/main/server".into(),
+    });
+}
+
+#[test]
+fn attention_changed_roundtrip() {
+    roundtrip(AttentionChanged {
+        workspace: "dev".into(),
+        pane_id: Some("11".into()),
+        state: AttentionState::Done,
+        message: Some("tests passed".into()),
+        source: Some("codex".into()),
+    });
+}
+
+#[test]
 fn layout_changed_roundtrip() {
     roundtrip(LayoutChanged {
         workspace: "dev".into(),
@@ -810,6 +842,31 @@ fn parse_envelope_dispatches_all_types() {
     );
     let parsed = parse_envelope(&env).unwrap();
     assert!(matches!(parsed, TypedMessage::SessionOutput(_)));
+
+    let env = Envelope::new(
+        "id-4",
+        &Notify {
+            target: "dev/main/server".into(),
+            state: AttentionState::Done,
+            message: None,
+            source: None,
+        },
+    );
+    let parsed = parse_envelope(&env).unwrap();
+    assert!(matches!(parsed, TypedMessage::Notify(_)));
+
+    let env = Envelope::new(
+        "id-5",
+        &AttentionChanged {
+            workspace: "dev".into(),
+            pane_id: Some("1".into()),
+            state: AttentionState::Error,
+            message: Some("failed".into()),
+            source: None,
+        },
+    );
+    let parsed = parse_envelope(&env).unwrap();
+    assert!(matches!(parsed, TypedMessage::AttentionChanged(_)));
 }
 
 #[test]

@@ -159,6 +159,26 @@ pub enum Command {
         args: Vec<String>,
     },
 
+    /// Publish pane attention/status for hosted agents.
+    Notify {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Attention state to publish.
+        #[arg(long, value_enum, default_value_t = AttentionStateArg::NeedsAttention)]
+        state: AttentionStateArg,
+        /// Source identifier for the publishing agent/tool.
+        #[arg(long)]
+        source: Option<String>,
+        /// Optional status or completion message.
+        message: Option<String>,
+    },
+
+    /// Clear pane attention/status.
+    ClearAttention {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+    },
+
     // ── Input commands ──────────────────────────────────────────────
     /// Send low-level text to a session.
     ///
@@ -380,6 +400,14 @@ pub enum DriverProfileArg {
     ClaudeCode,
     GeminiCli,
     CopilotCli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AttentionStateArg {
+    Active,
+    NeedsAttention,
+    Done,
+    Error,
 }
 
 /// Generate shell completions and write them to stdout.
@@ -1056,6 +1084,56 @@ mod tests {
         assert!(
             matches!(cli.command, Some(Command::Inspect { ref target }) if target == "dev/server")
         );
+    }
+
+    #[test]
+    fn notify_defaults_to_needs_attention() {
+        let cli = parse(&["notify", "dev/server", "input requested"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Notify {
+                ref target,
+                state: AttentionStateArg::NeedsAttention,
+                ref source,
+                ref message,
+            }) if target == "dev/server"
+                && source.is_none()
+                && message.as_deref() == Some("input requested")
+        ));
+    }
+
+    #[test]
+    fn notify_accepts_done_and_source() {
+        let cli = parse(&[
+            "notify",
+            "dev/server",
+            "--state",
+            "done",
+            "--source",
+            "codex",
+            "tests passed",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Notify {
+                ref target,
+                state: AttentionStateArg::Done,
+                ref source,
+                ref message,
+            }) if target == "dev/server"
+                && source.as_deref() == Some("codex")
+                && message.as_deref() == Some("tests passed")
+        ));
+    }
+
+    #[test]
+    fn clear_attention_basic() {
+        let cli = parse(&["clear-attention", "dev/server"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::ClearAttention { ref target }) if target == "dev/server"
+        ));
     }
 
     // ── Host management commands ────────────────────────────────

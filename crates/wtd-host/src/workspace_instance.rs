@@ -14,6 +14,7 @@ use wtd_core::workspace::{
     TabDefinition, TerminalSizeDefinition, WorkspaceDefinition,
 };
 use wtd_core::{resolve_launch_spec, ResolveError};
+use wtd_ipc::message::AttentionState;
 use wtd_pty::PtySize;
 
 use crate::output_broadcaster::progress_info_from_screen;
@@ -120,6 +121,27 @@ struct PaneRecord {
     state: PaneState,
     original_def: Option<SessionLaunchDefinition>,
     driver: EffectivePaneDriver,
+    attention: AttentionRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttentionRecord {
+    pub state: AttentionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+impl Default for AttentionRecord {
+    fn default() -> Self {
+        Self {
+            state: AttentionState::Active,
+            message: None,
+            source: None,
+        }
+    }
 }
 
 // ── WorkspaceInstance ───────────────────────────────────────────────────────
@@ -218,6 +240,12 @@ impl WorkspaceInstance {
                 .iter()
                 .map(|(id, rec)| (id.clone(), rec.state.clone()))
                 .collect(),
+            pane_attention: self
+                .panes
+                .iter()
+                .map(|(id, rec)| (id.clone(), rec.attention.clone()))
+                .collect(),
+            workspace_attention: self.workspace_attention(),
             session_states: self
                 .sessions
                 .iter()
@@ -396,6 +424,67 @@ impl WorkspaceInstance {
         self.panes.get(id).map(|r| &r.driver)
     }
 
+    pub fn pane_for_session(&self, session_id: &SessionId) -> Option<PaneId> {
+        self.panes
+            .iter()
+            .find_map(|(pane_id, rec)| match &rec.state {
+                PaneState::Attached {
+                    session_id: pane_session_id,
+                } if pane_session_id == session_id => Some(pane_id.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn pane_attention(&self, id: &PaneId) -> Option<&AttentionRecord> {
+        self.panes.get(id).map(|r| &r.attention)
+    }
+
+    pub fn workspace_attention(&self) -> AttentionRecord {
+        let mut aggregate = AttentionRecord::default();
+        for rec in self.panes.values() {
+            match rec.attention.state {
+                AttentionState::Error => return rec.attention.clone(),
+                AttentionState::NeedsAttention => {
+                    if aggregate.state != AttentionState::NeedsAttention {
+                        aggregate = rec.attention.clone();
+                    }
+                }
+                AttentionState::Done => {
+                    if aggregate.state == AttentionState::Active {
+                        aggregate = rec.attention.clone();
+                    }
+                }
+                AttentionState::Active => {}
+            }
+        }
+        aggregate
+    }
+
+    pub fn set_pane_attention(
+        &mut self,
+        pane_id: &PaneId,
+        state: AttentionState,
+        message: Option<String>,
+        source: Option<String>,
+    ) -> Result<AttentionRecord, WorkspaceError> {
+        let Some(rec) = self.panes.get_mut(pane_id) else {
+            return Err(WorkspaceError::PaneNotFound(format!("{}", pane_id.0)));
+        };
+        rec.attention = AttentionRecord {
+            state,
+            message,
+            source,
+        };
+        Ok(rec.attention.clone())
+    }
+
+    pub fn clear_pane_attention(
+        &mut self,
+        pane_id: &PaneId,
+    ) -> Result<AttentionRecord, WorkspaceError> {
+        self.set_pane_attention(pane_id, AttentionState::Active, None, None)
+    }
+
     pub fn pane_original_def(&self, id: &PaneId) -> Option<&Option<SessionLaunchDefinition>> {
         self.panes.get(id).map(|r| &r.original_def)
     }
@@ -451,6 +540,7 @@ impl WorkspaceInstance {
                 },
                 original_def: None,
                 driver: resolve_pane_driver(None, None),
+                attention: AttentionRecord::default(),
             },
         );
         self.tabs.push(TabInstance {
@@ -749,6 +839,7 @@ impl WorkspaceInstance {
                         },
                         original_def: Some(session_def),
                         driver,
+                        attention: AttentionRecord::default(),
                     },
                 );
                 return;
@@ -808,6 +899,7 @@ impl WorkspaceInstance {
                         },
                         original_def: Some(session_def.clone()),
                         driver,
+                        attention: AttentionRecord::default(),
                     },
                 );
             }
@@ -821,6 +913,7 @@ impl WorkspaceInstance {
                         },
                         original_def: Some(session_def.clone()),
                         driver,
+                        attention: AttentionRecord::default(),
                     },
                 );
             }
@@ -866,6 +959,7 @@ impl WorkspaceInstance {
                 },
                 original_def: None,
                 driver: resolve_pane_driver(None, None),
+                attention: AttentionRecord::default(),
             },
         );
 
@@ -925,6 +1019,7 @@ impl WorkspaceInstance {
                     },
                     original_def: None,
                     driver: resolve_pane_driver(None, None),
+                    attention: AttentionRecord::default(),
                 },
             );
 
@@ -940,6 +1035,7 @@ impl WorkspaceInstance {
                         },
                         original_def: None,
                         driver: resolve_pane_driver(None, None),
+                        attention: AttentionRecord::default(),
                     },
                 );
                 last_pane = new_pane;
@@ -1055,6 +1151,7 @@ impl WorkspaceInstance {
                                 },
                                 original_def: session_def.clone(),
                                 driver,
+                                attention: AttentionRecord::default(),
                             },
                         );
                         continue;
@@ -1114,6 +1211,7 @@ impl WorkspaceInstance {
                                 },
                                 original_def: session_def.clone(),
                                 driver,
+                                attention: AttentionRecord::default(),
                             },
                         );
                     }
@@ -1127,6 +1225,7 @@ impl WorkspaceInstance {
                                 },
                                 original_def: session_def.clone(),
                                 driver,
+                                attention: AttentionRecord::default(),
                             },
                         );
                     }
@@ -1180,6 +1279,8 @@ pub struct AttachSnapshot {
     pub active_tab_index: usize,
     pub tabs: Vec<TabSnapshot>,
     pub pane_states: HashMap<PaneId, PaneState>,
+    pub pane_attention: HashMap<PaneId, AttentionRecord>,
+    pub workspace_attention: AttentionRecord,
     pub session_states: HashMap<SessionId, SessionState>,
     /// Current terminal title per session (OSC 2).
     pub session_titles: HashMap<SessionId, String>,

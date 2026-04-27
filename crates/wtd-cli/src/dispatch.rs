@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::cli::{
-    Cli, Command, DriverProfileArg, HostCommand, ListCommand, MouseButtonArg, MouseKindArg,
+    AttentionStateArg, Cli, Command, DriverProfileArg, HostCommand, ListCommand, MouseButtonArg,
+    MouseKindArg,
 };
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
@@ -17,10 +18,10 @@ use crate::input_bytes::{encode_input_payload, InputEncoding};
 use crate::output::{self, OutputResult};
 use wtd_ipc::connect;
 use wtd_ipc::message::{
-    self, AttachWorkspace, CancelFollow, Capture, CloseWorkspace, ConfigurePane, ErrorResponse,
-    FocusPane, Follow, FollowEnd, Inspect, InvokeAction, ListInstances, ListPanes, ListSessions,
-    ListWorkspaces, MessagePayload, Mouse, OpenWorkspace, Prompt, RecreateWorkspace, RenamePane,
-    SaveWorkspace, Scrollback,
+    self, AttachWorkspace, AttentionState, CancelFollow, Capture, ClearAttention, CloseWorkspace,
+    ConfigurePane, ErrorResponse, FocusPane, Follow, FollowEnd, Inspect, InvokeAction,
+    ListInstances, ListPanes, ListSessions, ListWorkspaces, MessagePayload, Mouse, Notify,
+    OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback,
 };
 use wtd_ipc::Envelope;
 
@@ -83,6 +84,15 @@ fn map_driver_profile(profile: DriverProfileArg) -> &'static str {
         DriverProfileArg::ClaudeCode => "claude-code",
         DriverProfileArg::GeminiCli => "gemini-cli",
         DriverProfileArg::CopilotCli => "copilot-cli",
+    }
+}
+
+fn map_attention_state(state: AttentionStateArg) -> AttentionState {
+    match state {
+        AttentionStateArg::Active => AttentionState::Active,
+        AttentionStateArg::NeedsAttention => AttentionState::NeedsAttention,
+        AttentionStateArg::Done => AttentionState::Done,
+        AttentionStateArg::Error => AttentionState::Error,
     }
 }
 
@@ -417,6 +427,26 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 },
             ))
         }
+        Command::Notify {
+            target,
+            state,
+            source,
+            message,
+        } => Some(Envelope::new(
+            &id,
+            &Notify {
+                target: target.clone(),
+                state: map_attention_state(*state),
+                message: message.clone(),
+                source: source.clone(),
+            },
+        )),
+        Command::ClearAttention { target } => Some(Envelope::new(
+            &id,
+            &ClearAttention {
+                target: target.clone(),
+            },
+        )),
         Command::Follow { .. } | Command::Host { .. } | Command::Completions { .. } => None,
     })
 }
@@ -747,7 +777,7 @@ fn find_ui_executable_from(current_exe: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Command;
+    use crate::cli::{AttentionStateArg, Command};
     use std::path::PathBuf;
 
     #[test]
@@ -876,6 +906,36 @@ mod tests {
         assert_eq!(env.msg_type, message::PaneInput::TYPE_NAME);
         assert_eq!(env.payload["target"], "dev/server");
         assert_eq!(env.payload["data"], "G1s8MzU7NDA7MTJN");
+    }
+
+    #[test]
+    fn notify_request_sets_attention_payload() {
+        let env = build_request(&Command::Notify {
+            target: "dev/server".to_string(),
+            state: AttentionStateArg::Done,
+            source: Some("codex".to_string()),
+            message: Some("tests passed".to_string()),
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, Notify::TYPE_NAME);
+        assert_eq!(env.payload["target"], "dev/server");
+        assert_eq!(env.payload["state"], "done");
+        assert_eq!(env.payload["source"], "codex");
+        assert_eq!(env.payload["message"], "tests passed");
+    }
+
+    #[test]
+    fn clear_attention_request_sets_target() {
+        let env = build_request(&Command::ClearAttention {
+            target: "dev/server".to_string(),
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, ClearAttention::TYPE_NAME);
+        assert_eq!(env.payload["target"], "dev/server");
     }
 
     #[test]

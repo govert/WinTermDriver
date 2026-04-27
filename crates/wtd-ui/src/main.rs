@@ -21,7 +21,7 @@ use wtd_core::layout::LayoutTree;
 use wtd_core::logging::init_stderr_logging;
 use wtd_core::workspace::PaneNode;
 use wtd_core::LogLevel;
-use wtd_ipc::message::ProgressInfo;
+use wtd_ipc::message::{AttentionState, ProgressInfo};
 use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
@@ -200,6 +200,8 @@ fn refresh_active_tab_ui(
         status_bar.set_pane_path(format!("{}", focused.0));
     }
     if let Some(active_tab) = active_tab_ref(tabs, active_tab_index) {
+        let (attention_state, attention_message) = focused_pane_attention(active_tab);
+        status_bar.set_attention(attention_state, attention_message);
         refresh_mouse_modes(mouse_modes, sgr_mouse_modes, &active_tab.screens);
     }
 }
@@ -284,9 +286,11 @@ fn rebuild_renderer_resources(
 
     let pane_path = status_bar.pane_path().to_string();
     let session_status = status_bar.session_status().clone();
+    let attention_state = status_bar.attention_state();
     let mut rebuilt_status_bar = StatusBar::new(renderer.dw_factory())?;
     rebuilt_status_bar.set_pane_path(pane_path);
     rebuilt_status_bar.set_session_status(session_status);
+    rebuilt_status_bar.set_attention(attention_state, None);
     rebuilt_status_bar.layout(window_width);
     *status_bar = rebuilt_status_bar;
 
@@ -330,6 +334,19 @@ fn focused_pane_title(tab: &SnapshotTab) -> Option<&str> {
         .and_then(|pane_session| pane_session.title.as_deref())
         .map(str::trim)
         .filter(|title| !title.is_empty())
+}
+
+fn focused_pane_attention(tab: &SnapshotTab) -> (AttentionState, Option<String>) {
+    let focused = tab.layout_tree.focus();
+    tab.pane_sessions
+        .get(&focused)
+        .map(|pane_session| {
+            (
+                pane_session.attention,
+                pane_session.attention_message.clone(),
+            )
+        })
+        .unwrap_or((AttentionState::Active, None))
 }
 
 fn compose_window_title(
@@ -1528,6 +1545,34 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
+                    HostEvent::AttentionChanged {
+                        pane_id,
+                        state,
+                        message,
+                        ..
+                    } => {
+                        if let Some(host_pane_id) = pane_id {
+                            for (tab_index, tab) in tabs.iter_mut().enumerate() {
+                                for (ui_pane_id, pane_session) in tab.pane_sessions.iter_mut() {
+                                    if pane_session.host_pane_id.as_deref()
+                                        == Some(host_pane_id.as_str())
+                                    {
+                                        pane_session.attention = state;
+                                        pane_session.attention_message = message.clone();
+                                        if tab_index == active_tab_index
+                                            && *ui_pane_id == tab.layout_tree.focus()
+                                        {
+                                            status_bar.set_attention(state, message.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            status_bar.set_attention(state, message);
+                        }
+                        force_immediate_paint = true;
+                        needs_paint = true;
+                    }
                     HostEvent::LayoutChanged { tab, layout, .. } => {
                         if tabs.is_empty() {
                             continue;
@@ -1972,7 +2017,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             prefix_sm.prefix_label()
         };
         status_bar.set_prefix_label(transient_label.to_string());
-        status_bar.set_prefix_active(pass_through_next_key.is_armed() || prefix_sm.is_prefix_active());
+        status_bar
+            .set_prefix_active(pass_through_next_key.is_armed() || prefix_sm.is_prefix_active());
 
         // ── Process mouse events ─────────────────────────────────
         for event in window::drain_mouse_events() {

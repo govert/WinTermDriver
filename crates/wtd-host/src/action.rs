@@ -1068,8 +1068,8 @@ mod tests {
     #[test]
     fn v1_registry_has_all_actions() {
         let r = v1_registry();
-        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, and change-profile totals 55 actions.
-        assert_eq!(r.len(), 55);
+        // §20.3 plus directional resize aliases, swap-pane actions, structural split actions, main-pane retile actions, change-profile, and pass-through totals 56 actions.
+        assert_eq!(r.len(), 56);
     }
 
     #[test]
