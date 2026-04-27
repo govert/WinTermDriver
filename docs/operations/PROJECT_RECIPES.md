@@ -83,6 +83,7 @@ wtd recipe list
 wtd recipe show test-and-review
 wtd recipe run test-and-review --dry-run
 wtd recipe run test-and-review --var crate=wtd-cli
+wtd recipe run test-and-review --allow-changed-workflow
 wtd recipe run test-and-review
 ```
 
@@ -93,10 +94,15 @@ result.
 ## Trust Boundary
 
 The manifest records `cwd`, `env`, and all executable workflow steps in one
-checked-in file. WTD does not auto-run changed checked-in recipe files in this
-bead; that is deliberately left for the follow-up trust-check bead. Until then,
-recipes run only after an explicit `wtd recipe run` command or a user-selected
-palette entry.
+checked-in file. Before `wtd recipe run` sends steps to the host, it checks
+whether the manifest is tracked by git and has local changes. Changed tracked
+manifests are blocked until the operator reviews the diff and reruns with
+`--allow-changed-workflow`.
+
+Inspection commands do not execute workflow steps, so `wtd recipe list`,
+`wtd recipe show`, and `wtd recipe run --dry-run` do not require confirmation.
+Untracked local manifests are treated as local operator input rather than shared
+checked-in workflow files.
 
 ## Multi-Pane Agent Example
 

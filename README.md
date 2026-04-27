@@ -409,6 +409,7 @@ Processes communicate over a per-user Windows named pipe (`\\.\pipe\wtd-{SID}`),
 ## Key Concepts
 
 - **Workspace definitions** are human-editable YAML files that describe windows, tabs, panes, profiles, and keybindings. They are version-controllable and deterministically recreatable.
+- **Workflow trust**: `wtd recipe run` blocks execution from a tracked recipe manifest with local git changes until you review it and pass `--allow-changed-workflow`.
 - **Semantic naming** lets you address panes by role (`dev/server`, `ops/prod-logs`) rather than positional IDs.
 - **Controller CLI** (`wtd`) can send text, send keys, capture output, and invoke actions on any named pane — without interrupting interactive use.
 - `wtd prompt` builds on pane-local driver profiles so automation can submit prompts safely across Codex, Claude Code, Gemini CLI, Copilot CLI, and shell-style sessions without remembering per-tool key rules.

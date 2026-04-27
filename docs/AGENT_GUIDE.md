@@ -289,6 +289,12 @@ steps, template variables (`{{name}}`), the `prompt-wait-capture` macro, and
 palette visibility metadata. See
 `docs/operations/PROJECT_RECIPES.md`.
 
+Because recipes and workspace definitions can launch commands, checked-in
+workflow files are treated as shared code. `wtd recipe run` refuses to execute a
+tracked recipe manifest with local git changes until the operator reviews it and
+passes `--allow-changed-workflow`. `wtd recipe list`, `wtd recipe show`, and
+`wtd recipe run --dry-run` remain safe inspection paths.
+
 For tmux-oriented agent tools, use the opt-in shim in `tools/tmux-shim/`. It
 maps a small pane orchestration subset to native WTD commands; see
 `docs/operations/TMUX_COMPATIBILITY.md`.

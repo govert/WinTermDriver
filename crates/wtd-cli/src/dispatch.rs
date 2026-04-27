@@ -235,6 +235,7 @@ async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duratio
             name,
             dry_run,
             vars,
+            allow_changed_workflow,
             ..
         } => {
             let recipe = match find_recipe(&manifest, name) {
@@ -251,6 +252,26 @@ async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duratio
                     return exit_code::GENERAL_ERROR;
                 }
             };
+            if !dry_run && !allow_changed_workflow {
+                match changed_checked_in_workflow(&path) {
+                    Ok(Some(status)) => {
+                        eprintln!(
+                            "wtd: refusing to run recipe '{}' from changed checked-in workflow file {}\n\
+                             git status: {}\n\
+                             review the file, then rerun with --allow-changed-workflow to confirm",
+                            name,
+                            path.display(),
+                            status.trim()
+                        );
+                        return exit_code::GENERAL_ERROR;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        eprintln!("wtd: {e}");
+                        return exit_code::GENERAL_ERROR;
+                    }
+                }
+            }
             run_recipe(recipe, &vars, *dry_run, json, timeout).await
         }
     }
@@ -280,6 +301,59 @@ fn load_recipe_for_command(
     };
     let manifest = load_recipe_manifest_file(&path)?;
     Ok((path, manifest))
+}
+
+fn changed_checked_in_workflow(path: &Path) -> Result<Option<String>, String> {
+    let Some(dir) = path.parent() else {
+        return Ok(None);
+    };
+    if !git_path_is_tracked(dir, path)? {
+        return Ok(None);
+    }
+    let status = git_status_for_path(dir, path)?;
+    if workflow_manifest_needs_confirmation(true, &status) {
+        Ok(Some(status))
+    } else {
+        Ok(None)
+    }
+}
+
+fn git_path_is_tracked(cwd: &Path, path: &Path) -> Result<bool, String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg(path)
+        .output()
+        .map_err(|e| format!("failed to inspect workflow file trust with git: {e}"))?;
+    Ok(output.status.success())
+}
+
+fn git_status_for_path(cwd: &Path, path: &Path) -> Result<String, String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("--")
+        .arg(path)
+        .output()
+        .map_err(|e| format!("failed to inspect workflow file status with git: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to inspect workflow file status with git: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn workflow_manifest_needs_confirmation(checked_in: bool, git_status_output: &str) -> bool {
+    checked_in
+        && git_status_output
+            .lines()
+            .any(|line| !line.trim().is_empty())
 }
 
 async fn run_recipe(
@@ -1402,6 +1476,23 @@ commands:
         assert_eq!(requests[3].msg_type, InvokeAction::TYPE_NAME);
         assert_eq!(requests[3].payload["targetPaneId"], "dev/main/reviewer");
         assert_eq!(requests[4].payload["text"], "summarize wtd-core");
+    }
+
+    #[test]
+    fn changed_checked_in_workflow_requires_confirmation() {
+        assert!(workflow_manifest_needs_confirmation(
+            true,
+            " M .wtd/recipes.yaml\n"
+        ));
+        assert!(workflow_manifest_needs_confirmation(
+            true,
+            "M  wtd-recipes.yaml\n"
+        ));
+        assert!(!workflow_manifest_needs_confirmation(true, ""));
+        assert!(!workflow_manifest_needs_confirmation(
+            false,
+            " M .wtd/recipes.yaml\n"
+        ));
     }
 
     #[test]

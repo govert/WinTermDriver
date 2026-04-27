@@ -441,6 +441,9 @@ pub enum RecipeCommand {
         /// Print the WTD operations without sending them to the host.
         #[arg(long)]
         dry_run: bool,
+        /// Confirm execution from a changed checked-in workflow file.
+        #[arg(long)]
+        allow_changed_workflow: bool,
     },
 }
 
@@ -770,6 +773,27 @@ mod tests {
                 action: RecipeCommand::Run {
                     ref name,
                     dry_run: true,
+                    ..
+                }
+            }) if name == "test-and-review"
+        ));
+    }
+
+    #[test]
+    fn recipe_run_accepts_changed_workflow_confirmation() {
+        let cli = parse(&[
+            "recipe",
+            "run",
+            "test-and-review",
+            "--allow-changed-workflow",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Recipe {
+                action: RecipeCommand::Run {
+                    ref name,
+                    allow_changed_workflow: true,
                     ..
                 }
             }) if name == "test-and-review"
