@@ -140,7 +140,7 @@ If no profile is specified, the global default (`powershell`) is used.
 
 ```bash
 # Open and attach the UI in one step
-wtd up build-and-test
+wtd start build-and-test
 
 # Open from project-local or user-global definition
 wtd open build-and-test
@@ -155,7 +155,7 @@ wtd open build-and-test --recreate
 wtd close build-and-test --kill
 ```
 
-`wtd up <name>` is the ergonomic entry point for interactive use. `wtd open` remains the lower-level command for headless automation or when you want to launch `wtd-ui` separately.
+`wtd start <name>` is the ergonomic entry point for interactive use. `wtd open` remains the lower-level command for headless automation or when you want to launch `wtd-ui` separately.
 
 ### Sending commands
 
@@ -679,7 +679,7 @@ The initial rearrangement and retile rollout is **command-palette first**. No ne
 ## Complete command reference
 
 ```
-wtd up <name> [--file <path>] [--recreate]
+wtd start <name> [--file <path>] [--recreate]
 wtd open <name> [--file <path>] [--recreate]
 wtd close <name> [--kill]
 wtd attach <name>

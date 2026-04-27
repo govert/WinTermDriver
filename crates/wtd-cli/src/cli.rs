@@ -57,8 +57,8 @@ pub enum Command {
         profile: Option<String>,
     },
 
-    /// Open a workspace and launch the graphical UI attached to it.
-    Up {
+    /// Start or reuse a workspace and launch the graphical UI attached to it.
+    Start {
         /// Workspace name.
         name: String,
         /// Path to a workspace definition file.
@@ -459,43 +459,48 @@ mod tests {
     }
 
     #[test]
-    fn up_basic() {
-        let cli = parse(&["up", "dev"]).unwrap();
+    fn start_basic() {
+        let cli = parse(&["start", "dev"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Up { ref name, ref file, recreate, ref profile })
+            Some(Command::Start { ref name, ref file, recreate, ref profile })
             if name == "dev" && file.is_none() && !recreate && profile.is_none()
         ));
     }
 
     #[test]
-    fn up_with_file_and_recreate() {
-        let cli = parse(&["up", "dev", "--file", "dev.yaml", "--recreate"]).unwrap();
+    fn start_with_file_and_recreate() {
+        let cli = parse(&["start", "dev", "--file", "dev.yaml", "--recreate"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Up { ref name, ref file, recreate, .. })
+            Some(Command::Start { ref name, ref file, recreate, .. })
             if name == "dev" && file.as_deref() == Some(std::path::Path::new("dev.yaml")) && recreate
         ));
     }
 
     #[test]
-    fn up_with_profile() {
-        let cli = parse(&["up", "myws", "--profile", "ssh-prod"]).unwrap();
+    fn start_with_profile() {
+        let cli = parse(&["start", "myws", "--profile", "ssh-prod"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Up { ref name, ref profile, .. })
+            Some(Command::Start { ref name, ref profile, .. })
             if name == "myws" && profile.as_deref() == Some("ssh-prod")
         ));
     }
 
     #[test]
-    fn up_requires_name() {
-        assert!(parse(&["up"]).is_err());
+    fn start_requires_name() {
+        assert!(parse(&["start"]).is_err());
     }
 
     #[test]
-    fn up_profile_conflicts_with_file() {
-        assert!(parse(&["up", "dev", "--profile", "x", "--file", "y.yaml"]).is_err());
+    fn start_profile_conflicts_with_file() {
+        assert!(parse(&["start", "dev", "--profile", "x", "--file", "y.yaml"]).is_err());
+    }
+
+    #[test]
+    fn up_is_not_a_legacy_alias() {
+        assert!(parse(&["up", "dev"]).is_err());
     }
 
     #[test]

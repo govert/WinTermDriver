@@ -175,7 +175,7 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 "cwd": request_cwd(),
             }),
         }),
-        Command::Up {
+        Command::Start {
             name,
             file,
             recreate,
@@ -691,7 +691,7 @@ fn client_error_exit_code(e: &ClientError) -> i32 {
 
 fn workspace_name_for_ui(command: &Command) -> Option<&str> {
     match command {
-        Command::Up { name, .. } => Some(name.as_str()),
+        Command::Start { name, .. } => Some(name.as_str()),
         _ => None,
     }
 }
@@ -803,8 +803,8 @@ mod tests {
     }
 
     #[test]
-    fn up_request_matches_open_payload_shape() {
-        let env = build_request(&Command::Up {
+    fn start_request_matches_open_payload_shape() {
+        let env = build_request(&Command::Start {
             name: "dev".to_string(),
             file: Some(PathBuf::from("dev.yaml")),
             recreate: true,
@@ -879,9 +879,9 @@ mod tests {
     }
 
     #[test]
-    fn workspace_name_for_ui_only_matches_up() {
+    fn workspace_name_for_ui_only_matches_start() {
         assert_eq!(
-            workspace_name_for_ui(&Command::Up {
+            workspace_name_for_ui(&Command::Start {
                 name: "dev".to_string(),
                 file: None,
                 recreate: false,

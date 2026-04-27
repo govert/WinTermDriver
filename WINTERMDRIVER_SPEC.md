@@ -1828,8 +1828,9 @@ wtd <command> [<subcommand>] [<target>] [<positional-args...>] [<flags>]
 
 | Command | Syntax | Description |
 |---------|--------|-------------|
-| `open` | `wtd open <name> [--file <path>] [--recreate]` | Open workspace from definition. Attaches if instance exists, unless `--recreate`. |
-| `attach` | `wtd attach <name>` | Attach to existing instance. Error if no instance exists. |
+| `start` | `wtd start <name> [--file <path>] [--recreate]` | Start or reuse a workspace and open a UI window attached to it. |
+| `open` | `wtd open <name> [--file <path>] [--recreate]` | Open workspace from definition without launching the UI. Reuses an existing instance unless `--recreate`. |
+| `attach` | `wtd attach <name>` | Open another UI on an existing instance. Error if no instance exists. |
 | `recreate` | `wtd recreate <name>` | Tear down existing instance and recreate from definition. |
 | `close` | `wtd close <name> [--kill]` | Close workspace UI. `--kill` also destroys the instance. |
 | `save` | `wtd save <name> [--file <path>]` | Save workspace definition. |

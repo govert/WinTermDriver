@@ -97,7 +97,7 @@ tabs:
 ### 3. Open the workspace
 
 ```bash
-wtd up dev
+wtd start dev
 ```
 
 The host process auto-starts in the background on first use. Two ConPTY sessions launch — one in each pane, and the UI opens attached to the workspace.
@@ -137,7 +137,7 @@ wtd open dev
 wtd-ui --workspace dev
 ```
 
-Use this split flow when you want to open the workspace headlessly first and attach the UI separately. `wtd up dev` is equivalent to these two commands together.
+Use this split flow when you want to open the workspace headlessly first and attach the UI separately. `wtd start dev` is equivalent to these two commands together.
 
 ## Diagnostics
 
@@ -332,7 +332,7 @@ wtd <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `wtd up <name> [--file <path>] [--recreate]` | Open workspace and launch the UI attached to it |
+| `wtd start <name> [--file <path>] [--recreate]` | Start or reuse a workspace and launch the UI attached to it |
 | `wtd open <name> [--file <path>] [--recreate]` | Open workspace from definition |
 | `wtd close <name> [--kill]` | Close workspace (`--kill` destroys the instance) |
 | `wtd attach <name>` | Attach to an existing workspace |
