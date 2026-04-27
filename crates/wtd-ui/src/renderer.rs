@@ -68,6 +68,13 @@ const FAILED_PANE_HINT_FG: (u8, u8, u8) = (140, 140, 160);
 const PANE_OVERLAY_BG: (u8, u8, u8) = (12, 12, 20);
 const PANE_OVERLAY_BORDER: (u8, u8, u8) = (100, 100, 120);
 const PANE_OVERLAY_TEXT: (u8, u8, u8) = (220, 220, 235);
+const SCROLLBAR_TRACK: (u8, u8, u8) = (46, 46, 54);
+const SCROLLBAR_THUMB: (u8, u8, u8) = (138, 138, 148);
+const SCROLLBAR_THUMB_HOVER: (u8, u8, u8) = (178, 178, 188);
+const SCROLLBAR_THIN_WIDTH: f32 = 2.0;
+const SCROLLBAR_THICK_WIDTH: f32 = 10.0;
+const SCROLLBAR_RIGHT_INSET: f32 = 2.0;
+const SCROLLBAR_MIN_THUMB: f32 = 28.0;
 
 // ── Default theme colors ─────────────────────────────────────────────────────
 
@@ -804,6 +811,88 @@ impl TerminalRenderer {
                 self.paint_shaped_cursor(cursor, x, y)?;
             }
         }
+        Ok(())
+    }
+
+    /// Paint a Windows Terminal-style scrollback indicator for a pane.
+    ///
+    /// The collapsed state draws only a thin thumb at the right edge. The
+    /// expanded state draws a subtle track plus a thicker thumb.
+    pub fn paint_scrollback_scrollbar(
+        &self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        scrollback_rows: usize,
+        screen_rows: usize,
+        visible_rows: usize,
+        scrollback_offset: usize,
+        expanded: bool,
+    ) -> Result<()> {
+        if scrollback_rows == 0 || visible_rows == 0 || width <= 0.0 || height <= 0.0 {
+            return Ok(());
+        }
+
+        let total_rows = scrollback_rows + screen_rows;
+        let max_scroll = scrollback_rows.max(1);
+        let thumb_height = (height * visible_rows as f32 / total_rows as f32)
+            .clamp(SCROLLBAR_MIN_THUMB.min(height), height);
+        let travel = (height - thumb_height).max(0.0);
+        let progress = (max_scroll.saturating_sub(scrollback_offset.min(max_scroll)) as f32)
+            / max_scroll as f32;
+        let thumb_top = y + travel * progress;
+        let bar_width = if expanded {
+            SCROLLBAR_THICK_WIDTH
+        } else {
+            SCROLLBAR_THIN_WIDTH
+        }
+        .min(width.max(0.0));
+        let bar_left = x + width - SCROLLBAR_RIGHT_INSET - bar_width;
+        let radius = bar_width * 0.5;
+
+        unsafe {
+            if expanded {
+                let track_brush = self.rt.CreateSolidColorBrush(
+                    &rgb_to_d2d(SCROLLBAR_TRACK.0, SCROLLBAR_TRACK.1, SCROLLBAR_TRACK.2),
+                    None,
+                )?;
+                track_brush.SetOpacity(0.55);
+                let track = D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F {
+                        left: bar_left,
+                        top: y,
+                        right: bar_left + bar_width,
+                        bottom: y + height,
+                    },
+                    radiusX: radius,
+                    radiusY: radius,
+                };
+                self.rt.FillRoundedRectangle(&track, &track_brush);
+            }
+
+            let color = if expanded {
+                SCROLLBAR_THUMB_HOVER
+            } else {
+                SCROLLBAR_THUMB
+            };
+            let thumb_brush = self
+                .rt
+                .CreateSolidColorBrush(&rgb_to_d2d(color.0, color.1, color.2), None)?;
+            thumb_brush.SetOpacity(if expanded { 0.9 } else { 0.72 });
+            let thumb = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: bar_left,
+                    top: thumb_top,
+                    right: bar_left + bar_width,
+                    bottom: thumb_top + thumb_height,
+                },
+                radiusX: radius,
+                radiusY: radius,
+            };
+            self.rt.FillRoundedRectangle(&thumb, &thumb_brush);
+        }
+
         Ok(())
     }
 

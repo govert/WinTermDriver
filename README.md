@@ -289,6 +289,9 @@ Keybinding presets:
   It also maps `Ctrl+Shift+K` to `clear-buffer`, which clears the focused pane's
   retained scrollback and current visible buffer. Use the command palette action
   `clear-scrollback` when visible text should be preserved.
+- Panes with retained scrollback show a thin scrollbar thumb at rest. Hovering
+  or dragging it expands the full track, with the thumb sized to the visible
+  fraction of the buffer and clamped to a usable minimum.
 - `tmux` keeps the `Ctrl+B` prefix workflow and adds prefix chords for pane,
   selection, search, and scrollback actions.
 - Workspace YAML can override either preset with `bindings.keys` and

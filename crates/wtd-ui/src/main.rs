@@ -1167,6 +1167,135 @@ fn pane_content_rect(
     )
 }
 
+const SCROLLBAR_HOVER_WIDTH: f32 = 14.0;
+const SCROLLBAR_THICK_WIDTH: f32 = 10.0;
+const SCROLLBAR_RIGHT_INSET: f32 = 2.0;
+const SCROLLBAR_MIN_THUMB: f32 = 28.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ScrollbarMetrics {
+    track: PixelRect,
+    thumb: PixelRect,
+    max_scroll: i32,
+}
+
+#[derive(Debug, Clone)]
+struct ScrollbarDrag {
+    pane_id: PaneId,
+    grab_y: f32,
+    thumb_top_at_start: f32,
+    metrics_at_start: ScrollbarMetrics,
+}
+
+#[derive(Debug, Default)]
+struct ScrollbarInteractionState {
+    hovered_pane: Option<PaneId>,
+    drag: Option<ScrollbarDrag>,
+}
+
+fn scrollbar_metrics(
+    content_rect: PixelRect,
+    scrollback_rows: usize,
+    screen_rows: usize,
+    visible_rows: usize,
+    scrollback_offset: i32,
+) -> Option<ScrollbarMetrics> {
+    if scrollback_rows == 0 || visible_rows == 0 || content_rect.height <= 0.0 {
+        return None;
+    }
+    let total_rows = scrollback_rows + screen_rows;
+    let max_scroll = scrollback_rows as i32;
+    if max_scroll <= 0 {
+        return None;
+    }
+
+    let track = PixelRect::new(
+        content_rect.x + content_rect.width - SCROLLBAR_RIGHT_INSET - SCROLLBAR_THICK_WIDTH,
+        content_rect.y,
+        SCROLLBAR_THICK_WIDTH.min(content_rect.width.max(0.0)),
+        content_rect.height,
+    );
+    let thumb_height = (track.height * visible_rows as f32 / total_rows as f32)
+        .clamp(SCROLLBAR_MIN_THUMB.min(track.height), track.height);
+    let travel = (track.height - thumb_height).max(0.0);
+    let offset = scrollback_offset.clamp(0, max_scroll);
+    let progress = (max_scroll - offset) as f32 / max_scroll as f32;
+    let thumb_top = track.y + travel * progress;
+
+    Some(ScrollbarMetrics {
+        track,
+        thumb: PixelRect::new(track.x, thumb_top, track.width, thumb_height),
+        max_scroll,
+    })
+}
+
+fn scrollbar_offset_for_thumb_top(metrics: ScrollbarMetrics, thumb_top: f32) -> i32 {
+    let travel = (metrics.track.height - metrics.thumb.height).max(0.0);
+    if travel <= f32::EPSILON {
+        return 0;
+    }
+    let clamped_top = thumb_top.clamp(metrics.track.y, metrics.track.y + travel);
+    let progress = (clamped_top - metrics.track.y) / travel;
+    ((1.0 - progress) * metrics.max_scroll as f32).round() as i32
+}
+
+fn scrollbar_hit_rect(metrics: ScrollbarMetrics) -> PixelRect {
+    let width = SCROLLBAR_HOVER_WIDTH.min(metrics.track.width.max(SCROLLBAR_HOVER_WIDTH));
+    PixelRect::new(
+        metrics.track.x + metrics.track.width - width,
+        metrics.track.y,
+        width,
+        metrics.track.height,
+    )
+}
+
+fn rect_contains(rect: PixelRect, x: f32, y: f32) -> bool {
+    x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+}
+
+fn pane_scrollbar_metrics_at_point(
+    tab: &SnapshotTab,
+    pane_layout: &PaneLayout,
+    mouse_handler: &MouseHandler,
+    cell_w: f32,
+    cell_h: f32,
+    pane_viewport_insets: PaneViewportInsets,
+    x: f32,
+    y: f32,
+) -> Option<(PaneId, ScrollbarMetrics)> {
+    for pane_id in tab.layout_tree.panes() {
+        let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) else {
+            continue;
+        };
+        let content_rect = pane_content_rect(rect, cell_w, cell_h, pane_viewport_insets);
+        if y < content_rect.y || y >= content_rect.y + content_rect.height {
+            continue;
+        }
+        let screen = match tab.screens.get(&pane_id) {
+            Some(screen) => screen,
+            None => continue,
+        };
+        if screen.on_alternate() {
+            continue;
+        }
+        let visible_rows = ((content_rect.height / cell_h).ceil() as usize).min(screen.rows());
+        let metrics = match scrollbar_metrics(
+            content_rect,
+            screen.scrollback_len(),
+            screen.rows(),
+            visible_rows,
+            mouse_handler.scroll_offset(&pane_id),
+        ) {
+            Some(metrics) => metrics,
+            None => continue,
+        };
+        if rect_contains(scrollbar_hit_rect(metrics), x, y) {
+            return Some((pane_id, metrics));
+        }
+    }
+    None
+}
+
 fn content_dims(
     window_width: f32,
     window_height: f32,
@@ -2045,6 +2174,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
     // Mouse handler for selection, scrollback, focus, and paste.
     let mut mouse_handler = MouseHandler::new();
+    let mut scrollbar_interaction = ScrollbarInteractionState::default();
     let mut keyboard_selection = KeyboardSelectionState::default();
     let mut find_state = FindState::default();
     let mut mouse_modes: HashMap<PaneId, MouseMode> = HashMap::new();
@@ -2080,6 +2210,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             &pane_layout,
             &tabs[active_tab_index],
             &mouse_handler,
+            &scrollbar_interaction,
             &status_bar,
             &command_palette,
             window_width,
@@ -3001,6 +3132,120 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 }
             }
 
+            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                if let Some(drag) = scrollbar_interaction.drag.clone() {
+                    match event.kind {
+                        MouseEventKind::Move => {
+                            let thumb_top = drag.thumb_top_at_start + (event.y - drag.grab_y);
+                            let offset =
+                                scrollbar_offset_for_thumb_top(drag.metrics_at_start, thumb_top);
+                            mouse_handler.set_scroll_offset(
+                                &drag.pane_id,
+                                offset,
+                                drag.metrics_at_start.max_scroll,
+                            );
+                            scrollbar_interaction.hovered_pane = Some(drag.pane_id);
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                            continue;
+                        }
+                        MouseEventKind::LeftUp => {
+                            scrollbar_interaction.drag = None;
+                            scrollbar_interaction.hovered_pane = pane_scrollbar_metrics_at_point(
+                                active_tab,
+                                &pane_layout,
+                                &mouse_handler,
+                                cell_w,
+                                cell_h,
+                                pane_viewport_insets,
+                                event.x,
+                                event.y,
+                            )
+                            .map(|(pane_id, _)| pane_id);
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                match event.kind {
+                    MouseEventKind::Move => {
+                        let hovered = pane_scrollbar_metrics_at_point(
+                            active_tab,
+                            &pane_layout,
+                            &mouse_handler,
+                            cell_w,
+                            cell_h,
+                            pane_viewport_insets,
+                            event.x,
+                            event.y,
+                        )
+                        .map(|(pane_id, _)| pane_id);
+                        if hovered != scrollbar_interaction.hovered_pane {
+                            scrollbar_interaction.hovered_pane = hovered;
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                        }
+                    }
+                    MouseEventKind::LeftDown => {
+                        if let Some((pane_id, metrics)) = pane_scrollbar_metrics_at_point(
+                            active_tab,
+                            &pane_layout,
+                            &mouse_handler,
+                            cell_w,
+                            cell_h,
+                            pane_viewport_insets,
+                            event.x,
+                            event.y,
+                        ) {
+                            if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
+                                let _ = active_tab.layout_tree.set_focus(pane_id.clone());
+                            }
+                            let mut drag_metrics = metrics;
+                            let grab_y = if rect_contains(metrics.thumb, event.x, event.y) {
+                                event.y
+                            } else {
+                                let thumb_top = event.y - metrics.thumb.height * 0.5;
+                                let offset = scrollbar_offset_for_thumb_top(metrics, thumb_top);
+                                mouse_handler.set_scroll_offset(
+                                    &pane_id,
+                                    offset,
+                                    metrics.max_scroll,
+                                );
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    if let Some((_, refreshed)) = pane_scrollbar_metrics_at_point(
+                                        active_tab,
+                                        &pane_layout,
+                                        &mouse_handler,
+                                        cell_w,
+                                        cell_h,
+                                        pane_viewport_insets,
+                                        event.x,
+                                        event.y,
+                                    ) {
+                                        drag_metrics = refreshed;
+                                    }
+                                }
+                                event.y
+                            };
+                            scrollbar_interaction.hovered_pane = Some(pane_id.clone());
+                            scrollbar_interaction.drag = Some(ScrollbarDrag {
+                                pane_id,
+                                grab_y,
+                                thumb_top_at_start: drag_metrics.thumb.y,
+                                metrics_at_start: drag_metrics,
+                            });
+                            force_immediate_paint = true;
+                            needs_paint = true;
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Normal mode — delegate to MouseHandler.
             let focused = match active_tab_ref(&tabs, active_tab_index) {
                 Some(tab) => tab.layout_tree.focus(),
@@ -3610,6 +3855,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 &pane_layout,
                 active_tab,
                 &mouse_handler,
+                &scrollbar_interaction,
                 &status_bar,
                 &command_palette,
                 window_width,
@@ -3652,6 +3898,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     &pane_layout,
                     &tabs[active_tab_index],
                     &mouse_handler,
+                    &scrollbar_interaction,
                     &status_bar,
                     &command_palette,
                     window_width,
@@ -3686,6 +3933,7 @@ fn paint_all(
     pane_layout: &PaneLayout,
     tab: &SnapshotTab,
     mouse_handler: &MouseHandler,
+    scrollbar_interaction: &ScrollbarInteractionState,
     status_bar: &StatusBar,
     command_palette: &CommandPalette,
     window_width: f32,
@@ -3717,6 +3965,26 @@ fn paint_all(
                     content_rect.height,
                     mouse_handler.selection(&pane_id).as_ref(),
                     mouse_handler.scroll_offset(&pane_id).max(0) as usize,
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let scroll_offset = mouse_handler.scroll_offset(&pane_id).max(0) as usize;
+            let visible_rows = ((content_rect.height / cell_h).ceil() as usize).min(screen.rows());
+            let scrollbar_expanded = scrollbar_interaction.hovered_pane.as_ref() == Some(&pane_id)
+                || scrollbar_interaction
+                    .drag
+                    .as_ref()
+                    .map_or(false, |drag| drag.pane_id == pane_id);
+            renderer
+                .paint_scrollback_scrollbar(
+                    content_rect.x,
+                    content_rect.y,
+                    content_rect.width,
+                    content_rect.height,
+                    screen.scrollback_len(),
+                    screen.rows(),
+                    visible_rows,
+                    scroll_offset,
+                    scrollbar_expanded,
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             if let Some(pane_session) = tab.pane_sessions.get(&pane_id) {
@@ -4517,6 +4785,30 @@ mod tests {
             bound_action_name(&classifier, &event).as_deref(),
             Some("pass-through-next-key")
         );
+    }
+
+    #[test]
+    fn scrollbar_thumb_represents_visible_fraction_with_minimum_size() {
+        let content = PixelRect::new(10.0, 20.0, 200.0, 100.0);
+        let metrics = scrollbar_metrics(content, 980, 20, 20, 0).expect("scrollbar");
+
+        assert_eq!(metrics.max_scroll, 980);
+        assert_eq!(metrics.thumb.height, SCROLLBAR_MIN_THUMB);
+        assert_eq!(metrics.thumb.y, 20.0 + 100.0 - SCROLLBAR_MIN_THUMB);
+        assert_eq!(
+            scrollbar_offset_for_thumb_top(metrics, metrics.track.y),
+            metrics.max_scroll
+        );
+        assert_eq!(
+            scrollbar_offset_for_thumb_top(metrics, metrics.track.y + metrics.track.height),
+            0
+        );
+    }
+
+    #[test]
+    fn scrollbar_hidden_when_buffer_fits_viewport() {
+        let content = PixelRect::new(0.0, 0.0, 100.0, 80.0);
+        assert!(scrollbar_metrics(content, 0, 24, 12, 0).is_none());
     }
 
     #[test]
