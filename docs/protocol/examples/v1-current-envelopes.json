@@ -60,6 +60,17 @@
     }
   },
   {
+    "id": "status-1",
+    "type": "SetPaneStatus",
+    "payload": {
+      "target": "dev/server",
+      "phase": "working",
+      "statusText": "running tests",
+      "queuePending": 1,
+      "source": "codex"
+    }
+  },
+  {
     "id": "action-1",
     "type": "InvokeAction",
     "payload": {

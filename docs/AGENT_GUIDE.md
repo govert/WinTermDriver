@@ -211,12 +211,18 @@ wtd notify build-and-test/tests --source pi "input requested"
 wtd notify build-and-test/tests --state done --source codex "tests passed"
 wtd notify build-and-test/tests --state error --source codex "tests failed"
 wtd clear-attention build-and-test/tests
+wtd status build-and-test/tests --phase working --source codex --queue-pending 1 "running tests"
 ```
 
 Attention states are `active`, `needs-attention`, `done`, and `error` in the
 CLI. The protocol uses snake_case (`needs_attention`). Terminal applications can
 also raise attention with OSC 9 or OSC 777 `notify` sequences; WTD records those
 as `needs_attention` from source `osc`.
+
+Use `wtd status` for durable pane metadata that should appear in inspect and
+attach snapshots: phase, status text, queue count, completion marker, and source.
+WTD also includes runtime metadata such as driver profile, cwd, and terminal
+progress when available.
 
 Built-in prompt driver profiles:
 

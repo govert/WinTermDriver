@@ -21,7 +21,7 @@ use wtd_ipc::message::{
     self, AttachWorkspace, AttentionState, CancelFollow, Capture, ClearAttention, CloseWorkspace,
     ConfigurePane, ErrorResponse, FocusPane, Follow, FollowEnd, Inspect, InvokeAction,
     ListInstances, ListPanes, ListSessions, ListWorkspaces, MessagePayload, Mouse, Notify,
-    OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback,
+    OpenWorkspace, Prompt, RecreateWorkspace, RenamePane, SaveWorkspace, Scrollback, SetPaneStatus,
 };
 use wtd_ipc::Envelope;
 
@@ -445,6 +445,25 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
             &id,
             &ClearAttention {
                 target: target.clone(),
+            },
+        )),
+        Command::Status {
+            target,
+            phase,
+            source,
+            queue_pending,
+            completion,
+            status_text,
+        } => Some(Envelope::new(
+            &id,
+            &SetPaneStatus {
+                target: target.clone(),
+                phase: phase.clone(),
+                status_text: status_text.clone(),
+                progress: None,
+                queue_pending: *queue_pending,
+                completion: completion.clone(),
+                source: source.clone(),
             },
         )),
         Command::Follow { .. } | Command::Host { .. } | Command::Completions { .. } => None,
@@ -936,6 +955,27 @@ mod tests {
 
         assert_eq!(env.msg_type, ClearAttention::TYPE_NAME);
         assert_eq!(env.payload["target"], "dev/server");
+    }
+
+    #[test]
+    fn status_request_sets_metadata_payload() {
+        let env = build_request(&Command::Status {
+            target: "dev/server".to_string(),
+            phase: Some("working".to_string()),
+            source: Some("codex".to_string()),
+            queue_pending: Some(2),
+            completion: None,
+            status_text: Some("running tests".to_string()),
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(env.msg_type, SetPaneStatus::TYPE_NAME);
+        assert_eq!(env.payload["target"], "dev/server");
+        assert_eq!(env.payload["phase"], "working");
+        assert_eq!(env.payload["statusText"], "running tests");
+        assert_eq!(env.payload["queuePending"], 2);
+        assert_eq!(env.payload["source"], "codex");
     }
 
     #[test]

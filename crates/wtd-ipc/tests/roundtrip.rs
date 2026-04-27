@@ -763,6 +763,22 @@ fn clear_attention_roundtrip() {
 }
 
 #[test]
+fn set_pane_status_roundtrip() {
+    roundtrip(SetPaneStatus {
+        target: "dev/main/server".into(),
+        phase: Some("working".into()),
+        status_text: Some("running tests".into()),
+        progress: Some(ProgressInfo {
+            state: ProgressState::Normal,
+            value: Some(42),
+        }),
+        queue_pending: Some(2),
+        completion: None,
+        source: Some("codex".into()),
+    });
+}
+
+#[test]
 fn attention_changed_roundtrip() {
     roundtrip(AttentionChanged {
         workspace: "dev".into(),

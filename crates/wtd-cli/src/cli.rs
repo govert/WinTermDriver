@@ -179,6 +179,26 @@ pub enum Command {
         target: String,
     },
 
+    /// Publish structured pane metadata/status for hosted agents.
+    Status {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Waitable phase, such as idle, working, done, error, or needs-attention.
+        #[arg(long)]
+        phase: Option<String>,
+        /// Source identifier for the publishing agent/tool.
+        #[arg(long)]
+        source: Option<String>,
+        /// Pending queue item count.
+        #[arg(long)]
+        queue_pending: Option<u32>,
+        /// Completion marker, such as success or failure.
+        #[arg(long)]
+        completion: Option<String>,
+        /// Human-readable status text.
+        status_text: Option<String>,
+    },
+
     // ── Input commands ──────────────────────────────────────────────
     /// Send low-level text to a session.
     ///
@@ -1133,6 +1153,36 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::ClearAttention { ref target }) if target == "dev/server"
+        ));
+    }
+
+    #[test]
+    fn status_basic() {
+        let cli = parse(&[
+            "status",
+            "dev/server",
+            "--phase",
+            "working",
+            "--source",
+            "codex",
+            "--queue-pending",
+            "2",
+            "running tests",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Status {
+                ref target,
+                ref phase,
+                ref source,
+                queue_pending: Some(2),
+                ref status_text,
+                ..
+            }) if target == "dev/server"
+                && phase.as_deref() == Some("working")
+                && source.as_deref() == Some("codex")
+                && status_text.as_deref() == Some("running tests")
         ));
     }
 

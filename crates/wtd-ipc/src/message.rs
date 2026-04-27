@@ -99,6 +99,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         Inspect             => Inspect,
         Notify              => Notify,
         ClearAttention      => ClearAttention,
+        SetPaneStatus       => SetPaneStatus,
         ConfigurePane       => ConfigurePane,
         InvokeAction        => InvokeAction,
         SessionInput        => SessionInput,
@@ -167,6 +168,7 @@ pub enum TypedMessage {
     Inspect(Inspect),
     Notify(Notify),
     ClearAttention(ClearAttention),
+    SetPaneStatus(SetPaneStatus),
     ConfigurePane(ConfigurePane),
     InvokeAction(InvokeAction),
     SessionInput(SessionInput),
@@ -517,6 +519,26 @@ pub struct ClearAttention {
     pub target: String,
 }
 impl_payload!(ClearAttention, "ClearAttention");
+
+/// §13.14 — Publish structured pane metadata/status for a hosted agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPaneStatus {
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ProgressInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_pending: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+impl_payload!(SetPaneStatus, "SetPaneStatus");
 
 /// §13.14 — Update pane-local metadata such as prompt driver settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

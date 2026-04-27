@@ -116,6 +116,7 @@ Human-facing commands map to protocol messages as follows:
 | `wtd action <target> <action>` | `InvokeAction` |
 | `wtd notify <target> [--state <state>] [--source <source>] [message]` | `Notify` |
 | `wtd clear-attention <target>` | `ClearAttention` |
+| `wtd status <target> ...` | `SetPaneStatus` |
 
 ## Current Messages
 
@@ -146,6 +147,7 @@ Client-to-host:
 | `ConfigurePane` | `target` plus optional driver fields | Prompt-driver metadata |
 | `Notify` | `target`, `state`, optional `message`, optional `source` | Set pane attention/status |
 | `ClearAttention` | `target` | Reset pane attention to `active` |
+| `SetPaneStatus` | `target` plus optional metadata fields | Publish pane phase/status/progress metadata |
 | `InvokeAction` | `action`, optional `targetPaneId`, `args` | Split/focus/resize/etc. |
 | `SessionInput` | `workspace`, `sessionId`, `data` | UI raw input |
 | `PaneResize` | `paneId`, `cols`, `rows` | UI resize |
@@ -282,6 +284,26 @@ Accepted states are `active`, `needs_attention`, `done`, and `error`.
 also ingests terminal notifications from OSC 9 and OSC 777 `notify` sequences as
 `needs_attention` with source `osc`.
 
+Structured pane metadata is published with `SetPaneStatus`:
+
+```json
+{
+  "id": "status-1",
+  "type": "SetPaneStatus",
+  "payload": {
+    "target": "dev/server",
+    "phase": "working",
+    "statusText": "running tests",
+    "queuePending": 1,
+    "source": "codex"
+  }
+}
+```
+
+`InspectResult.data.metadata` includes published fields plus host-derived
+runtime fields where available, including `driverProfile`, `cwd`, and terminal
+`progress`.
+
 ### CLI Timeout
 
 Request timeout is enforced by the CLI client, not by the host protocol. The
@@ -296,7 +318,6 @@ by the current `wtd-ipc` dispatcher yet:
 
 | Planned type | CLI shape | Purpose |
 |--------------|-----------|---------|
-| `SetPaneStatus` | `wtd status <target> ...` | Publish status text/progress/phase |
 | `WaitPane` | `wtd wait <target> --for <condition>` | Wait for idle/done/error/attention/queue-empty |
 
 The target response shape for `WaitPane` success and timeout is state-rich:

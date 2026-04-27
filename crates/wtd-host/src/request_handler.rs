@@ -652,6 +652,10 @@ impl RequestHandler for HostRequestHandler {
 
             TypedMessage::ClearAttention(clear) => self.handle_clear_attention(&envelope.id, clear),
 
+            TypedMessage::SetPaneStatus(status) => {
+                self.handle_set_pane_status(&envelope.id, status)
+            }
+
             TypedMessage::InvokeAction(action) => self.handle_invoke_action(&envelope.id, action),
 
             TypedMessage::SessionInput(input) => {
@@ -1544,6 +1548,39 @@ impl HostRequestHandler {
                         .unwrap_or_else(|_| serde_json::json!({ "state": "active" })),
                 );
             }
+            if let Some(metadata) = inst.pane_metadata(&pane_id) {
+                let mut value =
+                    serde_json::to_value(metadata).unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(meta_obj) = value.as_object_mut() {
+                    if let Some(PaneState::Attached { session_id }) = inst.pane_state(&pane_id) {
+                        if let Some(session) = inst.session(session_id) {
+                            meta_obj.insert(
+                                "cwd".to_string(),
+                                session
+                                    .config()
+                                    .cwd
+                                    .as_ref()
+                                    .map(|cwd| Value::String(cwd.clone()))
+                                    .unwrap_or(Value::Null),
+                            );
+                            meta_obj.insert(
+                                "progress".to_string(),
+                                serde_json::to_value(progress_info_from_screen(
+                                    session.screen().progress(),
+                                ))
+                                .unwrap_or(Value::Null),
+                            );
+                        }
+                    }
+                    if let Some(driver) = inst.pane_driver(&pane_id) {
+                        meta_obj.insert(
+                            "driverProfile".to_string(),
+                            Value::String(driver.profile.clone()),
+                        );
+                    }
+                }
+                obj.insert("metadata".to_string(), value);
+            }
             if let Some(driver) = inst.pane_driver(&pane_id) {
                 obj.insert(
                     "driverProfile".to_string(),
@@ -1654,6 +1691,45 @@ impl HostRequestHandler {
                 id,
                 ErrorCode::InternalError,
                 &format!("failed to clear attention: {}", e),
+            )),
+        }
+    }
+
+    fn handle_set_pane_status(&self, id: &str, status: &SetPaneStatus) -> Option<Envelope> {
+        let mut state = self.lock_state();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &status.target) {
+                Some((workspace_name, pane_id)) => (workspace_name, pane_id),
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", status.target),
+                    ));
+                }
+            };
+
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
+        };
+
+        match inst.set_pane_metadata(
+            &pane_id,
+            status.phase.clone(),
+            status.status_text.clone(),
+            status.queue_pending,
+            status.completion.clone(),
+            status.source.clone(),
+        ) {
+            Ok(_) => Some(Envelope::new(id, &OkResponse {})),
+            Err(e) => Some(error_envelope(
+                id,
+                ErrorCode::InternalError,
+                &format!("failed to set pane status: {}", e),
             )),
         }
     }
@@ -2289,7 +2365,10 @@ mod tests {
     use wtd_core::workspace::{
         PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
     };
-    use wtd_ipc::message::{AttentionState, ClearAttention, Mouse, MouseButton, MouseKind, Notify};
+    use wtd_ipc::message::{
+        AttentionState, ClearAttention, Inspect, InspectResult, Mouse, MouseButton, MouseKind,
+        Notify, SetPaneStatus,
+    };
 
     fn encode_b64(input: &[u8]) -> String {
         const CHARS: &[u8; 64] =
@@ -2468,6 +2547,46 @@ mod tests {
         assert_eq!(attention.state, AttentionState::Active);
         assert!(attention.message.is_none());
         assert_eq!(state.pending_broadcasts.len(), 2);
+    }
+
+    #[test]
+    fn set_pane_status_updates_metadata_and_inspect_output() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.workspaces.insert(
+                "alpha".to_string(),
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]),
+            );
+        }
+
+        let response = handler.handle_set_pane_status(
+            "status-1",
+            &SetPaneStatus {
+                target: "alpha/main/shell".to_string(),
+                phase: Some("working".to_string()),
+                status_text: Some("running tests".to_string()),
+                progress: None,
+                queue_pending: Some(2),
+                completion: None,
+                source: Some("codex".to_string()),
+            },
+        );
+        assert!(response.is_some());
+
+        let inspect = handler
+            .handle_inspect(
+                "inspect-1",
+                &Inspect {
+                    target: "alpha/main/shell".to_string(),
+                },
+            )
+            .unwrap();
+        let result: InspectResult = inspect.extract_payload().unwrap();
+        assert_eq!(result.data["metadata"]["phase"], "working");
+        assert_eq!(result.data["metadata"]["statusText"], "running tests");
+        assert_eq!(result.data["metadata"]["queuePending"], 2);
+        assert_eq!(result.data["metadata"]["source"], "codex");
     }
 
     fn single_session_workspace(
