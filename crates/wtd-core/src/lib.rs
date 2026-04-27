@@ -10,6 +10,7 @@ pub mod ids;
 pub mod layout;
 pub mod logging;
 pub mod profile_resolver;
+pub mod recipe;
 pub mod target;
 pub mod workspace;
 pub mod workspace_discovery;
@@ -21,6 +22,11 @@ pub use global_settings::{
     ThemeConfig,
 };
 pub use profile_resolver::{resolve_launch_spec, ResolveError, ResolvedLaunchSpec};
+pub use recipe::{
+    find_recipe, find_recipe_manifest_from, load_recipe_manifest, load_recipe_manifest_file,
+    recipe_manifest_candidates, resolve_step_target, ProjectRecipe, RecipeLoadError,
+    RecipeManifest, RecipeStep, RecipeTarget,
+};
 pub use target::{TargetPath, TargetPathError};
 pub use workspace::BindingPreset;
 pub use workspace_discovery::{

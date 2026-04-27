@@ -109,6 +109,12 @@ pub enum Command {
         what: ListCommand,
     },
 
+    /// Discover, inspect, or run project-local WTD recipes.
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeCommand,
+    },
+
     // ── Pane / session commands ─────────────────────────────────────
     /// Focus a pane in the UI.
     Focus {
@@ -400,6 +406,38 @@ pub enum ListCommand {
     Sessions {
         /// Workspace name.
         workspace: String,
+    },
+}
+
+/// Subcommands for `wtd recipe`.
+#[derive(Debug, Subcommand)]
+pub enum RecipeCommand {
+    /// List commands from a recipe manifest.
+    List {
+        /// Path to a recipe manifest. Defaults to .wtd/recipes.yaml or wtd-recipes.yaml found from cwd.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Show one command from a recipe manifest.
+    Show {
+        /// Recipe command name.
+        name: String,
+        /// Path to a recipe manifest.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Run one command from a recipe manifest.
+    Run {
+        /// Recipe command name.
+        name: String,
+        /// Path to a recipe manifest.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Print the WTD operations without sending them to the host.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -707,6 +745,32 @@ mod tests {
     #[test]
     fn list_missing_subcommand() {
         assert!(parse(&["list"]).is_err());
+    }
+
+    #[test]
+    fn recipe_list_accepts_manifest_file() {
+        let cli = parse(&["recipe", "list", "--file", "wtd-recipes.yaml"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Recipe {
+                action: RecipeCommand::List { ref file }
+            }) if file.as_deref() == Some(std::path::Path::new("wtd-recipes.yaml"))
+        ));
+    }
+
+    #[test]
+    fn recipe_run_accepts_dry_run() {
+        let cli = parse(&["recipe", "run", "test-and-review", "--dry-run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Recipe {
+                action: RecipeCommand::Run {
+                    ref name,
+                    dry_run: true,
+                    ..
+                }
+            }) if name == "test-and-review"
+        ));
     }
 
     // ── Pane / session commands ─────────────────────────────────

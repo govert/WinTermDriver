@@ -12,6 +12,7 @@ use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
 
 use wtd_core::workspace::{ActionReference, BindingsDefinition};
+use wtd_core::ProjectRecipe;
 
 use crate::input::{KeyEvent, KeyName};
 
@@ -1056,6 +1057,22 @@ pub fn build_palette_entries(bindings: &BindingsDefinition) -> Vec<PaletteEntry>
         .collect()
 }
 
+/// Build palette entries for project-local recipes marked `palette: true`.
+pub fn build_recipe_palette_entries(recipes: &[ProjectRecipe]) -> Vec<PaletteEntry> {
+    recipes
+        .iter()
+        .filter(|recipe| recipe.palette)
+        .map(|recipe| PaletteEntry {
+            name: format!("recipe:{}", recipe.name),
+            description: recipe
+                .description
+                .clone()
+                .unwrap_or_else(|| "Project recipe".to_string()),
+            keybinding: None,
+        })
+        .collect()
+}
+
 /// Build a reverse map from action name to keybinding display string.
 pub fn build_keybinding_hints(bindings: &BindingsDefinition) -> HashMap<String, String> {
     let bindings = wtd_core::effective_bindings(bindings);
@@ -1406,6 +1423,35 @@ mod tests {
         ] {
             assert!(entries.iter().any(|e| e.name == action), "missing {action}");
         }
+    }
+
+    #[test]
+    fn recipe_palette_entries_include_visible_project_recipes() {
+        let manifest = wtd_core::load_recipe_manifest(
+            "wtd-recipes.yaml",
+            r#"
+version: 1
+commands:
+  - name: visible
+    description: Visible recipe
+    palette: true
+    steps:
+      - type: wait
+        target: dev/main/tests
+        condition: done
+  - name: hidden
+    palette: false
+    steps:
+      - type: wait
+        target: dev/main/tests
+        condition: done
+"#,
+        )
+        .unwrap();
+        let entries = build_recipe_palette_entries(&manifest.commands);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "recipe:visible");
+        assert_eq!(entries[0].description, "Visible recipe");
     }
 
     #[test]

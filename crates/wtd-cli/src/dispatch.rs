@@ -10,12 +10,16 @@ use std::time::Duration;
 
 use crate::cli::{
     AttentionStateArg, Cli, Command, DriverProfileArg, HostCommand, ListCommand, MouseButtonArg,
-    MouseKindArg, WaitConditionArg,
+    MouseKindArg, RecipeCommand, WaitConditionArg,
 };
 use crate::client::{ClientError, IpcClient, DEFAULT_TIMEOUT};
 use crate::exit_code;
 use crate::input_bytes::{encode_input_payload, InputEncoding};
 use crate::output::{self, OutputResult};
+use wtd_core::{
+    find_recipe, find_recipe_manifest_from, load_recipe_manifest_file, resolve_step_target,
+    ProjectRecipe, RecipeManifest, RecipeStep,
+};
 use wtd_ipc::connect;
 use wtd_ipc::message::{
     self, AttachWorkspace, AttentionState, CancelFollow, Capture, ClearAttention, CloseWorkspace,
@@ -123,6 +127,9 @@ pub async fn run(cli: Cli) -> i32 {
     match &command {
         Command::Completions { .. } => unreachable!(),
         Command::Host { action } => return run_host_command(action, cli.json),
+        Command::Recipe { action } => {
+            return run_recipe_command(action, cli.json, timeout).await;
+        }
         Command::Follow { target, raw } => {
             return run_follow(target, *raw, cli.json, timeout).await;
         }
@@ -174,6 +181,270 @@ pub async fn run(cli: Cli) -> i32 {
     }
 
     result.exit_code
+}
+
+async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duration) -> i32 {
+    let (path, manifest) = match load_recipe_for_command(action) {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return exit_code::GENERAL_ERROR;
+        }
+    };
+
+    match action {
+        RecipeCommand::List { .. } => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&manifest).unwrap_or_default()
+                );
+            } else {
+                println!("Recipes from {}", path.display());
+                for recipe in &manifest.commands {
+                    let marker = if recipe.palette { "palette" } else { "hidden" };
+                    let description = recipe.description.as_deref().unwrap_or("");
+                    if description.is_empty() {
+                        println!("{} [{}]", recipe.name, marker);
+                    } else {
+                        println!("{} [{}] - {}", recipe.name, marker, description);
+                    }
+                }
+            }
+            exit_code::SUCCESS
+        }
+        RecipeCommand::Show { name, .. } => {
+            let recipe = match find_recipe(&manifest, name) {
+                Some(recipe) => recipe,
+                None => {
+                    eprintln!("wtd: recipe '{name}' not found in {}", path.display());
+                    return exit_code::TARGET_NOT_FOUND;
+                }
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(recipe).unwrap_or_default()
+                );
+            } else {
+                print_recipe_summary(recipe);
+            }
+            exit_code::SUCCESS
+        }
+        RecipeCommand::Run { name, dry_run, .. } => {
+            let recipe = match find_recipe(&manifest, name) {
+                Some(recipe) => recipe,
+                None => {
+                    eprintln!("wtd: recipe '{name}' not found in {}", path.display());
+                    return exit_code::TARGET_NOT_FOUND;
+                }
+            };
+            run_recipe(recipe, *dry_run, json, timeout).await
+        }
+    }
+}
+
+fn load_recipe_for_command(
+    action: &RecipeCommand,
+) -> Result<(PathBuf, RecipeManifest), wtd_core::RecipeLoadError> {
+    let file = match action {
+        RecipeCommand::List { file }
+        | RecipeCommand::Show { file, .. }
+        | RecipeCommand::Run { file, .. } => file,
+    };
+    let path = match file {
+        Some(file) => {
+            if file.is_absolute() {
+                file.clone()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(file)
+            }
+        }
+        None => find_recipe_manifest_from(
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )?,
+    };
+    let manifest = load_recipe_manifest_file(&path)?;
+    Ok((path, manifest))
+}
+
+async fn run_recipe(recipe: &ProjectRecipe, dry_run: bool, json: bool, timeout: Duration) -> i32 {
+    let requests = match recipe_requests(recipe) {
+        Ok(requests) => requests,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return exit_code::GENERAL_ERROR;
+        }
+    };
+    if dry_run {
+        for request in requests {
+            println!("{}", describe_recipe_request(&request));
+        }
+        return exit_code::SUCCESS;
+    }
+
+    let mut client = match IpcClient::connect_and_handshake().await {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return client_error_exit_code(&e);
+        }
+    };
+    client.set_timeout(timeout);
+
+    for request in requests {
+        let response = match client.request(&request).await {
+            Ok(response) => response,
+            Err(e) => {
+                eprintln!("wtd: {e}");
+                return client_error_exit_code(&e);
+            }
+        };
+        let result = output::format_response(&response, json);
+        print_result(&result);
+        if result.exit_code != exit_code::SUCCESS {
+            return result.exit_code;
+        }
+    }
+    exit_code::SUCCESS
+}
+
+fn recipe_requests(recipe: &ProjectRecipe) -> Result<Vec<Envelope>, String> {
+    recipe
+        .steps
+        .iter()
+        .map(|step| recipe_step_request(recipe, step))
+        .collect()
+}
+
+fn recipe_step_request(recipe: &ProjectRecipe, step: &RecipeStep) -> Result<Envelope, String> {
+    let id = next_id();
+    match step {
+        RecipeStep::Prompt { target, text } => {
+            let target = require_recipe_target(recipe, target.as_deref(), "prompt")?;
+            Ok(Envelope::new(
+                &id,
+                &Prompt {
+                    target,
+                    text: text.clone(),
+                },
+            ))
+        }
+        RecipeStep::Capture { target, lines } => {
+            let target = require_recipe_target(recipe, target.as_deref(), "capture")?;
+            Ok(Envelope::new(
+                &id,
+                &Capture {
+                    target,
+                    vt: None,
+                    lines: *lines,
+                    all: None,
+                    after: None,
+                    after_regex: None,
+                    max_lines: None,
+                    count: None,
+                },
+            ))
+        }
+        RecipeStep::Wait {
+            target,
+            condition,
+            timeout,
+            recent_lines,
+        } => {
+            let target = require_recipe_target(recipe, target.as_deref(), "wait")?;
+            Ok(Envelope::new(
+                &id,
+                &WaitPane {
+                    target,
+                    condition: wait_condition_from_str(condition)?,
+                    timeout_ms: timeout.map(|secs| (secs * 1000.0).max(0.0) as u64),
+                    poll_ms: None,
+                    recent_lines: *recent_lines,
+                },
+            ))
+        }
+        RecipeStep::Action {
+            target,
+            action,
+            args,
+        } => Ok(Envelope::new(
+            &id,
+            &InvokeAction {
+                action: action.clone(),
+                target_pane_id: resolve_step_target(recipe, target.as_deref()),
+                args: args
+                    .as_ref()
+                    .map(|args| serde_json::to_value(args).unwrap_or_default())
+                    .unwrap_or_else(|| serde_json::json!({})),
+            },
+        )),
+    }
+}
+
+fn require_recipe_target(
+    recipe: &ProjectRecipe,
+    target: Option<&str>,
+    step: &str,
+) -> Result<String, String> {
+    resolve_step_target(recipe, target)
+        .ok_or_else(|| format!("recipe '{}' {step} step requires a target", recipe.name))
+}
+
+fn wait_condition_from_str(condition: &str) -> Result<WaitCondition, String> {
+    match condition {
+        "idle" => Ok(WaitCondition::Idle),
+        "done" => Ok(WaitCondition::Done),
+        "needs-attention" => Ok(WaitCondition::NeedsAttention),
+        "error" => Ok(WaitCondition::Error),
+        "queue-empty" => Ok(WaitCondition::QueueEmpty),
+        "state-change" => Ok(WaitCondition::StateChange),
+        other => Err(format!("unsupported wait condition '{other}'")),
+    }
+}
+
+fn describe_recipe_request(request: &Envelope) -> String {
+    match request.msg_type.as_str() {
+        "Prompt" => format!(
+            "wtd prompt {} {:?}",
+            request.payload["target"].as_str().unwrap_or(""),
+            request.payload["text"].as_str().unwrap_or("")
+        ),
+        "Capture" => format!(
+            "wtd capture {} --lines {}",
+            request.payload["target"].as_str().unwrap_or(""),
+            request.payload["lines"]
+        ),
+        "WaitPane" => format!(
+            "wtd wait {} --for {}",
+            request.payload["target"].as_str().unwrap_or(""),
+            request.payload["condition"].as_str().unwrap_or("")
+        ),
+        "InvokeAction" => format!(
+            "wtd action {} {}",
+            request
+                .payload
+                .get("targetPaneId")
+                .and_then(|value| value.as_str())
+                .unwrap_or("(focused)"),
+            request.payload["action"].as_str().unwrap_or("")
+        ),
+        other => format!("{other} {}", request.payload),
+    }
+}
+
+fn print_recipe_summary(recipe: &ProjectRecipe) {
+    println!("{}", recipe.name);
+    if let Some(description) = &recipe.description {
+        println!("{description}");
+    }
+    if let Some(target) = recipe.target.as_ref().and_then(|target| target.to_path()) {
+        println!("target: {target}");
+    }
+    println!("palette: {}", recipe.palette);
+    println!("steps: {}", recipe.steps.len());
 }
 
 // ── Request building ─────────────────────────────────────────────────
@@ -494,7 +765,10 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 recent_lines: Some(*recent_lines),
             },
         )),
-        Command::Follow { .. } | Command::Host { .. } | Command::Completions { .. } => None,
+        Command::Recipe { .. }
+        | Command::Follow { .. }
+        | Command::Host { .. }
+        | Command::Completions { .. } => None,
     })
 }
 
@@ -1024,6 +1298,47 @@ mod tests {
         assert_eq!(env.payload["timeoutMs"], 1500);
         assert_eq!(env.payload["pollMs"], 10);
         assert_eq!(env.payload["recentLines"], 5);
+    }
+
+    #[test]
+    fn recipe_requests_resolve_prompt_capture_wait_and_action_steps() {
+        let manifest = wtd_core::load_recipe_manifest(
+            "wtd-recipes.yaml",
+            r#"
+version: 1
+commands:
+  - name: test-and-review
+    target:
+      workspace: dev
+      tab: main
+      pane: tests
+    steps:
+      - type: prompt
+        text: cargo test
+      - type: wait
+        condition: done
+        timeout: 1.5
+      - type: capture
+        lines: 20
+      - type: action
+        target: dev/main/reviewer
+        action: focus-pane
+"#,
+        )
+        .unwrap();
+        let recipe = wtd_core::find_recipe(&manifest, "test-and-review").unwrap();
+        let requests = recipe_requests(recipe).unwrap();
+
+        assert_eq!(requests.len(), 4);
+        assert_eq!(requests[0].msg_type, Prompt::TYPE_NAME);
+        assert_eq!(requests[0].payload["target"], "dev/main/tests");
+        assert_eq!(requests[1].msg_type, WaitPane::TYPE_NAME);
+        assert_eq!(requests[1].payload["condition"], "done");
+        assert_eq!(requests[1].payload["timeoutMs"], 1500);
+        assert_eq!(requests[2].msg_type, Capture::TYPE_NAME);
+        assert_eq!(requests[2].payload["lines"], 20);
+        assert_eq!(requests[3].msg_type, InvokeAction::TYPE_NAME);
+        assert_eq!(requests[3].payload["targetPaneId"], "dev/main/reviewer");
     }
 
     #[test]
