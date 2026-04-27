@@ -408,7 +408,10 @@ impl WorkspaceInstance {
                 TabDefinition {
                     name: tab.name.clone(),
                     layout,
-                    focus: None,
+                    focus: self
+                        .panes
+                        .get(&tab.layout.focus())
+                        .map(|rec| rec.name.clone()),
                 }
             })
             .collect();
@@ -2086,6 +2089,7 @@ mod tests {
         let tabs = saved.tabs.as_ref().expect("should have tabs");
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].name, "main");
+        assert_eq!(tabs[0].focus.as_deref(), Some("bottom"));
 
         // The layout should be a split with two pane children
         match &tabs[0].layout {
