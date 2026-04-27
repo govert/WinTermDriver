@@ -174,7 +174,9 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 
 ### WT Actions With No WTD Equivalent (WTD gaps)
 
-These WT actions have no corresponding WTD action. The WT preset would need to either omit these bindings or create new WTD actions in a future bead.
+This audit tracks WT action coverage gaps and recent parity additions. Missing
+actions must be omitted from the WT preset until a future bead adds the matching
+WTD action.
 
 **UI / Window features** (low priority for terminal-mode WTD):
 - `toggleFocusMode` — Hide tabs/title bar
@@ -199,11 +201,11 @@ These WT actions have no corresponding WTD action. The WT preset would need to e
 - `markMode` — Keyboard selection mode (Ctrl+Shift+M)
 - `toggleBlockSelection` / `switchSelectionEndpoint` / `expandSelectionToWord` — Advanced selection
 
-**Scrollback** (high priority — WTD has `enter-scrollback-mode` but no scroll actions):
-- `scrollUp` / `scrollDown` — Line scroll (Ctrl+Shift+Up/Down)
-- `scrollUpPage` / `scrollDownPage` — Page scroll (Ctrl+Shift+PgUp/PgDn)
-- `scrollToTop` / `scrollToBottom` — Jump to edges (Ctrl+Shift+Home/End)
-- `clearBuffer` — Clear scrollback (Ctrl+Shift+K)
+**Scrollback** (line/page/top/bottom implemented as inline focused-pane navigation):
+- `scrollUp` / `scrollDown` — `scrollback-line-up` / `scrollback-line-down` (Ctrl+Shift+Up/Down)
+- `scrollUpPage` / `scrollDownPage` — `scrollback-page-up` / `scrollback-page-down` (Ctrl+Shift+PgUp/PgDn)
+- `scrollToTop` / `scrollToBottom` — `scrollback-top` / `scrollback-bottom` (Ctrl+Shift+Home/End)
+- `clearBuffer` — Clear scrollback (Ctrl+Shift+K; still missing)
 
 **Font size** (should be added in a future action bead):
 - `adjustFontSize {delta: ±1}` — Zoom in/out (Ctrl+Plus / Ctrl+Minus)
@@ -284,6 +286,12 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 | `Alt+Shift+K` | `pass-through-next-key` | WTD-only | Arms one-shot key pass-through for the focused pane |
 | `Ctrl+Insert` | `copy` | `ctrl+insert` | Secondary WT binding |
 | `Shift+Insert` | `paste` | `shift+insert` | Secondary WT binding |
+| `Ctrl+Shift+Up` | `scrollback-line-up` | `ctrl+shift+up` | Scrolls the focused pane back one line; ignored on alternate screen |
+| `Ctrl+Shift+Down` | `scrollback-line-down` | `ctrl+shift+down` | Scrolls the focused pane toward live output one line |
+| `Ctrl+Shift+PageUp` | `scrollback-page-up` | `ctrl+shift+pgup` | Scrolls the focused pane back one page |
+| `Ctrl+Shift+PageDown` | `scrollback-page-down` | `ctrl+shift+pgdn` | Scrolls the focused pane toward live output one page |
+| `Ctrl+Shift+Home` | `scrollback-top` | `ctrl+shift+home` | Jumps to the oldest retained scrollback row |
+| `Ctrl+Shift+End` | `scrollback-bottom` | `ctrl+shift+end` | Jumps back to live output |
 
 ### Notes on omitted WT bindings in the preset
 
@@ -295,7 +303,6 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 - `ctrl+alt+1`..`9` (switchToTab) — omitted; WTD has goto-tab but profile-index launch not supported
 - `ctrl+shift+a` (selectAll) — omitted; no WTD action
 - `ctrl+shift+m` (markMode) — omitted; no WTD action
-- Scrollback keys (Ctrl+Shift+Up/Down/PgUp/PgDn/Home/End) — omitted; WTD enters scrollback mode; scroll actions not yet in v1
 - Font size keys (Ctrl+Plus/Minus/0) — omitted; no WTD action
 - `ctrl+shift+k` (clearBuffer) — omitted; no WTD action
 - `alt+f4` (closeWindow) — omitted; OS-level; `close-window` requires workspace context

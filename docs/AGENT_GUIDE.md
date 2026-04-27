@@ -468,6 +468,13 @@ poll_for myws/shell "test result:"
 wtd scrollback myws/shell --tail 500
 ```
 
+For operator navigation in the UI, the command palette and presets expose
+`scrollback-line-up`, `scrollback-line-down`, `scrollback-page-up`,
+`scrollback-page-down`, `scrollback-top`, and `scrollback-bottom`. The Windows
+Terminal preset maps these to Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End; the
+tmux preset maps page/top/bottom navigation under the Ctrl+B prefix. These local
+viewport actions are ignored while the focused pane is on an alternate screen.
+
 ## Orchestrating multi-session workflows
 
 ### Example: start server, wait for ready, run tests, capture results

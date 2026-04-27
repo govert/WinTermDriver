@@ -683,6 +683,30 @@ impl MouseHandler {
         }
     }
 
+    /// Move a pane's scrollback offset by `lines`, clamped to valid bounds.
+    pub fn scroll_by(&mut self, pane_id: &PaneId, lines: i32, max_scrollback: i32) {
+        let state = self
+            .pane_states
+            .entry(pane_id.clone())
+            .or_insert_with(|| PaneMouseState {
+                scroll_offset: 0,
+                selection: None,
+            });
+        state.scroll_offset = (state.scroll_offset + lines).clamp(0, max_scrollback.max(0));
+    }
+
+    /// Jump a pane's scrollback offset to the oldest retained row.
+    pub fn scroll_to_top(&mut self, pane_id: &PaneId, max_scrollback: i32) {
+        let state = self
+            .pane_states
+            .entry(pane_id.clone())
+            .or_insert_with(|| PaneMouseState {
+                scroll_offset: 0,
+                selection: None,
+            });
+        state.scroll_offset = max_scrollback.max(0);
+    }
+
     /// Clamp scroll offset to valid range given the pane's scrollback length.
     pub fn clamp_scroll(&mut self, pane_id: &PaneId, max_scrollback: i32) {
         if let Some(state) = self.pane_states.get_mut(pane_id) {
@@ -1186,6 +1210,27 @@ mod tests {
         );
         handler.clamp_scroll(&pane, 50);
         assert_eq!(handler.scroll_offset(&pane), 0);
+    }
+
+    #[test]
+    fn scroll_by_clamps_to_scrollback_bounds() {
+        let mut handler = MouseHandler::new();
+        let pane = PaneId(1);
+
+        handler.scroll_by(&pane, 20, 10);
+        assert_eq!(handler.scroll_offset(&pane), 10);
+
+        handler.scroll_by(&pane, -50, 10);
+        assert_eq!(handler.scroll_offset(&pane), 0);
+    }
+
+    #[test]
+    fn scroll_to_top_sets_max_scrollback() {
+        let mut handler = MouseHandler::new();
+        let pane = PaneId(1);
+
+        handler.scroll_to_top(&pane, 42);
+        assert_eq!(handler.scroll_offset(&pane), 42);
     }
 
     #[test]

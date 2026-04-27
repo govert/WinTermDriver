@@ -1199,6 +1199,59 @@ fn active_tab_mut(
     tabs.get_mut(active_tab_index)
 }
 
+#[derive(Clone, Copy)]
+enum ScrollbackNavigation {
+    LineUp,
+    LineDown,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
+fn scrollback_navigation_for_action(name: &str) -> Option<ScrollbackNavigation> {
+    match name {
+        "scrollback-line-up" => Some(ScrollbackNavigation::LineUp),
+        "scrollback-line-down" => Some(ScrollbackNavigation::LineDown),
+        "scrollback-page-up" => Some(ScrollbackNavigation::PageUp),
+        "scrollback-page-down" => Some(ScrollbackNavigation::PageDown),
+        "scrollback-top" => Some(ScrollbackNavigation::Top),
+        "scrollback-bottom" => Some(ScrollbackNavigation::Bottom),
+        _ => None,
+    }
+}
+
+fn navigate_focused_scrollback(
+    tab: &SnapshotTab,
+    mouse_handler: &mut MouseHandler,
+    navigation: ScrollbackNavigation,
+) -> bool {
+    let focused = tab.layout_tree.focus();
+    let Some(screen) = tab.screens.get(&focused) else {
+        return true;
+    };
+    if screen.on_alternate() {
+        return true;
+    }
+
+    let max_scrollback = screen.scrollback_len() as i32;
+    match navigation {
+        ScrollbackNavigation::LineUp => mouse_handler.scroll_by(&focused, 1, max_scrollback),
+        ScrollbackNavigation::LineDown => mouse_handler.scroll_by(&focused, -1, max_scrollback),
+        ScrollbackNavigation::PageUp => {
+            let page = screen.rows().saturating_sub(1).max(1) as i32;
+            mouse_handler.scroll_by(&focused, page, max_scrollback);
+        }
+        ScrollbackNavigation::PageDown => {
+            let page = screen.rows().saturating_sub(1).max(1) as i32;
+            mouse_handler.scroll_by(&focused, -page, max_scrollback);
+        }
+        ScrollbackNavigation::Top => mouse_handler.scroll_to_top(&focused, max_scrollback),
+        ScrollbackNavigation::Bottom => mouse_handler.reset_scroll(&focused),
+    }
+    true
+}
+
 /// Route an action locally or to the host.
 ///
 /// Returns `true` if the action was handled locally.
@@ -1307,6 +1360,10 @@ fn dispatch_action(
     let Some(active_tab) = active_tab_ref(tabs, *active_tab_index) else {
         return false;
     };
+
+    if let Some(navigation) = scrollback_navigation_for_action(name) {
+        return navigate_focused_scrollback(active_tab, mouse_handler, navigation);
+    }
 
     match name {
         "toggle-command-palette" => {
@@ -3504,6 +3561,100 @@ mod tests {
 
         let bytes = paste_bytes_for_pane(&tab, &pane_id, "hello");
         assert_eq!(bytes, b"hello");
+    }
+
+    fn scrollback_test_tab(rows: u16) -> (SnapshotTab, PaneId) {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let mut screen = ScreenBuffer::new(80, rows, 100);
+        for line in 0..20 {
+            screen.advance(format!("line {line}\r\n").as_bytes());
+        }
+
+        (
+            SnapshotTab {
+                layout_tree,
+                pane_sessions: HashMap::new(),
+                screens: HashMap::from([(pane_id.clone(), screen)]),
+            },
+            pane_id,
+        )
+    }
+
+    #[test]
+    fn scrollback_navigation_moves_line_page_and_edges() {
+        let (tab, pane_id) = scrollback_test_tab(5);
+        let max_scrollback = tab.screens[&pane_id].scrollback_len() as i32;
+        assert!(max_scrollback > 4);
+        let mut mouse_handler = MouseHandler::new();
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::LineUp
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), 1);
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::PageUp
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), 5);
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::Top
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), max_scrollback);
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::PageDown
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), max_scrollback - 4);
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::LineDown
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), max_scrollback - 5);
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::Bottom
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), 0);
+    }
+
+    #[test]
+    fn scrollback_navigation_ignores_alternate_screen() {
+        let layout_tree = LayoutTree::new();
+        let pane_id = layout_tree.focus();
+        let mut screen = ScreenBuffer::new(80, 5, 100);
+        for line in 0..20 {
+            screen.advance(format!("line {line}\r\n").as_bytes());
+        }
+        screen.advance(b"\x1b[?1049h");
+        assert!(screen.on_alternate());
+
+        let tab = SnapshotTab {
+            layout_tree,
+            pane_sessions: HashMap::new(),
+            screens: HashMap::from([(pane_id.clone(), screen)]),
+        };
+        let mut mouse_handler = MouseHandler::new();
+
+        assert!(navigate_focused_scrollback(
+            &tab,
+            &mut mouse_handler,
+            ScrollbackNavigation::Top
+        ));
+        assert_eq!(mouse_handler.scroll_offset(&pane_id), 0);
     }
 
     fn attention_test_tab() -> SnapshotTab {

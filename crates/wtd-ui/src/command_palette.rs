@@ -131,6 +131,12 @@ const RUNNABLE_ACTIONS: &[(&str, &str)] = &[
     ("toggle-command-palette", "Toggle command palette"),
     ("toggle-fullscreen", "Toggle window fullscreen"),
     ("enter-scrollback-mode", "Enter scrollback navigation mode"),
+    ("scrollback-line-up", "Scroll back one line"),
+    ("scrollback-line-down", "Scroll forward one line"),
+    ("scrollback-page-up", "Scroll back one page"),
+    ("scrollback-page-down", "Scroll forward one page"),
+    ("scrollback-top", "Jump to top of scrollback"),
+    ("scrollback-bottom", "Jump to live view"),
     (
         "pass-through-next-key",
         "Send the next keypress directly to the app",

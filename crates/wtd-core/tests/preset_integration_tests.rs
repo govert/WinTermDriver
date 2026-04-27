@@ -182,9 +182,9 @@ bindings:
         Some(&ActionReference::Simple("toggle-fullscreen".to_string()))
     );
 
-    // 15 chord bindings
+    // 20 chord bindings
     let chords = eff.chords.as_ref().expect("tmux must have chords");
-    assert_eq!(chords.len(), 15, "tmux preset must have 15 chord bindings");
+    assert_eq!(chords.len(), 20, "tmux preset must have 20 chord bindings");
     assert_eq!(
         chords.get("%"),
         Some(&ActionReference::Simple("split-right".to_string()))
@@ -202,6 +202,22 @@ bindings:
         Some(&ActionReference::Simple(
             "enter-scrollback-mode".to_string()
         ))
+    );
+    assert_eq!(
+        chords.get("PageUp"),
+        Some(&ActionReference::Simple("scrollback-page-up".to_string()))
+    );
+    assert_eq!(
+        chords.get("PageDown"),
+        Some(&ActionReference::Simple("scrollback-page-down".to_string()))
+    );
+    assert_eq!(
+        chords.get("Home"),
+        Some(&ActionReference::Simple("scrollback-top".to_string()))
+    );
+    assert_eq!(
+        chords.get("End"),
+        Some(&ActionReference::Simple("scrollback-bottom".to_string()))
     );
 }
 

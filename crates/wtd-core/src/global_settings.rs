@@ -226,7 +226,7 @@ fn default_confirm_close() -> bool {
 
 /// Returns the tmux-style preset keybindings.
 ///
-/// Ctrl+B prefix, 10 single-stroke keys, 16 chords — the legacy WTD defaults.
+/// Ctrl+B prefix, 10 single-stroke keys, 20 chords — the legacy WTD defaults.
 pub fn tmux_bindings() -> BindingsDefinition {
     let keys: HashMap<String, ActionReference> = [
         ("Ctrl+Shift+T", "new-tab"),
@@ -261,6 +261,10 @@ pub fn tmux_bindings() -> BindingsDefinition {
         ("Left", "focus-pane-left"),
         ("Right", "focus-pane-right"),
         ("[", "enter-scrollback-mode"),
+        ("PageUp", "scrollback-page-up"),
+        ("PageDown", "scrollback-page-down"),
+        ("Home", "scrollback-top"),
+        ("End", "scrollback-bottom"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), ActionReference::Simple(v.to_string())))
@@ -280,10 +284,11 @@ pub fn tmux_bindings() -> BindingsDefinition {
 /// Single-stroke only — no prefix key, no chords.  Matches WT default bindings
 /// where a WTD action equivalent exists (§11.3, audit in docs/WT_KEYBINDING_MAP.md).
 ///
-/// **29 bindings total:**
+/// **35 bindings total:**
 /// - Tab: new/close/next/prev tab, goto-tab 1–8 (Ctrl+Alt+1–8)
 /// - Pane: split right/down, focus up/down/left/right, resize in all directions
 /// - Clipboard: copy/paste (primary + secondary WT bindings)
+/// - Scrollback: line/page/top/bottom navigation
 /// - UI: toggle-fullscreen, toggle-command-palette, pass-through-next-key
 pub fn windows_terminal_bindings() -> BindingsDefinition {
     let mut keys: HashMap<String, ActionReference> = [
@@ -362,6 +367,31 @@ pub fn windows_terminal_bindings() -> BindingsDefinition {
         (
             "Alt+Shift+K",
             ActionReference::Simple("pass-through-next-key".to_string()),
+        ),
+        // ── Scrollback ─────────────────────────────────────────────────────
+        (
+            "Ctrl+Shift+Up",
+            ActionReference::Simple("scrollback-line-up".to_string()),
+        ),
+        (
+            "Ctrl+Shift+Down",
+            ActionReference::Simple("scrollback-line-down".to_string()),
+        ),
+        (
+            "Ctrl+Shift+PageUp",
+            ActionReference::Simple("scrollback-page-up".to_string()),
+        ),
+        (
+            "Ctrl+Shift+PageDown",
+            ActionReference::Simple("scrollback-page-down".to_string()),
+        ),
+        (
+            "Ctrl+Shift+Home",
+            ActionReference::Simple("scrollback-top".to_string()),
+        ),
+        (
+            "Ctrl+Shift+End",
+            ActionReference::Simple("scrollback-bottom".to_string()),
         ),
     ]
     .into_iter()
@@ -627,7 +657,7 @@ mod tests {
         assert!(b.chords.is_none());
 
         let keys = b.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 29, "29 WT-mapped single-stroke bindings");
+        assert_eq!(keys.len(), 35, "35 WT-mapped single-stroke bindings");
 
         // Tab management
         assert_eq!(
@@ -752,11 +782,31 @@ mod tests {
             ))
         );
 
-        // Omitted: no scroll-line/page actions in WTD v1
-        assert!(!keys.contains_key("Ctrl+Shift+Up"));
-        assert!(!keys.contains_key("Ctrl+Shift+Down"));
-        assert!(!keys.contains_key("Ctrl+Shift+PageUp"));
-        assert!(!keys.contains_key("Ctrl+Shift+PageDown"));
+        // Scrollback
+        assert_eq!(
+            keys.get("Ctrl+Shift+Up"),
+            Some(&ActionReference::Simple("scrollback-line-up".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+Down"),
+            Some(&ActionReference::Simple("scrollback-line-down".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+PageUp"),
+            Some(&ActionReference::Simple("scrollback-page-up".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+PageDown"),
+            Some(&ActionReference::Simple("scrollback-page-down".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+Home"),
+            Some(&ActionReference::Simple("scrollback-top".to_string()))
+        );
+        assert_eq!(
+            keys.get("Ctrl+Shift+End"),
+            Some(&ActionReference::Simple("scrollback-bottom".to_string()))
+        );
         // Omitted: no find action in WTD v1
         assert!(!keys.contains_key("Ctrl+Shift+F"));
     }
@@ -794,7 +844,7 @@ mod tests {
         );
 
         let chords = b.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 16);
+        assert_eq!(chords.len(), 20);
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-right".to_string()))
@@ -810,6 +860,22 @@ mod tests {
             Some(&ActionReference::Simple(
                 "pass-through-next-key".to_string()
             ))
+        );
+        assert_eq!(
+            chords.get("PageUp"),
+            Some(&ActionReference::Simple("scrollback-page-up".to_string()))
+        );
+        assert_eq!(
+            chords.get("PageDown"),
+            Some(&ActionReference::Simple("scrollback-page-down".to_string()))
+        );
+        assert_eq!(
+            chords.get("Home"),
+            Some(&ActionReference::Simple("scrollback-top".to_string()))
+        );
+        assert_eq!(
+            chords.get("End"),
+            Some(&ActionReference::Simple("scrollback-bottom".to_string()))
         );
     }
 
@@ -829,7 +895,7 @@ mod tests {
         let keys = eff.keys.as_ref().unwrap();
         assert_eq!(keys.len(), 10);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 16);
+        assert_eq!(chords.len(), 20);
     }
 
     #[test]
@@ -843,9 +909,9 @@ mod tests {
         // WT preset is single-stroke only — no prefix, no chords.
         assert!(eff.prefix.is_none());
         assert!(eff.chords.is_none());
-        // But it has 29 single-stroke keys.
+        // But it has 35 single-stroke keys.
         let keys = eff.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 29);
+        assert_eq!(keys.len(), 35);
         assert_eq!(
             keys.get("Ctrl+Shift+T"),
             Some(&ActionReference::Simple("new-tab".to_string()))
@@ -908,7 +974,7 @@ mod tests {
         };
         let eff = effective_bindings(&def);
         let chords = eff.chords.as_ref().unwrap();
-        assert_eq!(chords.len(), 15, "still 15 chords");
+        assert_eq!(chords.len(), 20, "still 20 chords");
         assert_eq!(
             chords.get("%"),
             Some(&ActionReference::Simple("split-down".to_string())),

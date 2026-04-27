@@ -24,15 +24,16 @@ Follow-up:
 
 ## P1 Scrollback Navigation
 
-WTD has `enter-scrollback-mode`, and automation can use `scrollback --tail`, but
-there are no explicit line/page/top/bottom scroll actions for normal operator
-use.
+Status: addressed by `scrollback-line-up`, `scrollback-line-down`,
+`scrollback-page-up`, `scrollback-page-down`, `scrollback-top`, and
+`scrollback-bottom`.
 
-Follow-up:
+Implemented:
 
-- Add scrollback line/page/top/bottom actions.
-- Bind them in tmux and Windows Terminal presets where compatible.
-- Ensure alternate-screen panes do not pollute primary scrollback navigation.
+- Windows Terminal preset binds Ctrl+Shift+Up/Down/PageUp/PageDown/Home/End.
+- tmux preset binds prefix+PageUp/PageDown/Home/End and keeps prefix+`[` for
+  modal scrollback entry.
+- Alternate-screen panes ignore these local viewport actions.
 
 ## P1 Keyboard Selection
 

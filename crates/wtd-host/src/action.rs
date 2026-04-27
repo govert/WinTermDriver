@@ -601,6 +601,42 @@ pub fn v1_registry() -> ActionRegistry {
         description: "Enter scrollback navigation mode",
     });
     r.register(ActionDef {
+        name: "scrollback-line-up",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Scroll the focused pane back one line",
+    });
+    r.register(ActionDef {
+        name: "scrollback-line-down",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Scroll the focused pane forward one line",
+    });
+    r.register(ActionDef {
+        name: "scrollback-page-up",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Scroll the focused pane back one page",
+    });
+    r.register(ActionDef {
+        name: "scrollback-page-down",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Scroll the focused pane forward one page",
+    });
+    r.register(ActionDef {
+        name: "scrollback-top",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Jump the focused pane to the top of scrollback",
+    });
+    r.register(ActionDef {
+        name: "scrollback-bottom",
+        target_type: TargetType::Pane,
+        args: NO_ARGS,
+        description: "Jump the focused pane to the live view",
+    });
+    r.register(ActionDef {
         name: "pass-through-next-key",
         target_type: TargetType::Pane,
         args: NO_ARGS,

@@ -26,7 +26,13 @@
       "Alt+Shift+Left":  "resize-pane-left",
       "Alt+Shift+K":     "pass-through-next-key",
       "Ctrl+Insert":     "copy",
-      "Shift+Insert":    "paste"
+      "Shift+Insert":    "paste",
+      "Ctrl+Shift+Up":       "scrollback-line-up",
+      "Ctrl+Shift+Down":     "scrollback-line-down",
+      "Ctrl+Shift+PageUp":   "scrollback-page-up",
+      "Ctrl+Shift+PageDown": "scrollback-page-down",
+      "Ctrl+Shift+Home":     "scrollback-top",
+      "Ctrl+Shift+End":      "scrollback-bottom"
     },
     "chords": null
   },
@@ -90,36 +96,6 @@
       "wt_command": "markMode",
       "wt_keys": ["ctrl+shift+m"],
       "reason": "No WTD mark mode action in v1"
-    },
-    {
-      "wt_command": "scrollUp",
-      "wt_keys": ["ctrl+shift+up"],
-      "reason": "WTD uses enter-scrollback-mode (modal); no line-scroll action in v1"
-    },
-    {
-      "wt_command": "scrollDown",
-      "wt_keys": ["ctrl+shift+down"],
-      "reason": "WTD uses enter-scrollback-mode (modal); no line-scroll action in v1"
-    },
-    {
-      "wt_command": "scrollUpPage",
-      "wt_keys": ["ctrl+shift+pgup"],
-      "reason": "WTD uses enter-scrollback-mode (modal); no page-scroll action in v1"
-    },
-    {
-      "wt_command": "scrollDownPage",
-      "wt_keys": ["ctrl+shift+pgdn"],
-      "reason": "WTD uses enter-scrollback-mode (modal); no page-scroll action in v1"
-    },
-    {
-      "wt_command": "scrollToTop",
-      "wt_keys": ["ctrl+shift+home"],
-      "reason": "No WTD scroll-to-top action in v1"
-    },
-    {
-      "wt_command": "scrollToBottom",
-      "wt_keys": ["ctrl+shift+end"],
-      "reason": "No WTD scroll-to-bottom action in v1"
     },
     {
       "wt_command": "clearBuffer",
@@ -194,6 +170,12 @@
     "resizePane_right": "resize-pane-right",
     "resizePane_left": "resize-pane-left",
     "restartConnection": "restart-session",
+    "scrollUp": "scrollback-line-up",
+    "scrollDown": "scrollback-line-down",
+    "scrollUpPage": "scrollback-page-up",
+    "scrollDownPage": "scrollback-page-down",
+    "scrollToTop": "scrollback-top",
+    "scrollToBottom": "scrollback-bottom",
     "copy": "copy",
     "paste": "paste"
   },
@@ -211,12 +193,6 @@
     "switchSelectionEndpoint",
     "expandSelectionToWord",
     "showContextMenu",
-    "scrollUp",
-    "scrollDown",
-    "scrollUpPage",
-    "scrollDownPage",
-    "scrollToTop",
-    "scrollToBottom",
     "clearBuffer",
     "exportBuffer",
     "adjustFontSize",
