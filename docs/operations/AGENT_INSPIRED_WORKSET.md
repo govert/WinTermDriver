@@ -90,6 +90,15 @@ Pi-specific note:
 - Supervisor-style orchestration should rely on explicit waitable pane state and
   agent-published status, not only prompt + capture loops.
 
+Implementation stance:
+
+- Treat the planned work as one forward product push, not a phased compatibility
+  rollout.
+- Backward compatibility is not a constraint for legacy command names or
+  incomplete protocol shapes.
+- Keep an implementation order so prerequisites land before dependents, but do
+  not split the roadmap into versioned release phases.
+
 ## Workset Tracks
 
 ## Track A: Agent Attention System
@@ -263,22 +272,25 @@ actionable, not just the health of interactive agent panes.
 Coding agents do better work when the surrounding local stack is healthy and
 that health is obvious.
 
-## Priority Order
+## Implementation Order
 
-The recommended execution order is:
+The recommended order is dependency-first rather than version-first:
 
-1. Track A: Agent Attention System
-2. Track B: Structured Pane Metadata and Status
-3. Track C: Stable Automation and Driver Model
-4. Track F: Lifecycle and Persistence Reliability
-5. Track H: Managed Process Health and Recovery
-6. Track G: General-Purpose Terminal Polish
-7. Track E: Project Recipes and Workflow Memory
-8. Track D: Agent Ecosystem Compatibility
+1. Clean up lifecycle command semantics and persistence/restart tests.
+2. Define the stable automation contract and local access model.
+3. Build shared attention state and structured pane metadata.
+4. Add `wtd wait` on top of protocol, access, metadata, and attention state.
+5. Surface attention and metadata in navigation, status, and pane-list UI.
+6. Add managed process health as metadata and attention input.
+7. Add project-local recipes, including trust checks for changed checked-in
+   workflow files before auto-run.
+8. Add agent ecosystem adapters, including Pi status/attention integration and
+   a focused tmux compatibility subset.
+9. Continue general terminal polish from explicit audit output.
 
-This order balances product leverage with reliability. It prioritizes the core
-agent-host product gains, then hardens WTD's platform quality, then adds
-workflow convenience and ecosystem compatibility.
+This ordering keeps contracts stable while still treating the workset as a
+single forward push. Attention, metadata, automation, persistence, recipes,
+process health, and compatibility should all land against the same final model.
 
 ## Explicit Deferrals
 
