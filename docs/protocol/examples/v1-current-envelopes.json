@@ -1,0 +1,115 @@
+[
+  {
+    "id": "hello-1",
+    "type": "Handshake",
+    "payload": {
+      "clientType": "cli",
+      "clientVersion": "0.1.0",
+      "protocolVersion": 1
+    }
+  },
+  {
+    "id": "open-1",
+    "type": "OpenWorkspace",
+    "payload": {
+      "name": "dev",
+      "file": "C:\\Work\\WinTermDriver\\.wtd\\dev.yaml",
+      "recreate": false,
+      "profile": null
+    }
+  },
+  {
+    "id": "prompt-1",
+    "type": "Prompt",
+    "payload": {
+      "target": "dev/server",
+      "text": "Run the focused tests and summarize failures."
+    }
+  },
+  {
+    "id": "capture-1",
+    "type": "Capture",
+    "payload": {
+      "target": "dev/server",
+      "lines": 80,
+      "maxLines": 120
+    }
+  },
+  {
+    "id": "inspect-1",
+    "type": "Inspect",
+    "payload": {
+      "target": "dev/server"
+    }
+  },
+  {
+    "id": "action-1",
+    "type": "InvokeAction",
+    "payload": {
+      "action": "split-right",
+      "targetPaneId": "dev/server",
+      "args": {}
+    }
+  },
+  {
+    "id": "capture-1",
+    "type": "CaptureResult",
+    "payload": {
+      "text": "running test crate::integration ... ok\n",
+      "lines": 1,
+      "totalLines": 240,
+      "anchorFound": null,
+      "cursor": 239,
+      "cols": 120,
+      "rows": 30,
+      "onAlternate": false,
+      "title": "server",
+      "progress": {
+        "state": "normal",
+        "value": 80
+      },
+      "mouseMode": "none",
+      "sgrMouse": false,
+      "bracketedPaste": true,
+      "cursorRow": 29,
+      "cursorCol": 0,
+      "cursorVisible": true,
+      "cursorShape": "block"
+    }
+  },
+  {
+    "id": "inspect-1",
+    "type": "InspectResult",
+    "payload": {
+      "workspace": "dev",
+      "paneName": "server",
+      "sessionId": "1",
+      "state": "running",
+      "driverProfile": "codex",
+      "submitKey": "Enter",
+      "softBreakKey": null,
+      "cols": 120,
+      "rows": 30,
+      "onAlternate": false,
+      "mouseMode": "none",
+      "cursorShape": "block"
+    }
+  },
+  {
+    "id": "action-1",
+    "type": "InvokeActionResult",
+    "payload": {
+      "result": "pane-created",
+      "paneId": "2"
+    }
+  },
+  {
+    "id": "bad-target-1",
+    "type": "Error",
+    "payload": {
+      "code": "target-not-found",
+      "message": "No pane named 'server' in workspace 'dev'",
+      "candidates": ["dev/backend/api", "dev/tests/runner"]
+    }
+  }
+]
