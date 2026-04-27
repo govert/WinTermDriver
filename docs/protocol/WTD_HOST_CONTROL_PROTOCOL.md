@@ -331,6 +331,10 @@ Accepted states are `active`, `needs_attention`, `done`, and `error`.
 also ingests terminal notifications from OSC 9 and OSC 777 `notify` sequences as
 `needs_attention` with source `osc`.
 
+UI clients apply a focus-aware policy for external notification surfaces:
+`needs_attention` targeting the visible focused pane is downgraded to focused
+status instead of unread attention. `error` is not suppressed.
+
 Structured pane metadata is published with `SetPaneStatus`:
 
 ```json

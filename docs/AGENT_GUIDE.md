@@ -231,6 +231,11 @@ CLI. The protocol uses snake_case (`needs_attention`). Terminal applications can
 also raise attention with OSC 9 or OSC 777 `notify` sequences; WTD records those
 as `needs_attention` from source `osc`.
 
+The UI suppresses external unread attention for `needs_attention` when the
+target pane is already visible and focused. The message can still appear in the
+focused-pane status area, but it does not add to the notification count. `error`
+remains visible even for the focused pane.
+
 Use `wtd status` for durable pane metadata that should appear in inspect and
 attach snapshots: phase, status text, queue count, completion marker, and source.
 WTD also includes runtime metadata such as driver profile, cwd, and terminal

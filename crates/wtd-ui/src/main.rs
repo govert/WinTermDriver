@@ -358,6 +358,22 @@ fn pane_is_unread_attention(pane_session: &PaneSession) -> bool {
     )
 }
 
+fn focused_pane_matches_host_id(tab: &SnapshotTab, host_pane_id: &str) -> bool {
+    let focused = tab.layout_tree.focus();
+    tab.pane_sessions
+        .get(&focused)
+        .and_then(|pane_session| pane_session.host_pane_id.as_deref())
+        == Some(host_pane_id)
+}
+
+fn focus_aware_attention_state(state: AttentionState, target_is_focused: bool) -> AttentionState {
+    if target_is_focused && state == AttentionState::NeedsAttention {
+        AttentionState::Active
+    } else {
+        state
+    }
+}
+
 fn attention_count(tabs: &[SnapshotTab]) -> usize {
     tabs.iter()
         .flat_map(|tab| tab.pane_sessions.values())
@@ -2282,17 +2298,24 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         ..
                     } => {
                         if let Some(host_pane_id) = pane_id {
+                            let target_is_focused = active_tab_ref(&tabs, active_tab_index)
+                                .is_some_and(|tab| {
+                                    focused_pane_matches_host_id(tab, &host_pane_id)
+                                });
+                            let effective_state =
+                                focus_aware_attention_state(state, target_is_focused);
                             for (tab_index, tab) in tabs.iter_mut().enumerate() {
                                 for (ui_pane_id, pane_session) in tab.pane_sessions.iter_mut() {
                                     if pane_session.host_pane_id.as_deref()
                                         == Some(host_pane_id.as_str())
                                     {
-                                        pane_session.attention = state;
+                                        pane_session.attention = effective_state;
                                         pane_session.attention_message = message.clone();
                                         if tab_index == active_tab_index
                                             && *ui_pane_id == tab.layout_tree.focus()
                                         {
-                                            status_bar.set_attention(state, message.clone());
+                                            status_bar
+                                                .set_attention(effective_state, message.clone());
                                         }
                                     }
                                 }
@@ -4269,6 +4292,31 @@ mod tests {
         let label = notification_center_label(&tabs);
         assert!(label.contains("dev/main/two: input requested"));
         assert!(label.contains("dev/main/three"));
+    }
+
+    #[test]
+    fn focus_aware_attention_policy_suppresses_focused_needs_attention() {
+        assert_eq!(
+            focus_aware_attention_state(AttentionState::NeedsAttention, true),
+            AttentionState::Active
+        );
+        assert_eq!(
+            focus_aware_attention_state(AttentionState::NeedsAttention, false),
+            AttentionState::NeedsAttention
+        );
+        assert_eq!(
+            focus_aware_attention_state(AttentionState::Error, true),
+            AttentionState::Error
+        );
+
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        tab.pane_sessions
+            .get_mut(&focused)
+            .expect("focused pane")
+            .host_pane_id = Some("host-focused".to_string());
+        assert!(focused_pane_matches_host_id(&tab, "host-focused"));
+        assert!(!focused_pane_matches_host_id(&tab, "other"));
     }
 
     #[test]
