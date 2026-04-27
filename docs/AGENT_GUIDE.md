@@ -249,6 +249,13 @@ timeout it exits with the timeout code and still prints a snapshot with attentio
 state, metadata, and recent output so the coordinator can decide whether to
 prompt, retry, or surface the pane to a user.
 
+Inspect and metadata surfaces include managed process health when the pane is
+backed by a WTD-managed ConPTY session. The `processHealth` object reports the
+state (`creating`, `running`, `exited`, `failed`, or `restarting`), restart
+policy, restart attempt when available, exit code or spawn error when relevant,
+and placeholder resource hints. CPU and memory hints are reported as unavailable
+until platform-specific sampling is added.
+
 In the UI, use the command palette actions `toggle-pane-metadata-list`,
 `filter-pane-list-attention`, `filter-pane-list-status`,
 `filter-pane-list-driver`, `filter-pane-list-cwd`, and
@@ -622,8 +629,8 @@ Sessions can exit unexpectedly. Check pane state before sending commands:
 STATE=$(wtd list sessions myws --json)
 echo "$STATE" | jq '.sessions[] | select(.state != "running")'
 
-# Inspect a specific pane for details
-wtd inspect myws/server --json | jq '.state'
+# Inspect a specific pane for health details
+wtd inspect myws/server --json | jq '.processHealth'
 ```
 
 Restart policies are configured per workspace:

@@ -411,7 +411,8 @@ fn pane_metadata_summary(tabs: &[SnapshotTab], filter: PaneListFilter) -> String
             };
             let has_status = pane_session.phase.is_some()
                 || pane_session.status_text.is_some()
-                || pane_session.queue_pending.is_some();
+                || pane_session.queue_pending.is_some()
+                || pane_session.health_state.is_some();
             let include = match filter {
                 PaneListFilter::All => true,
                 PaneListFilter::Attention => pane_is_unread_attention(pane_session),
@@ -462,6 +463,9 @@ fn pane_metadata_summary(tabs: &[SnapshotTab], filter: PaneListFilter) -> String
             }
             if let Some(queue) = pane_session.queue_pending {
                 parts.push(format!("queue={queue}"));
+            }
+            if let Some(health) = pane_session.health_state.as_deref() {
+                parts.push(format!("health={health}"));
             }
             if let Some(source) = pane_session.source.as_deref() {
                 parts.push(format!("source={source}"));
@@ -2196,6 +2200,15 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         exit_code,
                         ..
                     } => {
+                        if let Some((tab_index, pane_id)) =
+                            find_pane_for_session(&tabs, &session_id)
+                        {
+                            if let Some(tab) = tabs.get_mut(tab_index) {
+                                if let Some(pane_session) = tab.pane_sessions.get_mut(&pane_id) {
+                                    pane_session.health_state = Some(new_state.clone());
+                                }
+                            }
+                        }
                         if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                             let focused = active_tab.layout_tree.focus();
                             if active_tab
@@ -4234,6 +4247,7 @@ mod tests {
                     phase: None,
                     status_text: None,
                     queue_pending: None,
+                    health_state: None,
                     source: None,
                     driver_profile: None,
                     cwd: None,
@@ -4274,6 +4288,7 @@ mod tests {
         session.phase = Some("working".to_string());
         session.status_text = Some("running tests".to_string());
         session.queue_pending = Some(2);
+        session.health_state = Some("running".to_string());
         session.source = Some("codex".to_string());
         session.driver_profile = Some("pi".to_string());
         session.cwd = Some("C:/Work/WinTermDriver".to_string());
@@ -4285,6 +4300,7 @@ mod tests {
         assert!(status.contains("phase=working"));
         assert!(status.contains("running tests"));
         assert!(status.contains("queue=2"));
+        assert!(status.contains("health=running"));
         assert!(status.contains("source=codex"));
         assert!(status.contains("driver=pi"));
         assert!(status.contains("cwd=C:/Work/WinTermDriver"));

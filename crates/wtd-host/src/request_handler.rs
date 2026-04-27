@@ -31,6 +31,7 @@ use crate::prompt_driver::{
     build_prompt_input_plan, encode_send_input, pane_driver_definition_from_effective,
     resolve_pane_driver,
 };
+use crate::session::{Session, SessionState};
 use crate::target_resolver::{resolve_by_id, resolve_target};
 use crate::terminal_input::encode_key_specs;
 use crate::workspace_instance::{PaneState, WorkspaceInstance};
@@ -525,6 +526,48 @@ fn screen_metadata(screen: &wtd_pty::ScreenBuffer) -> serde_json::Value {
         "cursorCol": u16::try_from(screen.cursor().col).unwrap_or(u16::MAX),
         "cursorVisible": screen.cursor().visible,
         "cursorShape": cursor_shape_name(screen),
+    })
+}
+
+fn session_state_name(state: &SessionState) -> &'static str {
+    match state {
+        SessionState::Creating => "creating",
+        SessionState::Running => "running",
+        SessionState::Exited { .. } => "exited",
+        SessionState::Failed { .. } => "failed",
+        SessionState::Restarting { .. } => "restarting",
+    }
+}
+
+fn session_health_metadata(session: &Session) -> serde_json::Value {
+    let restart_attempt = match session.state() {
+        SessionState::Restarting { attempt } => Some(*attempt),
+        _ => {
+            let count = session.backoff().restart_count();
+            (count > 0).then_some(count)
+        }
+    };
+    let exit_code = match session.state() {
+        SessionState::Exited { exit_code } => Some(*exit_code),
+        _ => None,
+    };
+    let error = match session.state() {
+        SessionState::Failed { error } => Some(error.clone()),
+        _ => None,
+    };
+    serde_json::json!({
+        "managed": true,
+        "state": session_state_name(session.state()),
+        "restartPolicy": session.restart_policy(),
+        "restartAttempt": restart_attempt,
+        "exitCode": exit_code,
+        "error": error,
+        "resourceHints": {
+            "available": false,
+            "pid": Value::Null,
+            "cpuPercent": Value::Null,
+            "memoryBytes": Value::Null,
+        }
     })
 }
 
@@ -1647,8 +1690,12 @@ impl HostRequestHandler {
                                 obj.insert(key.clone(), value.clone());
                             }
                         }
+                        obj.insert(
+                            "processHealth".to_string(),
+                            session_health_metadata(session),
+                        );
                     }
-                    format!("{:?}", session.state())
+                    session_state_name(session.state()).to_string()
                 } else {
                     "unknown".into()
                 }
@@ -1686,6 +1733,10 @@ impl HostRequestHandler {
                                     session.screen().progress(),
                                 ))
                                 .unwrap_or(Value::Null),
+                            );
+                            meta_obj.insert(
+                                "processHealth".to_string(),
+                                session_health_metadata(session),
                             );
                         }
                     }
@@ -2497,12 +2548,16 @@ mod tests {
 
     use super::{
         encode_mouse_input, encode_send_input, parse_driver_profile, scoped_session_key,
-        HostRequestHandler,
+        session_health_metadata, HostRequestHandler,
     };
     use crate::output_broadcaster::BroadcastEvent;
+    use crate::prompt_driver::resolve_pane_driver;
+    use crate::session::{Session, SessionConfig};
     use crate::workspace_instance::WorkspaceInstance;
     use serde_json::json;
     use wtd_core::global_settings::GlobalSettings;
+    use wtd_core::ids::SessionId;
+    use wtd_core::workspace::RestartPolicy;
     use wtd_core::workspace::{
         PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition, WorkspaceDefinition,
     };
@@ -2510,6 +2565,7 @@ mod tests {
         AttentionState, ClearAttention, Inspect, InspectResult, Mouse, MouseButton, MouseKind,
         Notify, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
     };
+    use wtd_pty::PtySize;
 
     fn encode_b64(input: &[u8]) -> String {
         const CHARS: &[u8; 64] =
@@ -2534,6 +2590,36 @@ mod tests {
             }
         }
         out
+    }
+
+    fn test_session(restart_policy: RestartPolicy) -> Session {
+        Session::new(
+            SessionId(1),
+            SessionConfig {
+                executable: "cmd.exe".to_string(),
+                args: Vec::new(),
+                cwd: Some("C:\\Work".to_string()),
+                env: HashMap::new(),
+                restart_policy,
+                startup_command: None,
+                size: PtySize::new(80, 24),
+                name: "shell".to_string(),
+                max_scrollback: 1000,
+                driver: resolve_pane_driver(None, None),
+            },
+        )
+    }
+
+    #[test]
+    fn session_health_metadata_serializes_managed_state() {
+        let session = test_session(RestartPolicy::OnFailure);
+        let health = session_health_metadata(&session);
+
+        assert_eq!(health["managed"], true);
+        assert_eq!(health["state"], "creating");
+        assert_eq!(health["restartPolicy"], "on-failure");
+        assert!(health["restartAttempt"].is_null());
+        assert!(health["resourceHints"]["available"].as_bool() == Some(false));
     }
 
     #[test]

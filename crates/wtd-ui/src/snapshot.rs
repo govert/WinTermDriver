@@ -21,6 +21,7 @@ pub struct PaneSession {
     pub phase: Option<String>,
     pub status_text: Option<String>,
     pub queue_pending: Option<u32>,
+    pub health_state: Option<String>,
     pub source: Option<String>,
     pub driver_profile: Option<String>,
     pub cwd: Option<String>,
@@ -63,6 +64,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let session_sizes = state["sessionSizes"].as_object();
     let session_titles = state["sessionTitles"].as_object();
     let session_progress = state["sessionProgress"].as_object();
+    let session_states = state["sessionStates"].as_object();
     let pane_attention = state["paneAttention"].as_object();
     let pane_metadata = state["paneMetadata"].as_object();
 
@@ -140,6 +142,12 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                 }
                             }
 
+                            let health_state = session_states
+                                .and_then(|states| states.get(&session_id))
+                                .and_then(|value| value.get("type"))
+                                .and_then(|value| value.as_str())
+                                .map(str::to_string);
+
                             pane_sessions.insert(
                                 ui_pane_id.clone(),
                                 PaneSession {
@@ -182,6 +190,7 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                                         .and_then(|value| value.get("queuePending"))
                                         .and_then(|value| value.as_u64())
                                         .and_then(|value| value.try_into().ok()),
+                                    health_state,
                                     source: pane_metadata
                                         .and_then(|metadata_map| metadata_map.get(&host_pane_key))
                                         .and_then(|value| value.get("source"))
@@ -340,6 +349,11 @@ mod tests {
                     "sessionId": 21
                 }
             },
+            "sessionStates": {
+                "21": {
+                    "type": "running"
+                }
+            },
             "paneAttention": {
                 "11": {
                     "state": "needs_attention",
@@ -379,6 +393,7 @@ mod tests {
         assert_eq!(ps.phase.as_deref(), Some("working"));
         assert_eq!(ps.status_text.as_deref(), Some("running tests"));
         assert_eq!(ps.queue_pending, Some(1));
+        assert_eq!(ps.health_state.as_deref(), Some("running"));
         assert_eq!(ps.source.as_deref(), Some("codex"));
         assert_eq!(ps.driver_profile.as_deref(), Some("codex"));
         assert_eq!(ps.cwd.as_deref(), Some("C:/Work/WinTermDriver"));
