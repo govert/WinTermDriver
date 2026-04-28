@@ -1,12 +1,18 @@
 //! M6 Performance Gate — §30 performance targets validation (§37.5)
 //!
-//! Validates all performance targets from §30:
+//! Opt-in performance validation for the targets from §30:
 //!   §30.1  Keystroke-to-echo latency: < 50ms
 //!   §30.1  Capture command response: < 100ms
 //!   §30.1  Workspace open (5 sessions): < 2s
 //!   §30.2  Output throughput: 100 MB/s per session (ScreenBuffer::advance)
 //!   §30.2  Concurrent sessions: 20+ without degradation
 //!   §30.1  Terminal output rendering: < 16ms/frame (ScreenBuffer advance for a full screen)
+//!
+//! These tests are ignored by default because they depend on machine speed,
+//! debug/release profile, and Windows ConPTY process-spawn availability. Run
+//! them explicitly with:
+//!
+//!   cargo test -p wtd-host --test gate_m6_performance -- --ignored
 
 #![cfg(windows)]
 
@@ -408,6 +414,7 @@ async fn poll_capture_until(
 
 /// Measures IPC capture round-trip latency. §30.1 target: < 100ms.
 #[tokio::test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 async fn capture_response_under_100ms() {
     let pipe_name = unique_pipe_name();
     let server =
@@ -494,6 +501,7 @@ async fn capture_response_under_100ms() {
 /// renders (< 5ms per eval-renderer benchmarks), so the host leg must
 /// be well under 50ms for the full path to meet target.
 #[test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 fn keystroke_to_echo_under_50ms() {
     use wtd_core::workspace::RestartPolicy;
 
@@ -596,6 +604,7 @@ fn wait_for_output(
 /// Opens a workspace with 5 panes/sessions and measures time to Running state.
 /// §30.1 target: < 2s.
 #[tokio::test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 async fn workspace_open_5_sessions_under_2s() {
     let pipe_name = unique_pipe_name();
     let server =
@@ -669,6 +678,7 @@ async fn workspace_open_5_sessions_under_2s() {
 /// no LTO. The test uses a scaled target: 100 MB/s for release, 5 MB/s
 /// floor for debug (validates no catastrophic regression).
 #[test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 fn screen_buffer_throughput_100mbps() {
     let cols = 120;
     let rows = 40;
@@ -747,6 +757,7 @@ fn screen_buffer_throughput_100mbps() {
 /// This tests the host-side processing time. The D2D rendering time was
 /// validated separately in eval-renderer (< 5ms/frame).
 #[test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 fn screen_buffer_frame_advance_under_16ms() {
     let cols = 120;
     let rows = 40;
@@ -809,6 +820,7 @@ fn screen_buffer_frame_advance_under_16ms() {
 /// reach Running state and can process I/O without degradation.
 /// §30.2 target: 20+ concurrent sessions.
 #[test]
+#[ignore = "performance gate; run explicitly with --ignored"]
 fn concurrent_sessions_20_plus() {
     use wtd_core::workspace::RestartPolicy;
 

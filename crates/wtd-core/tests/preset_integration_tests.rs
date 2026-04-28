@@ -8,7 +8,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use wtd_core::global_settings::{effective_bindings, load_global_settings, merge_bindings};
+use wtd_core::global_settings::{
+    effective_bindings, load_global_settings, merge_bindings, tmux_bindings,
+    windows_terminal_bindings,
+};
 use wtd_core::workspace::{ActionReference, BindingPreset, BindingsDefinition};
 use wtd_core::GlobalSettings;
 
@@ -31,7 +34,23 @@ fn load_and_expand(yaml: &str, dir: &Path, file: &str) -> BindingsDefinition {
     effective_bindings(&settings.bindings)
 }
 
-// ── Test 1: windows-terminal preset produces full 28-key WT binding set ──────
+fn preset_key_count(bindings: &BindingsDefinition) -> usize {
+    effective_bindings(bindings)
+        .keys
+        .as_ref()
+        .map(HashMap::len)
+        .unwrap_or(0)
+}
+
+fn preset_chord_count(bindings: &BindingsDefinition) -> usize {
+    effective_bindings(bindings)
+        .chords
+        .as_ref()
+        .map(HashMap::len)
+        .unwrap_or(0)
+}
+
+// ── Test 1: windows-terminal preset produces the full WT binding set ─────────
 
 #[test]
 fn preset_windows_terminal_produces_full_wt_binding_set() {
@@ -55,8 +74,11 @@ bindings:
 
     let keys = eff.keys.as_ref().expect("WT keys must be present");
 
-    // Check the JSON fixture count: 20 base bindings + 8 goto-tab = 28.
-    assert_eq!(keys.len(), 28, "windows-terminal preset must have 28 keys");
+    assert_eq!(
+        keys.len(),
+        preset_key_count(&windows_terminal_bindings()),
+        "windows-terminal preset must match the built-in WT key count"
+    );
 
     // ── Spot-check against docs/wt_preset_bindings.json ──────────────────
 
@@ -134,12 +156,8 @@ bindings:
     // Ctrl+Alt+9 must NOT be present (WT "last tab" has no WTD equivalent).
     assert!(!keys.contains_key("Ctrl+Alt+9"), "no Ctrl+Alt+9 binding");
 
-    // Bindings omitted from the fixture must not appear.
-    assert!(
-        !keys.contains_key("Ctrl+Shift+Up"),
-        "no scroll-line binding"
-    );
-    assert!(!keys.contains_key("Ctrl+Shift+F"), "no find binding");
+    expect_simple("Ctrl+Shift+Up", "scrollback-line-up");
+    expect_simple("Ctrl+Shift+F", "find");
 }
 
 // ── Test 2: tmux preset produces Ctrl+B chord-based bindings ─────────────────
@@ -301,11 +319,11 @@ bindings:
     // Prefix and chords are preserved from the tmux preset.
     assert_eq!(eff.prefix, Some("Ctrl+B".to_string()));
     let chords = eff.chords.as_ref().unwrap();
-    assert_eq!(chords.len(), 15);
+    assert_eq!(chords.len(), preset_chord_count(&tmux_bindings()));
 
     let keys = eff.keys.as_ref().unwrap();
-    // tmux has 10 keys; user adds Ctrl+N (new); total = 11.
-    assert_eq!(keys.len(), 11, "10 tmux + 1 new user key = 11");
+    let tmux_key_count = preset_key_count(&tmux_bindings());
+    assert_eq!(keys.len(), tmux_key_count + 1);
 
     // Override: tmux Ctrl+Shift+T was new-tab; now custom.
     assert_eq!(
@@ -362,17 +380,32 @@ bindings:
         "global tmux prefix preserved when workspace has no prefix"
     );
 
-    // WT has no chords; tmux global chords (15) are preserved.
+    // WT has no chords; tmux global chords are preserved.
     let chords = merged.chords.as_ref().unwrap();
     assert_eq!(
         chords.len(),
-        15,
+        preset_chord_count(&tmux_bindings()),
         "tmux global chords preserved when workspace has no chords"
     );
 
-    // Keys: WT 28 + tmux-unique 2 (Ctrl+Shift+Space, Alt+Shift+D) = 30.
+    // Keys: workspace WT keys plus tmux-only global keys.
     let keys = merged.keys.as_ref().unwrap();
-    assert_eq!(keys.len(), 30, "WT 28 + 2 tmux-unique = 30");
+    let expected_key_count = {
+        let mut expected = effective_bindings(&tmux_bindings())
+            .keys
+            .unwrap_or_default();
+        expected.extend(
+            effective_bindings(&windows_terminal_bindings())
+                .keys
+                .unwrap_or_default(),
+        );
+        expected.len()
+    };
+    assert_eq!(
+        keys.len(),
+        expected_key_count,
+        "merged keys must match tmux plus WT overlay"
+    );
 
     // WT-specific keys are present.
     assert!(
@@ -411,9 +444,13 @@ bindings:
     let eff = load_and_expand(yaml, &dir, "settings.yaml");
     let _ = std::fs::remove_dir_all(&dir);
 
-    // WT has 28 keys; two are removed → 26 remain.
+    // WT keys minus the two removed bindings.
     let keys = eff.keys.as_ref().unwrap();
-    assert_eq!(keys.len(), 26, "28 WT keys minus 2 removed = 26");
+    assert_eq!(
+        keys.len(),
+        preset_key_count(&windows_terminal_bindings()) - 2,
+        "WT keys minus 2 removed"
+    );
 
     // Removed keys must be absent.
     assert!(!keys.contains_key("F11"), "F11 must be removed");
@@ -447,13 +484,13 @@ fn default_global_settings_uses_windows_terminal_preset() {
         "default GlobalSettings must use windows-terminal preset"
     );
 
-    // Expanding the default bindings produces the full 28-key WT set.
+    // Expanding the default bindings produces the full WT set.
     let eff = effective_bindings(&settings.bindings);
     let keys = eff.keys.as_ref().expect("expanded WT keys must be present");
     assert_eq!(
         keys.len(),
-        28,
-        "expanded default bindings must have 28 WT keys"
+        preset_key_count(&windows_terminal_bindings()),
+        "expanded default bindings must match WT keys"
     );
     assert_eq!(
         keys.get("Ctrl+Shift+T"),
@@ -476,8 +513,8 @@ fn default_global_settings_uses_windows_terminal_preset() {
     let loaded_keys = loaded_eff.keys.as_ref().unwrap();
     assert_eq!(
         loaded_keys.len(),
-        28,
-        "loaded default bindings must expand to 28 keys"
+        preset_key_count(&windows_terminal_bindings()),
+        "loaded default bindings must expand to WT keys"
     );
 }
 

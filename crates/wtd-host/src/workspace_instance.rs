@@ -2507,12 +2507,18 @@ mod tests {
             session_def.startup_command.as_deref()
         );
 
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let child_session = inst
-            .session_mut(&child_session_id)
-            .expect("child session should exist");
-        child_session.process_pending_output();
-        let visible = child_session.screen().visible_text();
+        let start = std::time::Instant::now();
+        let visible = loop {
+            let child_session = inst
+                .session_mut(&child_session_id)
+                .expect("child session should exist");
+            child_session.process_pending_output();
+            let visible = child_session.screen().visible_text();
+            if visible.contains(marker) || start.elapsed() >= std::time::Duration::from_secs(5) {
+                break visible;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
         assert!(
             visible.contains(marker),
             "split-spawned session should execute inherited startup command, got:\n{}",

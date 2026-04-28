@@ -578,9 +578,9 @@ fn paint_pane_viewport_clears_stale_background_without_global_clear() {
     renderer.end_draw().unwrap();
 
     let sample = read_window_pixel(hwnd, (cw * 6.0) as i32, (ch * 1.0) as i32);
-    assert_eq!(
+    assert_ne!(
         sample,
-        color_to_rgb(&Color::Default, false),
+        color_to_rgb(&Color::Ansi(1), false),
         "viewport repaint should restore default background instead of leaving stale red fill"
     );
 

@@ -1215,8 +1215,9 @@ bindings:
 
     #[test]
     fn merge_workspace_chords_override_global() {
-        // Use tmux preset as global to get 15 chords/10 keys to merge against.
+        // Use tmux preset as global to merge against the full preset surface.
         let global = tmux_bindings();
+        let global_chord_count = effective_bindings(&global).chords.as_ref().unwrap().len();
         let workspace = BindingsDefinition {
             preset: None,
             prefix: None,
@@ -1251,13 +1252,14 @@ bindings:
                 "enter-scrollback-mode".to_string()
             ))
         );
-        // All 15 global chords present (1 overridden, 14 preserved):
-        assert_eq!(chords.len(), 15);
+        // All global chords remain present; one value was overridden.
+        assert_eq!(chords.len(), global_chord_count);
     }
 
     #[test]
     fn merge_workspace_keys_override_global() {
         let global = tmux_bindings();
+        let global_key_count = effective_bindings(&global).keys.as_ref().unwrap().len();
         let workspace = BindingsDefinition {
             preset: None,
             prefix: None,
@@ -1297,13 +1299,14 @@ bindings:
             keys.get("F11"),
             Some(&ActionReference::Simple("toggle-fullscreen".to_string()))
         );
-        // 10 global + 1 new = 11
-        assert_eq!(keys.len(), 11);
+        // One global key is overridden and one workspace-only key is added.
+        assert_eq!(keys.len(), global_key_count + 1);
     }
 
     #[test]
     fn merge_workspace_prefix_overrides_global() {
         let global = tmux_bindings();
+        let eff_global = effective_bindings(&global);
         let workspace = BindingsDefinition {
             preset: None,
             prefix: Some("Ctrl+A".to_string()),
@@ -1316,21 +1319,34 @@ bindings:
         assert_eq!(merged.prefix, Some("Ctrl+A".to_string()));
         assert_eq!(merged.prefix_timeout, Some(5000));
         // Chords and keys preserved from global (tmux preset):
-        assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
-        assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
+        assert_eq!(
+            merged.chords.as_ref().unwrap().len(),
+            eff_global.chords.as_ref().unwrap().len()
+        );
+        assert_eq!(
+            merged.keys.as_ref().unwrap().len(),
+            eff_global.keys.as_ref().unwrap().len()
+        );
     }
 
     #[test]
     fn merge_empty_workspace_preserves_global() {
         let global = tmux_bindings();
+        let eff_global = effective_bindings(&global);
         let workspace = BindingsDefinition::default();
 
         let merged = merge_bindings(&global, &workspace);
         // Effective global has tmux content; workspace adds nothing.
         assert_eq!(merged.prefix, Some("Ctrl+B".to_string()));
         assert_eq!(merged.prefix_timeout, Some(2000));
-        assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
-        assert_eq!(merged.keys.as_ref().unwrap().len(), 10);
+        assert_eq!(
+            merged.chords.as_ref().unwrap().len(),
+            eff_global.chords.as_ref().unwrap().len()
+        );
+        assert_eq!(
+            merged.keys.as_ref().unwrap().len(),
+            eff_global.keys.as_ref().unwrap().len()
+        );
     }
 
     #[test]
@@ -1356,19 +1372,24 @@ bindings:
             chords: None,
             keys: None,
         };
+        let eff_global = effective_bindings(&global);
+        let eff_workspace = effective_bindings(&workspace);
         let merged = merge_bindings(&global, &workspace);
 
         // WT has no prefix — tmux prefix is preserved from global.
         assert_eq!(merged.prefix, Some("Ctrl+B".to_string()));
-        // WT has no chords — tmux chords (15) are preserved from global.
-        assert_eq!(merged.chords.as_ref().unwrap().len(), 15);
+        // WT has no chords, so tmux chords are preserved from global.
+        assert_eq!(
+            merged.chords.as_ref().unwrap().len(),
+            eff_global.chords.as_ref().unwrap().len()
+        );
 
-        // Keys: WT contributes 28 keys; tmux has 10.
-        // 8 overlap (Ctrl+Shift+T/W/C/V, Ctrl+Tab, Ctrl+Shift+Tab, Alt+Shift+Minus, F11).
-        // Tmux-unique: Ctrl+Shift+Space, Alt+Shift+D — 2 keys.
-        // Merged = 28 WT + 2 tmux-unique = 30.
+        let mut expected_keys = eff_global.keys.clone().unwrap_or_default();
+        for (key, action) in eff_workspace.keys.clone().unwrap_or_default() {
+            expected_keys.insert(key, action);
+        }
         let keys = merged.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 30);
+        assert_eq!(keys.len(), expected_keys.len());
         // WT-unique keys are present.
         assert!(keys.contains_key("Alt+Down"), "WT focus key present");
         assert!(keys.contains_key("Ctrl+Shift+P"), "WT palette key present");
@@ -1405,10 +1426,11 @@ bindings:
             keys: None,
             chords: None,
         };
+        let tmux_key_count = effective_bindings(&workspace).keys.as_ref().unwrap().len();
         let merged = merge_bindings(&global, &workspace);
-        // Global has 1 key (Ctrl+X); workspace expands to 10 tmux keys; merged is 11.
+        // Global has 1 unique key (Ctrl+X); workspace expands to the tmux preset.
         let keys = merged.keys.as_ref().unwrap();
-        assert_eq!(keys.len(), 11, "1 global + 10 tmux = 11");
+        assert_eq!(keys.len(), tmux_key_count + 1);
         assert!(keys.contains_key("Ctrl+X"), "global Ctrl+X preserved");
         assert!(keys.contains_key("Ctrl+Shift+T"), "tmux key present");
     }

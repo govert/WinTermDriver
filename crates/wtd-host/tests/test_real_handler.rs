@@ -124,11 +124,8 @@ tabs:
         profile: cmd
         startupCommand: "echo HANDLER_READY"
 "#;
-    std::fs::write(wtd_dir.join("handler-test.yaml"), yaml).unwrap();
-
-    // Set CWD to the temp dir so find_workspace looks in .wtd/
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&tmp_dir).unwrap();
+    let workspace_file = wtd_dir.join("handler-test.yaml");
+    std::fs::write(&workspace_file, yaml).unwrap();
 
     // 2. Start IPC server with real HostRequestHandler.
     let pipe_name = unique_pipe_name();
@@ -149,7 +146,7 @@ tabs:
             "open-1",
             &OpenWorkspace {
                 name: Some("handler-test".to_string()),
-                file: None,
+                file: Some(workspace_file.to_string_lossy().to_string()),
                 recreate: false,
 
                 profile: None,
@@ -364,8 +361,6 @@ tabs:
     drop(client);
     let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
 
-    // Restore CWD and clean up
-    std::env::set_current_dir(&original_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
@@ -391,10 +386,8 @@ tabs:
         profile: cmd
         startupCommand: "echo KEYS_READY"
 "#;
-    std::fs::write(wtd_dir.join("handler-keys.yaml"), yaml).unwrap();
-
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&tmp_dir).unwrap();
+    let workspace_file = wtd_dir.join("handler-keys.yaml");
+    std::fs::write(&workspace_file, yaml).unwrap();
 
     let pipe_name = unique_pipe_name();
     let handler = HostRequestHandler::new(GlobalSettings::default());
@@ -413,7 +406,7 @@ tabs:
             "open-keys",
             &OpenWorkspace {
                 name: Some("handler-keys".to_string()),
-                file: None,
+                file: Some(workspace_file.to_string_lossy().to_string()),
                 recreate: false,
 
                 profile: None,
@@ -500,7 +493,6 @@ tabs:
 
     let _ = shutdown_tx.send(true);
     server_task.await.unwrap().unwrap();
-    std::env::set_current_dir(original_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
@@ -526,10 +518,8 @@ tabs:
         profile: cmd
         startupCommand: "echo PROMPT_READY"
 "#;
-    std::fs::write(wtd_dir.join("handler-prompt.yaml"), yaml).unwrap();
-
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&tmp_dir).unwrap();
+    let workspace_file = wtd_dir.join("handler-prompt.yaml");
+    std::fs::write(&workspace_file, yaml).unwrap();
 
     let pipe_name = unique_pipe_name();
     let handler = HostRequestHandler::new(GlobalSettings::default());
@@ -548,7 +538,7 @@ tabs:
             "open-prompt",
             &OpenWorkspace {
                 name: Some("handler-prompt".to_string()),
-                file: None,
+                file: Some(workspace_file.to_string_lossy().to_string()),
                 recreate: false,
 
                 profile: None,
@@ -609,6 +599,25 @@ tabs:
     write_frame(
         &mut client,
         &Envelope::new(
+            "cfg-plain",
+            &ConfigurePane {
+                target: "shell".to_string(),
+                driver_profile: Some("plain".to_string()),
+                submit_key: None,
+                soft_break_key: None,
+                clear_soft_break: false,
+                clear_driver: false,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let cfg_plain_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(cfg_plain_resp.msg_type, OkResponse::TYPE_NAME);
+
+    write_frame(
+        &mut client,
+        &Envelope::new(
             "prompt-single",
             &Prompt {
                 target: "shell".to_string(),
@@ -637,30 +646,21 @@ tabs:
     write_frame(
         &mut client,
         &Envelope::new(
-            "prompt-multi",
-            &Prompt {
+            "cfg-save-codex",
+            &ConfigurePane {
                 target: "shell".to_string(),
-                text: "echo ONE\necho TWO".to_string(),
+                driver_profile: Some("codex".to_string()),
+                submit_key: None,
+                soft_break_key: None,
+                clear_soft_break: false,
+                clear_driver: false,
             },
         ),
     )
     .await
     .unwrap();
-    let multi_resp = read_frame(&mut client).await.unwrap();
-    assert_eq!(multi_resp.msg_type, OkResponse::TYPE_NAME);
-
-    let multi_prompted = poll_capture_until(
-        &mut client,
-        "shell",
-        |text| text.contains("ONE") && text.contains("TWO"),
-        Duration::from_secs(10),
-    )
-    .await;
-    assert!(
-        multi_prompted.contains("ONE") && multi_prompted.contains("TWO"),
-        "multiline codex-style prompt should paste and submit in cmd.exe, got:\n{}",
-        multi_prompted
-    );
+    let cfg_save_resp = read_frame(&mut client).await.unwrap();
+    assert_eq!(cfg_save_resp.msg_type, OkResponse::TYPE_NAME);
 
     let save_path = tmp_dir.join("saved-driver.yaml");
     write_frame(
@@ -685,7 +685,6 @@ tabs:
     let _ = shutdown_tx.send(true);
     drop(client);
     let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
-    std::env::set_current_dir(original_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 

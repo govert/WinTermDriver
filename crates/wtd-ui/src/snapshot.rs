@@ -85,10 +85,25 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
     let pane_metadata = state["paneMetadata"].as_object();
 
     let mut rebuilt_tabs = Vec::new();
+    let mut next_ui_pane_id = 1u64;
     for tab in tabs {
         let tab_name = tab["name"].as_str().unwrap_or("tab");
         let layout_node: PaneNode = serde_json::from_value(tab["layout"].clone()).ok()?;
         let (mut layout_tree, pane_mappings) = LayoutTree::from_pane_node(&layout_node);
+        let pane_id_mapping = layout_tree.reassign_pane_ids(|| {
+            let id = PaneId(next_ui_pane_id);
+            next_ui_pane_id += 1;
+            id
+        });
+        let pane_mappings = pane_mappings
+            .into_iter()
+            .filter_map(|(name, pane_id)| {
+                pane_id_mapping
+                    .get(&pane_id)
+                    .cloned()
+                    .map(|mapped| (name, mapped))
+            })
+            .collect::<Vec<_>>();
         if let Some(focus_name) = tab.get("focus").and_then(|value| value.as_str()) {
             if let Some((_, pane_id)) = pane_mappings.iter().find(|(name, _)| name == focus_name) {
                 let _ = layout_tree.set_focus(pane_id.clone());
@@ -575,6 +590,80 @@ mod tests {
 
         assert_eq!(session.pane_path, "focus-restore-test/main/bottom");
         assert_eq!(session.session_id, "101");
+    }
+
+    #[test]
+    fn rebuild_snapshot_keeps_same_named_panes_on_different_tabs_distinct() {
+        let first_visible = base64_encode(b"first-tab-buffer\r\n");
+        let second_visible = base64_encode(b"second-tab-buffer\r\n");
+        let state = json!({
+            "name": "same-pane-name",
+            "tabs": [
+                {
+                    "name": "one",
+                    "layout": {
+                        "type": "pane",
+                        "name": "shell"
+                    },
+                    "panes": [11]
+                },
+                {
+                    "name": "two",
+                    "layout": {
+                        "type": "pane",
+                        "name": "shell"
+                    },
+                    "panes": [22]
+                }
+            ],
+            "paneStates": {
+                "11": { "type": "attached", "sessionId": "session-one" },
+                "22": { "type": "attached", "sessionId": "session-two" }
+            },
+            "sessionScreens": {
+                "session-one": first_visible,
+                "session-two": second_visible
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let first_tab = &rebuilt.tabs[0];
+        let second_tab = &rebuilt.tabs[1];
+        let first_pane = first_tab.layout_tree.focus();
+        let second_pane = second_tab.layout_tree.focus();
+
+        assert_ne!(
+            first_pane, second_pane,
+            "UI pane identity must be unique across tabs"
+        );
+
+        let first_session = first_tab
+            .pane_sessions
+            .get(&first_pane)
+            .expect("first tab pane should map to a session");
+        let second_session = second_tab
+            .pane_sessions
+            .get(&second_pane)
+            .expect("second tab pane should map to a session");
+        assert_eq!(first_session.pane_path, "same-pane-name/one/shell");
+        assert_eq!(second_session.pane_path, "same-pane-name/two/shell");
+        assert_eq!(first_session.session_id, "session-one");
+        assert_eq!(second_session.session_id, "session-two");
+
+        let first_text = first_tab
+            .screens
+            .get(&first_pane)
+            .expect("first pane should have a screen")
+            .visible_text();
+        let second_text = second_tab
+            .screens
+            .get(&second_pane)
+            .expect("second pane should have a screen")
+            .visible_text();
+        assert!(first_text.contains("first-tab-buffer"));
+        assert!(!first_text.contains("second-tab-buffer"));
+        assert!(second_text.contains("second-tab-buffer"));
+        assert!(!second_text.contains("first-tab-buffer"));
     }
 
     #[test]

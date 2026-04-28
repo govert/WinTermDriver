@@ -109,12 +109,17 @@ impl Session {
         );
         let args: Vec<&str> = spawn_args.iter().map(|s| s.as_str()).collect();
 
+        let env = if self.config.env.is_empty() {
+            None
+        } else {
+            Some(&self.config.env)
+        };
         let pty = match PtySession::spawn(
             &self.config.executable,
             &args,
             self.config.cwd.as_deref(),
             self.config.size,
-            Some(&self.config.env),
+            env,
             None,
         ) {
             Ok(p) => p,
