@@ -21,7 +21,7 @@ use wtd_core::layout::LayoutTree;
 use wtd_core::logging::init_stderr_logging;
 use wtd_core::workspace::PaneNode;
 use wtd_core::LogLevel;
-use wtd_ipc::message::{AttentionState, ProgressInfo};
+use wtd_ipc::message::{AttentionState, ProgressInfo, ProgressState};
 use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
@@ -633,8 +633,42 @@ fn refresh_window_title(
     window::set_window_title(hwnd, &win_title);
 }
 
+fn title_work_indicator(title: Option<&str>) -> Option<&'static str> {
+    let title = title?.trim_start();
+    if title.starts_with(":.") {
+        Some(":.")
+    } else if title.starts_with("\u{1f514}") {
+        Some("\u{1f514}")
+    } else {
+        None
+    }
+}
+
+fn pane_work_indicator(pane_session: &PaneSession) -> Option<&'static str> {
+    title_work_indicator(pane_session.title.as_deref()).or_else(|| {
+        if matches!(
+            pane_session.attention,
+            AttentionState::NeedsAttention | AttentionState::Error
+        ) {
+            Some("\u{1f514}")
+        } else if pane_session
+            .progress
+            .as_ref()
+            .is_some_and(|progress| progress.state == ProgressState::Indeterminate)
+        {
+            Some(":.")
+        } else {
+            None
+        }
+    })
+}
+
 fn pane_overlay_label(pane_session: &PaneSession) -> String {
-    pane_short_name(&pane_session.pane_path).to_string()
+    let pane_name = pane_short_name(&pane_session.pane_path);
+    match pane_work_indicator(pane_session) {
+        Some(indicator) => format!("{indicator} {pane_name}"),
+        None => pane_name.to_string(),
+    }
 }
 
 fn send_active_pane_sizes(
@@ -4649,6 +4683,35 @@ mod tests {
         let label = notification_center_label(&tabs);
         assert!(label.contains("dev/main/two: input requested"));
         assert!(label.contains("dev/main/three"));
+    }
+
+    #[test]
+    fn pane_overlay_label_includes_agent_work_indicator_from_title() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.pane_path = "dev/main/MyPane".to_string();
+        pane.title = Some(":. MyPane".to_string());
+
+        assert_eq!(pane_overlay_label(pane), ":. MyPane");
+    }
+
+    #[test]
+    fn pane_overlay_label_falls_back_to_pane_activity_state() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.pane_path = "dev/main/MyPane".to_string();
+        pane.progress = Some(ProgressInfo {
+            state: ProgressState::Indeterminate,
+            value: None,
+        });
+
+        assert_eq!(pane_overlay_label(pane), ":. MyPane");
+
+        pane.progress = None;
+        pane.attention = AttentionState::NeedsAttention;
+        assert_eq!(pane_overlay_label(pane), "\u{1f514} MyPane");
     }
 
     #[test]
