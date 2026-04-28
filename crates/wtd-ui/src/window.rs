@@ -22,6 +22,7 @@ static RESIZED: AtomicBool = AtomicBool::new(false);
 static RESIZE_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RESIZE_HEIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static WINDOW_MINIMIZED: AtomicBool = AtomicBool::new(false);
+const APP_ICON_RESOURCE_ID: usize = 1;
 
 /// Check and clear the "needs paint" flag.
 pub fn take_needs_paint() -> bool {
@@ -359,6 +360,7 @@ pub fn create_terminal_window(title: &str, width: i32, height: i32) -> Result<HW
         let instance = GetModuleHandleW(None)?;
         let hinstance: HINSTANCE = instance.into();
         let class_name = w!("WtdTerminal");
+        let app_icon = LoadIconW(hinstance, PCWSTR(APP_ICON_RESOURCE_ID as *const u16)).ok();
 
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
@@ -366,6 +368,7 @@ pub fn create_terminal_window(title: &str, width: i32, height: i32) -> Result<HW
             lpszClassName: class_name,
             hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
+            hIcon: app_icon.unwrap_or_default(),
             style: CS_DBLCLKS,
             ..Default::default()
         };
