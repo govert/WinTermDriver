@@ -44,6 +44,17 @@ fn resolve_timeout(cli_timeout: Option<f64>) -> Duration {
     }
 }
 
+fn command_request_timeout(cli_timeout: Option<f64>, command: &Command) -> Duration {
+    if cli_timeout.is_some() {
+        return resolve_timeout(cli_timeout);
+    }
+    match command {
+        Command::Ask { timeout, .. } if *timeout > 0.0 => Duration::from_secs_f64(*timeout + 5.0),
+        Command::Wait { timeout, .. } if *timeout > 0.0 => Duration::from_secs_f64(*timeout + 5.0),
+        _ => DEFAULT_TIMEOUT,
+    }
+}
+
 fn request_cwd() -> String {
     std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -104,6 +115,7 @@ fn map_attention_state(state: AttentionStateArg) -> AttentionState {
 
 fn map_wait_condition(condition: WaitConditionArg) -> WaitCondition {
     match condition {
+        WaitConditionArg::Ready => WaitCondition::Ready,
         WaitConditionArg::Idle => WaitCondition::Idle,
         WaitConditionArg::Done => WaitCondition::Done,
         WaitConditionArg::NeedsAttention => WaitCondition::NeedsAttention,
@@ -115,8 +127,6 @@ fn map_wait_condition(condition: WaitConditionArg) -> WaitCondition {
 
 /// Run the CLI command: connect to host, send request, format response.
 pub async fn run(cli: Cli) -> i32 {
-    let timeout = resolve_timeout(cli.timeout);
-
     // Bare `wtd` (no subcommand) → implicit `start` with defaults.
     let mut command = cli.command.unwrap_or(Command::Start {
         name: None,
@@ -124,6 +134,7 @@ pub async fn run(cli: Cli) -> i32 {
         recreate: false,
         profile: None,
     });
+    let timeout = command_request_timeout(cli.timeout, &command);
 
     match &command {
         Command::Completions { .. } => unreachable!(),
@@ -133,6 +144,24 @@ pub async fn run(cli: Cli) -> i32 {
         }
         Command::Follow { target, raw } => {
             return run_follow(target, *raw, cli.json, timeout).await;
+        }
+        Command::Ask {
+            target,
+            text,
+            timeout: wait_timeout,
+            recent_lines,
+            lines,
+        } => {
+            return run_ask(
+                target,
+                text,
+                *wait_timeout,
+                *recent_lines,
+                *lines,
+                cli.json,
+                timeout,
+            )
+            .await;
         }
         _ => {}
     }
@@ -215,6 +244,79 @@ pub async fn run(cli: Cli) -> i32 {
     }
 
     result.exit_code
+}
+
+async fn run_ask(
+    target: &str,
+    text: &str,
+    wait_timeout: f64,
+    recent_lines: u32,
+    capture_lines: Option<u32>,
+    json: bool,
+    request_timeout: Duration,
+) -> i32 {
+    let mut client = match IpcClient::connect_and_handshake().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return client_error_exit_code(&e);
+        }
+    };
+    client.set_timeout(request_timeout);
+
+    let prompt = Envelope::new(
+        next_id(),
+        &Prompt {
+            target: target.to_string(),
+            text: text.to_string(),
+        },
+    );
+    if let Err(e) = client.request(&prompt).await {
+        eprintln!("wtd: {e}");
+        return client_error_exit_code(&e);
+    }
+
+    let wait = Envelope::new(
+        next_id(),
+        &WaitPane {
+            target: target.to_string(),
+            condition: WaitCondition::Ready,
+            timeout_ms: Some((wait_timeout * 1000.0).max(0.0) as u64),
+            poll_ms: None,
+            recent_lines: Some(recent_lines),
+        },
+    );
+    let wait_response = match client.request(&wait).await {
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return client_error_exit_code(&e);
+        }
+    };
+    let wait_result = output::format_response(&wait_response, json);
+    if wait_result.exit_code != exit_code::SUCCESS {
+        print_result(&wait_result);
+        return wait_result.exit_code;
+    }
+
+    let capture = Envelope::new(
+        next_id(),
+        &Capture {
+            target: target.to_string(),
+            lines: capture_lines,
+            ..Capture::default()
+        },
+    );
+    let capture_response = match client.request(&capture).await {
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("wtd: {e}");
+            return client_error_exit_code(&e);
+        }
+    };
+    let capture_result = output::format_response(&capture_response, json);
+    print_result(&capture_result);
+    capture_result.exit_code
 }
 
 async fn run_recipe_command(action: &RecipeCommand, json: bool, timeout: Duration) -> i32 {
@@ -559,6 +661,7 @@ fn require_recipe_target(
 
 fn wait_condition_from_str(condition: &str) -> Result<WaitCondition, String> {
     match condition {
+        "ready" => Ok(WaitCondition::Ready),
         "idle" => Ok(WaitCondition::Idle),
         "done" => Ok(WaitCondition::Done),
         "needs-attention" => Ok(WaitCondition::NeedsAttention),
@@ -936,7 +1039,8 @@ fn build_request(command: &Command) -> Result<Option<Envelope>, String> {
                 recent_lines: Some(*recent_lines),
             },
         )),
-        Command::Recipe { .. }
+        Command::Ask { .. }
+        | Command::Recipe { .. }
         | Command::Follow { .. }
         | Command::Host { .. }
         | Command::Completions { .. } => None,
@@ -1490,6 +1594,46 @@ mod tests {
     }
 
     #[test]
+    fn wait_command_extends_request_timeout_past_host_wait_timeout() {
+        let command = Command::Wait {
+            target: "dev/server".to_string(),
+            condition: WaitConditionArg::Done,
+            timeout: 120.0,
+            poll_ms: 250,
+            recent_lines: 40,
+        };
+
+        assert_eq!(
+            command_request_timeout(None, &command),
+            Duration::from_secs(125)
+        );
+        assert_eq!(
+            command_request_timeout(Some(10.0), &command),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn ask_command_extends_request_timeout_past_host_wait_timeout() {
+        let command = Command::Ask {
+            target: "dev/server".to_string(),
+            text: "Run tests".to_string(),
+            timeout: 90.0,
+            recent_lines: 80,
+            lines: Some(25),
+        };
+
+        assert_eq!(
+            command_request_timeout(None, &command),
+            Duration::from_secs(95)
+        );
+        assert_eq!(
+            command_request_timeout(Some(10.0), &command),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
     fn recipe_requests_resolve_prompt_capture_wait_and_action_steps() {
         let manifest = wtd_core::load_recipe_manifest(
             "wtd-recipes.yaml",
@@ -1505,7 +1649,7 @@ commands:
       - type: prompt
         text: cargo test -p {{crate}}
       - type: wait
-        condition: done
+        condition: ready
         timeout: 1.5
       - type: capture
         lines: 20
@@ -1528,7 +1672,7 @@ commands:
         assert_eq!(requests[0].payload["target"], "dev/main/tests");
         assert_eq!(requests[0].payload["text"], "cargo test -p wtd-core");
         assert_eq!(requests[1].msg_type, WaitPane::TYPE_NAME);
-        assert_eq!(requests[1].payload["condition"], "done");
+        assert_eq!(requests[1].payload["condition"], "ready");
         assert_eq!(requests[1].payload["timeoutMs"], 1500);
         assert_eq!(requests[2].msg_type, Capture::TYPE_NAME);
         assert_eq!(requests[2].payload["lines"], 20);

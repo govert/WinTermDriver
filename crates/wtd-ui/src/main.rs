@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use wtd_core::ids::PaneId;
 use wtd_core::layout::LayoutTree;
-use wtd_core::logging::init_stderr_logging;
+use wtd_core::logging::init_ui_logging;
 use wtd_core::workspace::PaneNode;
 use wtd_core::LogLevel;
 use wtd_ipc::message::{AttentionState, ProgressInfo, ProgressState};
@@ -44,8 +44,9 @@ const MAX_FONT_SIZE: f32 = 32.0;
 const FONT_SIZE_STEP: f32 = 1.0;
 
 fn main() {
-    // §31.1: UI logs to stderr.
-    init_stderr_logging(&LogLevel::default());
+    // §31.1: UI logs to file and stderr. Keep the guard alive until process exit.
+    let _log_guard = init_ui_logging(&LogLevel::default(), &wtd_data_dir());
+    install_panic_logger();
 
     let workspace_name = parse_workspace_arg();
 
@@ -59,6 +60,14 @@ fn main() {
         tracing::error!("{e}");
         std::process::exit(1);
     }
+}
+
+fn install_panic_logger() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(panic = %info, "wtd-ui panic");
+        default_hook(info);
+    }));
 }
 
 /// Parse workspace name from `--workspace <name>` args or `WTD_WORKSPACE` env.
@@ -652,6 +661,15 @@ fn pane_work_indicator(pane_session: &PaneSession) -> Option<&'static str> {
         ) {
             Some("\u{1f514}")
         } else if pane_session
+            .phase
+            .as_deref()
+            .is_some_and(|phase| matches!(phase, "working" | "running" | "busy"))
+            || pane_session
+                .queue_pending
+                .is_some_and(|pending| pending > 0)
+        {
+            Some(":.")
+        } else if pane_session
             .progress
             .as_ref()
             .is_some_and(|progress| progress.state == ProgressState::Indeterminate)
@@ -668,6 +686,37 @@ fn pane_overlay_label(pane_session: &PaneSession) -> String {
     match pane_work_indicator(pane_session) {
         Some(indicator) => format!("{indicator} {pane_name}"),
         None => pane_name.to_string(),
+    }
+}
+
+fn apply_metadata_to_pane_session(pane_session: &mut PaneSession, metadata: &serde_json::Value) {
+    if let Some(phase) = metadata.get("phase").and_then(|value| value.as_str()) {
+        pane_session.phase = Some(phase.to_string());
+    }
+    if let Some(status_text) = metadata.get("statusText").and_then(|value| value.as_str()) {
+        pane_session.status_text = Some(status_text.to_string());
+    }
+    if let Some(queue_pending) = metadata
+        .get("queuePending")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| value.try_into().ok())
+    {
+        pane_session.queue_pending = Some(queue_pending);
+    }
+    if let Some(source) = metadata.get("source").and_then(|value| value.as_str()) {
+        pane_session.source = Some(source.to_string());
+    }
+    if let Some(driver_profile) = metadata
+        .get("driverProfile")
+        .and_then(|value| value.as_str())
+    {
+        pane_session.driver_profile = Some(driver_profile.to_string());
+    }
+    if let Some(cwd) = metadata.get("cwd").and_then(|value| value.as_str()) {
+        pane_session.cwd = Some(cwd.to_string());
+    }
+    if let Some(branch) = metadata.get("branch").and_then(|value| value.as_str()) {
+        pane_session.branch = Some(branch.to_string());
     }
 }
 
@@ -884,6 +933,28 @@ fn send_ui_action(
 fn send_workspace_action(bridge: &HostBridge, action: &str, args: serde_json::Value) {
     bridge.send_action(action.to_string(), None, args);
     bridge.refresh_workspace();
+}
+
+fn confirm_close_if_needed(hwnd: HWND, confirm_close: bool, workspace_name: &str) -> bool {
+    !confirm_close || window::confirm_close_workspace(hwnd, workspace_name)
+}
+
+fn close_ui_window(
+    hwnd: HWND,
+    bridge: Option<&HostBridge>,
+    confirm_close: bool,
+    workspace_name: &str,
+) -> bool {
+    if !confirm_close_if_needed(hwnd, confirm_close, workspace_name) {
+        return false;
+    }
+    if let Some(bridge) = bridge {
+        bridge.send(HostCommand::Disconnect);
+    }
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+    }
+    true
 }
 
 fn wtd_data_dir() -> PathBuf {
@@ -1759,6 +1830,7 @@ fn move_keyboard_selection(
 /// Returns `true` if the action was handled locally.
 fn dispatch_action(
     action_ref: &wtd_core::workspace::ActionReference,
+    hwnd: HWND,
     command_palette: &mut CommandPalette,
     tab_strip: &mut TabStrip,
     tabs: &mut Vec<SnapshotTab>,
@@ -1772,6 +1844,7 @@ fn dispatch_action(
     mouse_handler: &mut MouseHandler,
     keyboard_selection: &mut KeyboardSelectionState,
     find_state: &mut FindState,
+    confirm_close: bool,
 ) -> bool {
     let name = action_name(action_ref);
     let args = match action_ref {
@@ -1915,6 +1988,30 @@ fn dispatch_action(
         }
         "pass-through-next-key" => {
             pass_through_next_key.arm();
+            true
+        }
+        "close-window" => {
+            let workspace_name = status_bar.workspace_name().to_string();
+            close_ui_window(hwnd, bridge, confirm_close, &workspace_name);
+            true
+        }
+        "close-workspace" => {
+            let workspace_name = status_bar.workspace_name().to_string();
+            if confirm_close_if_needed(hwnd, confirm_close, &workspace_name) {
+                if let Some(bridge) = bridge {
+                    if connected {
+                        send_workspace_action(
+                            bridge,
+                            "close-workspace",
+                            action_args_to_value(&args),
+                        );
+                    } else {
+                        let _ = close_ui_window(hwnd, None, false, &workspace_name);
+                    }
+                } else {
+                    let _ = close_ui_window(hwnd, None, false, &workspace_name);
+                }
+            }
             true
         }
         "next-tab" => {
@@ -2195,6 +2292,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     // Create the renderer.
     let mut config = RendererConfig::default();
     let mut renderer = TerminalRenderer::new(hwnd, &config)?;
+    let confirm_close = wtd_core::load_global_settings(&settings_path())
+        .map(|settings| settings.confirm_close)
+        .unwrap_or(true);
 
     let (mut cell_w, mut cell_h) = renderer.cell_size();
     let pane_viewport_insets = PaneViewportInsets::from_env();
@@ -2572,6 +2672,32 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
+                    HostEvent::PaneMetadataChanged {
+                        pane_id, metadata, ..
+                    } => {
+                        let mut focused_changed = false;
+                        for (tab_index, tab) in tabs.iter_mut().enumerate() {
+                            let focused = tab.layout_tree.focus();
+                            for (ui_pane_id, pane_session) in tab.pane_sessions.iter_mut() {
+                                if pane_session.host_pane_id.as_deref() == Some(pane_id.as_str()) {
+                                    apply_metadata_to_pane_session(pane_session, &metadata);
+                                    if tab_index == active_tab_index && *ui_pane_id == focused {
+                                        focused_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        if focused_changed {
+                            if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                let (attention_state, attention_message) =
+                                    focused_pane_attention(active_tab);
+                                status_bar.set_attention(attention_state, attention_message);
+                            }
+                        }
+                        sync_tab_progresses(&mut tab_strip, &tabs);
+                        force_immediate_paint = true;
+                        needs_paint = true;
+                    }
                     HostEvent::LayoutChanged { tab, layout, .. } => {
                         if tabs.is_empty() {
                             continue;
@@ -2670,6 +2796,15 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             }
         }
 
+        if window::take_close_requested() {
+            let workspace_name = status_bar.workspace_name().to_string();
+            if close_ui_window(hwnd, bridge.as_ref(), confirm_close, &workspace_name) {
+                return Ok(());
+            }
+            force_immediate_paint = true;
+            needs_paint = true;
+        }
+
         if should_close_window {
             unsafe {
                 let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
@@ -2765,6 +2900,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     wtd_core::workspace::ActionReference::Simple(bound_name);
                                 dispatch_action(
                                     &simple_ref,
+                                    hwnd,
                                     &mut command_palette,
                                     &mut tab_strip,
                                     &mut tabs,
@@ -2778,6 +2914,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
                                     &mut find_state,
+                                    confirm_close,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2792,6 +2929,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             PaletteResult::Action(action_ref) => {
                                 dispatch_action(
                                     &action_ref,
+                                    hwnd,
                                     &mut command_palette,
                                     &mut tab_strip,
                                     &mut tabs,
@@ -2805,6 +2943,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
                                     &mut find_state,
+                                    confirm_close,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2860,6 +2999,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         PrefixOutput::DispatchAction(action_ref) => {
                             dispatch_action(
                                 &action_ref,
+                                hwnd,
                                 &mut command_palette,
                                 &mut tab_strip,
                                 &mut tabs,
@@ -2873,6 +3013,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mut mouse_handler,
                                 &mut keyboard_selection,
                                 &mut find_state,
+                                confirm_close,
                             );
                             force_immediate_paint = true;
                             needs_paint = true;
@@ -2921,6 +3062,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             PaletteResult::Action(action_ref) => {
                                 dispatch_action(
                                     &action_ref,
+                                    hwnd,
                                     &mut command_palette,
                                     &mut tab_strip,
                                     &mut tabs,
@@ -2934,6 +3076,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     &mut mouse_handler,
                                     &mut keyboard_selection,
                                     &mut find_state,
+                                    confirm_close,
                                 );
                                 force_immediate_paint = true;
                                 needs_paint = true;
@@ -2976,6 +3119,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 PrefixOutput::DispatchAction(action_ref) => {
                                     dispatch_action(
                                         &action_ref,
+                                        hwnd,
                                         &mut command_palette,
                                         &mut tab_strip,
                                         &mut tabs,
@@ -2989,6 +3133,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                         &mut mouse_handler,
                                         &mut keyboard_selection,
                                         &mut find_state,
+                                        confirm_close,
                                     );
                                 }
                                 PrefixOutput::SendToSession(bytes) => {
@@ -3130,6 +3275,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     if let PaletteResult::Action(ref action_ref) = result {
                         dispatch_action(
                             action_ref,
+                            hwnd,
                             &mut command_palette,
                             &mut tab_strip,
                             &mut tabs,
@@ -3143,6 +3289,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             &mut mouse_handler,
                             &mut keyboard_selection,
                             &mut find_state,
+                            confirm_close,
                         );
                     }
                     force_immediate_paint = true;
@@ -3550,17 +3697,18 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     MouseOutput::Tab(tab_action) => {
                         match tab_action {
                             TabAction::WindowClose => {
-                                if let Some(ref bridge) = bridge {
-                                    bridge.send(HostCommand::Disconnect);
+                                let workspace_name = status_bar.workspace_name().to_string();
+                                if close_ui_window(
+                                    hwnd,
+                                    bridge.as_ref(),
+                                    confirm_close,
+                                    &workspace_name,
+                                ) {
+                                    return Ok(());
                                 }
-                                unsafe {
-                                    let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(
-                                        hwnd,
-                                    );
-                                }
-                                return Ok(());
                             }
                             TabAction::Create => {
+                                tracing::info!("tab create requested from tab strip");
                                 if let Some(ref bridge) = bridge {
                                     if connected {
                                         send_workspace_action(
@@ -3642,6 +3790,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 tab_strip.layout(window_width);
                             }
                             TabAction::Close(tab_index) => {
+                                tracing::info!(
+                                    tab_index,
+                                    active_tab_index,
+                                    connected,
+                                    "tab close requested from tab strip"
+                                );
                                 if tabs.len() > 1 {
                                     if let Some(ref bridge) = bridge {
                                         if connected {
@@ -3715,6 +3869,12 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 tab_strip.layout(window_width);
                             }
                             TabAction::SwitchTo(target_tab) => {
+                                tracing::info!(
+                                    target_tab,
+                                    active_tab_index,
+                                    connected,
+                                    "tab switch requested from tab strip"
+                                );
                                 if target_tab < tab_strip.tab_count() {
                                     if let Some(ref bridge) = bridge {
                                         if connected {
@@ -4702,6 +4862,16 @@ mod tests {
         let focused = tab.layout_tree.focus();
         let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
         pane.pane_path = "dev/main/MyPane".to_string();
+        pane.phase = Some("working".to_string());
+
+        assert_eq!(pane_overlay_label(pane), ":. MyPane");
+
+        pane.phase = None;
+        pane.queue_pending = Some(1);
+
+        assert_eq!(pane_overlay_label(pane), ":. MyPane");
+
+        pane.queue_pending = None;
         pane.progress = Some(ProgressInfo {
             state: ProgressState::Indeterminate,
             value: None,

@@ -22,6 +22,7 @@ static RESIZED: AtomicBool = AtomicBool::new(false);
 static RESIZE_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RESIZE_HEIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static WINDOW_MINIMIZED: AtomicBool = AtomicBool::new(false);
+static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 const APP_ICON_RESOURCE_ID: usize = 1;
 
 /// Check and clear the "needs paint" flag.
@@ -38,6 +39,11 @@ pub fn take_resize() -> Option<(u32, u32)> {
     } else {
         None
     }
+}
+
+/// Check and clear a user/system close request.
+pub fn take_close_requested() -> bool {
+    CLOSE_REQUESTED.swap(false, Ordering::Relaxed)
 }
 
 /// Request a repaint of the window.
@@ -352,6 +358,25 @@ pub fn is_maximized(hwnd: HWND) -> bool {
 
 pub fn is_minimized(hwnd: HWND) -> bool {
     unsafe { IsIconic(hwnd).as_bool() }
+}
+
+/// Ask the user to confirm closing the current workspace/window.
+pub fn confirm_close_workspace(hwnd: HWND, workspace_name: &str) -> bool {
+    let message = format!(
+        "Close workspace \"{}\"?\n\nThis will close this WTD window and detach from the running workspace.",
+        workspace_name
+    );
+    let title = "Close workspace?";
+    let message_wide: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        MessageBoxW(
+            hwnd,
+            PCWSTR(message_wide.as_ptr()),
+            PCWSTR(title_wide.as_ptr()),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_APPLMODAL,
+        ) == IDYES
+    }
 }
 
 /// Create a top-level window for the terminal UI.
@@ -689,6 +714,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_SYSCHAR => {
             push_text_event(wparam);
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            CLOSE_REQUESTED.store(true, Ordering::Relaxed);
+            NEEDS_PAINT.store(true, Ordering::Relaxed);
             LRESULT(0)
         }
         WM_DESTROY => {

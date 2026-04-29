@@ -244,15 +244,32 @@ progress when available.
 Coordinators can wait on those states without screen polling:
 
 ```bash
-wtd wait build-and-test/tests --for done --timeout 60
+wtd wait build-and-test/tests --timeout 60
 wtd wait build-and-test/tests --for needs-attention --recent-lines 80
 wtd wait build-and-test/tests --for queue-empty --timeout 30
 ```
 
-`wtd wait` returns the matched condition and current metadata on success. On
+`wtd wait` defaults to `ready`: the pane is no longer working, has no queued
+work, and has published a ready-style state such as idle, done, or a completion
+marker. It returns the matched condition and current metadata on success. On
 timeout it exits with the timeout code and still prints a snapshot with attention
 state, metadata, and recent output so the coordinator can decide whether to
-prompt, retry, or surface the pane to a user.
+prompt, retry, or surface the pane to a user. Prefer this flow for delegated
+agent work:
+
+```bash
+wtd ask build-and-test/tests "Run the focused tests and report the result." --timeout 120 --lines 120
+```
+
+For manual control, use the same sequence that `ask` wraps: `wtd prompt`, then
+`wtd wait`, then `wtd capture`. Avoid ad-hoc sleeps unless the pane has not been
+instrumented to publish status yet, and note that reason in the coordinating
+output.
+
+Concurrent CLI calls to an already-running host are supported. During first-use
+host auto-start, run one warm-up command such as `wtd list instances` before
+launching parallel waits; multiple simultaneous first-use commands may race
+while Windows creates the per-user named pipe.
 
 Inspect and metadata surfaces include managed process health when the pane is
 backed by a WTD-managed ConPTY session. The `processHealth` object reports the

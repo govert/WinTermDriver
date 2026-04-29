@@ -115,19 +115,18 @@ targeting.
 ### 3. A Local Agent Control Room
 
 Run agent CLIs in panes named by responsibility: `agents/codex`,
-`agents/reviewer`, `agents/docs`, or `agents/pi`. Use `wtd prompt` rather than
-raw text injection so WTD applies the pane's driver profile and submits
-multiline prompts correctly.
+`agents/reviewer`, `agents/docs`, or `agents/pi`. Use `wtd ask` for the normal
+agent loop: it sends the prompt through the pane's driver profile, waits for the
+pane to become ready again, and captures the result.
 
 ```powershell
-wtd prompt agents/codex "Run the focused tests and summarize failures."
-wtd wait agents/codex --for done --timeout 120
-wtd capture agents/codex --lines 120
+wtd ask agents/codex "Run the focused tests and summarize failures." --timeout 120 --lines 120
 ```
 
-Agent wrappers can publish state through `wtd status` and `wtd notify`, so a
-supervisor can wait for `done`, `needs-attention`, `error`, or `queue-empty`
-without guessing from screen text.
+When you need the manual steps, use `wtd prompt`, `wtd wait`, then
+`wtd capture`. `wtd wait` defaults to `ready`, which means the pane is no longer
+working, has no pending queue, and has published a ready-style state such as
+idle, done, or a completion marker.
 
 ### 4. A Shared Workflow Menu For A Repo
 
@@ -358,13 +357,21 @@ wtd notify dev/tests --state done --source codex "tests passed"
 Coordinators can wait on it:
 
 ```powershell
-wtd wait dev/tests --for done --timeout 120
+wtd wait dev/tests --timeout 120
 wtd wait dev/tests --for needs-attention --recent-lines 80
 wtd wait dev/tests --for queue-empty --timeout 30
 ```
 
-The UI surfaces this as pane/status-bar state, while the CLI gets structured
-results suitable for scripts.
+`wtd wait` is the preferred blocking primitive for agent coordination. It
+returns current metadata and recent output on both success and timeout, so a
+coordinator can often use `--recent-lines` instead of adding sleeps or an
+immediate extra capture. Use `wtd capture` after the wait when you need the
+exact visible terminal screen.
+
+Concurrent CLI calls to a running host are supported. During host auto-start,
+prefer one initial `wtd start`, `wtd list instances`, or other warm-up command
+before launching multiple parallel waits; parallel first-use commands may race
+while Windows is creating the per-user named pipe.
 
 ### Invoking UI Actions From The CLI
 
@@ -508,7 +515,7 @@ or `wtd-recipes.yaml` and can be listed, inspected, dry-run, or executed.
 version: 1
 commands:
   - name: test-and-review
-    description: Run tests, wait for completion, then capture output
+    description: Run tests, wait for readiness, then capture output
     target:
       workspace: dev
       tab: backend
@@ -520,7 +527,7 @@ commands:
       - type: prompt
         text: cargo test -p {{crate}}
       - type: wait
-        condition: done
+        condition: ready
         timeout: 60
         recentLines: 80
       - type: capture
@@ -565,9 +572,7 @@ part of your local workflow.
 Common flow:
 
 ```powershell
-wtd prompt agents/codex "Make the failing test pass, then explain the change."
-wtd wait agents/codex --for done --timeout 180
-wtd capture agents/codex --lines 120
+wtd ask agents/codex "Make the failing test pass, then explain the change." --timeout 180 --lines 120
 ```
 
 ### Status And Attention
@@ -606,6 +611,7 @@ wtd list sessions <workspace>
 
 wtd send <target> <text> [--no-newline]
 wtd prompt <target> <text>
+wtd ask <target> <text> [--timeout seconds] [--lines N]
 wtd keys <target> <key>...
 wtd input <target> <data> [--escape|--hex|--base64]
 wtd mouse <target> <kind> --col N --row N
@@ -623,7 +629,7 @@ wtd action <target> <action> [key=value]...
 wtd notify <target> [--state needs-attention|done|error|active] [--source name] [message]
 wtd clear-attention <target>
 wtd status <target> [--phase name] [--source name] [--queue-pending N] [--completion marker] [text]
-wtd wait <target> --for done|needs-attention|error|idle|queue-empty|state-change
+wtd wait <target> [--for ready|needs-attention|error|idle|done|queue-empty|state-change]
 
 wtd recipe list|show|run ...
 wtd host status

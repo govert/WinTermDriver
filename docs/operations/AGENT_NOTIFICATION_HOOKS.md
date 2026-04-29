@@ -49,7 +49,7 @@ Supervisor panes can wait on agent-published state instead of polling terminal
 text:
 
 ```bash
-wtd wait build/tests --for done --timeout 60
+wtd wait build/tests --timeout 60
 wtd wait build/tests --for needs-attention --recent-lines 80
 wtd wait build/tests --for queue-empty --timeout 30
 ```

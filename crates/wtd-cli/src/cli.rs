@@ -16,7 +16,7 @@ use clap_complete::Shell;
     name = "wtd",
     version,
     about,
-    after_long_help = "Coding-agent quick path:\n  1. `wtd prompt <target> \"<text>\"` to write\n  2. `wtd capture <target>` to read what is on screen now\n  3. `wtd configure-pane <target> ...` only when you need to override the inferred driver\n\nAgent panes launched as `codex`, `claude`, `gemini`, or `copilot` are auto-detected. Use `wtd send` only for low-level shell/text input and `wtd keys` when you need an explicit keypress."
+    after_long_help = "Agent quick path:\n  `wtd ask <target> \"<text>\" --timeout <seconds>`\n\nManual equivalent:\n  1. `wtd prompt <target> \"<text>\"`\n  2. `wtd wait <target> --timeout <seconds>`   # waits for ready by default\n  3. `wtd capture <target>`\n\nUse `wtd send`, `wtd keys`, and `wtd input` only for low-level terminal control."
 )]
 pub struct Cli {
     /// Output in JSON format instead of human-readable text.
@@ -218,7 +218,7 @@ pub enum Command {
         /// Target path (e.g. workspace/pane).
         target: String,
         /// Condition to wait for.
-        #[arg(long = "for", value_enum, default_value_t = WaitConditionArg::Done)]
+        #[arg(long = "for", value_enum, default_value_t = WaitConditionArg::Ready)]
         condition: WaitConditionArg,
         /// Host-side wait timeout in seconds.
         #[arg(long, default_value_t = 30.0)]
@@ -248,15 +248,30 @@ pub enum Command {
 
     /// Send a prompt using the pane's configured driver profile.
     ///
-    /// Recommended agent flow:
-    /// 1. `wtd prompt <target> "<text>"` to write
-    /// 2. `wtd capture <target>` to read what the agent is showing now
-    /// 3. `wtd configure-pane <target> ...` only if you need to override the inferred driver
+    /// Marks the pane working before sending so `wtd wait` can reliably wait
+    /// for the next ready state.
     Prompt {
         /// Target path (e.g. workspace/pane).
         target: String,
         /// Prompt text to send. Embedded newlines are handled using the pane driver.
         text: String,
+    },
+
+    /// Prompt an agent, wait until it is ready again, then capture output.
+    Ask {
+        /// Target path (e.g. workspace/pane).
+        target: String,
+        /// Prompt text to send.
+        text: String,
+        /// Wait timeout in seconds.
+        #[arg(long, default_value_t = 120.0)]
+        timeout: f64,
+        /// Recent lines to include in timeout diagnostics.
+        #[arg(long, default_value_t = 120)]
+        recent_lines: u32,
+        /// Capture only this many final lines after the agent is ready.
+        #[arg(long)]
+        lines: Option<u32>,
     },
 
     /// Send key sequences to a session.
@@ -502,6 +517,7 @@ pub enum AttentionStateArg {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum WaitConditionArg {
+    Ready,
     Idle,
     Done,
     NeedsAttention,
@@ -939,10 +955,9 @@ mod tests {
         let mut help = Vec::new();
         sub.write_long_help(&mut help).unwrap();
         let text = String::from_utf8(help).unwrap();
-        assert!(text.contains("Recommended agent flow"));
-        assert!(text.contains("wtd prompt <target> \"<text>\""));
-        assert!(text.contains("wtd capture <target>"));
-        assert!(text.contains("override the inferred driver"));
+        assert!(text.contains("Marks the pane working before sending"));
+        assert!(text.contains("wtd wait"));
+        assert!(text.contains("ready state"));
     }
 
     #[test]
@@ -962,11 +977,37 @@ mod tests {
         let mut help = Vec::new();
         cmd.write_long_help(&mut help).unwrap();
         let text = String::from_utf8(help).unwrap();
-        assert!(text.contains("Coding-agent quick path"));
-        assert!(text.contains("wtd prompt <target> \"<text>\""));
+        assert!(text.contains("Agent quick path"));
+        assert!(text.contains("wtd ask <target> \"<text>\""));
+        assert!(text.contains("wtd wait <target> --timeout <seconds>"));
         assert!(text.contains("wtd capture <target>"));
-        assert!(text.contains("configure-pane <target> ..."));
-        assert!(text.contains("auto-detected"));
+        assert!(text.contains("low-level terminal control"));
+    }
+
+    #[test]
+    fn ask_accepts_timeout_recent_lines_and_capture_lines() {
+        let cli = parse(&[
+            "ask",
+            "dev/server",
+            "Run tests",
+            "--timeout",
+            "90",
+            "--recent-lines",
+            "80",
+            "--lines",
+            "25",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Ask {
+                ref target,
+                ref text,
+                timeout,
+                recent_lines: 80,
+                lines: Some(25),
+            }) if target == "dev/server" && text == "Run tests" && (timeout - 90.0).abs() < f64::EPSILON
+        ));
     }
 
     #[test]

@@ -560,6 +560,25 @@ impl WorkspaceInstance {
         Ok(rec.metadata.clone())
     }
 
+    pub fn mark_pane_work_started(
+        &mut self,
+        pane_id: &PaneId,
+        source: Option<String>,
+    ) -> Result<PaneMetadataRecord, WorkspaceError> {
+        let Some(rec) = self.panes.get_mut(pane_id) else {
+            return Err(WorkspaceError::PaneNotFound(format!("{}", pane_id.0)));
+        };
+        rec.metadata.phase = Some("working".to_string());
+        rec.metadata.status_text = Some("prompt sent".to_string());
+        rec.metadata.queue_pending = Some(1);
+        rec.metadata.completion = None;
+        if source.is_some() {
+            rec.metadata.source = source;
+        }
+        rec.attention = AttentionRecord::default();
+        Ok(rec.metadata.clone())
+    }
+
     pub fn workspace_attention(&self) -> AttentionRecord {
         let mut aggregate = AttentionRecord::default();
         for rec in self.panes.values() {

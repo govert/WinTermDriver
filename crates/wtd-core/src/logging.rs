@@ -2,7 +2,8 @@
 //!
 //! Three initialization modes map to the three process types:
 //! - [`init_host_logging`] — file appender with rotation + stderr
-//! - [`init_stderr_logging`] — stderr only (for CLI and UI)
+//! - [`init_ui_logging`] — file appender with rotation + stderr
+//! - [`init_stderr_logging`] — stderr only (for CLI)
 //!
 //! The log level is determined by (highest priority first):
 //! 1. `WTD_LOG` environment variable (e.g. `WTD_LOG=debug`)
@@ -26,6 +27,9 @@ const LOG_DIR_NAME: &str = "logs";
 
 /// Host log file prefix.
 const HOST_LOG_PREFIX: &str = "wtd-host.log";
+
+/// UI log file prefix.
+const UI_LOG_PREFIX: &str = "wtd-ui.log";
 
 /// Maximum number of rotated log files to keep (§31.1).
 pub const MAX_LOG_FILES: usize = 5;
@@ -85,13 +89,32 @@ pub fn init_host_logging(
     settings_level: &LogLevel,
     data_dir: &Path,
 ) -> tracing_appender::non_blocking::WorkerGuard {
+    init_process_file_logging(settings_level, data_dir, HOST_LOG_PREFIX, true)
+}
+
+/// Initialise logging for `wtd-ui`: log file with rotation + stderr.
+///
+/// The log file is written to `<data_dir>/logs/wtd-ui.log`.
+pub fn init_ui_logging(
+    settings_level: &LogLevel,
+    data_dir: &Path,
+) -> tracing_appender::non_blocking::WorkerGuard {
+    init_process_file_logging(settings_level, data_dir, UI_LOG_PREFIX, false)
+}
+
+fn init_process_file_logging(
+    settings_level: &LogLevel,
+    data_dir: &Path,
+    filename_prefix: &str,
+    with_thread_ids: bool,
+) -> tracing_appender::non_blocking::WorkerGuard {
     let log_path = log_dir(data_dir);
     std::fs::create_dir_all(&log_path).ok();
 
     let file_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .max_log_files(MAX_LOG_FILES)
-        .filename_prefix(HOST_LOG_PREFIX)
+        .filename_prefix(filename_prefix)
         .build(&log_path)
         .expect("failed to create log file appender");
 
@@ -103,7 +126,7 @@ pub fn init_host_logging(
         .with_writer(non_blocking)
         .with_ansi(false)
         .with_target(true)
-        .with_thread_ids(true);
+        .with_thread_ids(with_thread_ids);
 
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)
@@ -149,9 +172,9 @@ pub fn init_host_logging_to_file(
     guard
 }
 
-// ── Stderr-only logging (CLI + UI) ──────────────────────────────────────────
+// ── Stderr-only logging (CLI) ───────────────────────────────────────────────
 
-/// Initialise logging for `wtd` CLI and `wtd-ui` (§31.1): stderr only.
+/// Initialise logging for `wtd` CLI (§31.1): stderr only.
 pub fn init_stderr_logging(settings_level: &LogLevel) {
     let filter = effective_log_filter(settings_level);
 

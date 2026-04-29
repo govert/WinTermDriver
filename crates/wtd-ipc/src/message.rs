@@ -124,6 +124,7 @@ pub fn parse_envelope(envelope: &Envelope) -> Result<TypedMessage, ParseError> {
         WaitPaneResult      => WaitPaneResult,
         InspectResult       => InspectResult,
         AttentionChanged    => AttentionChanged,
+        PaneMetadataChanged => PaneMetadataChanged,
         InvokeActionResult  => InvokeActionResult,
         FollowData          => FollowData,
         FollowEnd           => FollowEnd,
@@ -196,6 +197,7 @@ pub enum TypedMessage {
     WaitPaneResult(WaitPaneResult),
     InspectResult(InspectResult),
     AttentionChanged(AttentionChanged),
+    PaneMetadataChanged(PaneMetadataChanged),
     InvokeActionResult(InvokeActionResult),
     FollowData(FollowData),
     FollowEnd(FollowEnd),
@@ -573,6 +575,7 @@ impl_payload!(WaitPane, "WaitPane");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WaitCondition {
+    Ready,
     Idle,
     Done,
     NeedsAttention,
@@ -953,6 +956,16 @@ pub struct AttentionChanged {
     pub source: Option<String>,
 }
 impl_payload!(AttentionChanged, "AttentionChanged");
+
+/// §13.13 — Pane metadata/status changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaneMetadataChanged {
+    pub workspace: String,
+    pub pane_id: String,
+    pub metadata: Value,
+}
+impl_payload!(PaneMetadataChanged, "PaneMetadataChanged");
 
 /// Result of invoking an action (§18.1–18.3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

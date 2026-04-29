@@ -78,7 +78,7 @@ Once Pi publishes state, another pane can coordinate without parsing Pi screen
 text:
 
 ```bash
-wtd wait workspace/main/pi --for done --timeout 60
+wtd wait workspace/main/pi --timeout 60
 wtd wait workspace/main/pi --for needs-attention --recent-lines 80
 wtd wait workspace/main/pi --for queue-empty --timeout 30
 ```

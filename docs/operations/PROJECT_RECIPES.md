@@ -30,7 +30,7 @@ commands:
       - type: prompt
         text: cargo test -p {{crate}}
       - type: wait
-        condition: done
+        condition: ready
         timeout: 60
         recentLines: 80
       - type: capture
@@ -122,7 +122,7 @@ commands:
       - type: macro
         name: prompt-wait-capture
         text: Run the {{scope}} and publish WTD status when complete.
-        condition: done
+        condition: ready
         timeout: 120
         lines: 120
       - type: prompt

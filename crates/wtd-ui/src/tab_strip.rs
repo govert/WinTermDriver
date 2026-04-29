@@ -143,6 +143,7 @@ pub struct TabStrip {
     hover_close: Option<usize>,
     hover_add: bool,
     hover_window_button: Option<WindowButtonKind>,
+    pressed_window_button: Option<WindowButtonKind>,
     // Drag state
     drag: Option<DragState>,
     // Scroll
@@ -229,6 +230,7 @@ impl TabStrip {
             hover_close: None,
             hover_add: false,
             hover_window_button: None,
+            pressed_window_button: None,
             drag: None,
             scroll_offset: 0.0,
             total_tabs_width: 0.0,
@@ -567,15 +569,17 @@ impl TabStrip {
             }
         }
 
-        // "+" button
         if self.minimize_zone.contains(x, y) {
-            return Some(TabAction::MinimizeWindow);
+            self.pressed_window_button = Some(WindowButtonKind::Minimize);
+            return None;
         }
         if self.maximize_zone.contains(x, y) {
-            return Some(TabAction::ToggleMaximizeWindow);
+            self.pressed_window_button = Some(WindowButtonKind::MaximizeRestore);
+            return None;
         }
         if self.close_window_zone.contains(x, y) {
-            return Some(TabAction::WindowClose);
+            self.pressed_window_button = Some(WindowButtonKind::Close);
+            return None;
         }
 
         // "+" button
@@ -649,7 +653,22 @@ impl TabStrip {
     }
 
     /// Handle a mouse-up event. Returns an action if drag reorder completes.
-    pub fn on_mouse_up(&mut self, x: f32, _y: f32) -> Option<TabAction> {
+    pub fn on_mouse_up(&mut self, x: f32, y: f32) -> Option<TabAction> {
+        if let Some(button) = self.pressed_window_button.take() {
+            let still_over_button = match button {
+                WindowButtonKind::Minimize => self.minimize_zone.contains(x, y),
+                WindowButtonKind::MaximizeRestore => self.maximize_zone.contains(x, y),
+                WindowButtonKind::Close => self.close_window_zone.contains(x, y),
+            };
+            if still_over_button {
+                return Some(match button {
+                    WindowButtonKind::Minimize => TabAction::MinimizeWindow,
+                    WindowButtonKind::MaximizeRestore => TabAction::ToggleMaximizeWindow,
+                    WindowButtonKind::Close => TabAction::WindowClose,
+                });
+            }
+        }
+
         if let Some(drag) = self.drag.take() {
             if drag.active {
                 let drop_index = self.drop_index_at(x);
@@ -671,6 +690,7 @@ impl TabStrip {
         self.hover_close = None;
         self.hover_add = false;
         self.hover_window_button = None;
+        self.pressed_window_button = None;
         self.drag = None;
     }
 
@@ -1518,6 +1538,19 @@ mod tests {
         let action = strip.on_mouse_down(x, y);
         assert_eq!(action, Some(TabAction::Close(1)));
         assert_eq!(strip.tab_count(), 2);
+    }
+
+    #[test]
+    fn window_close_button_fires_on_mouse_up() {
+        let mut strip = make_strip();
+        strip.add_tab("a".into());
+        strip.layout(500.0);
+
+        let x = strip.close_window_zone.x + strip.close_window_zone.width / 2.0;
+        let y = strip.close_window_zone.y + strip.close_window_zone.height / 2.0;
+
+        assert_eq!(strip.on_mouse_down(x, y), None);
+        assert_eq!(strip.on_mouse_up(x, y), Some(TabAction::WindowClose));
     }
 
     #[test]

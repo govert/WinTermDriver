@@ -357,10 +357,23 @@ fn wait_condition_matches(condition: WaitCondition, data: &Value) -> bool {
     let attention_state = data["attention"]["state"].as_str().unwrap_or("active");
     let metadata = &data["metadata"];
     let phase = metadata["phase"].as_str().unwrap_or_default();
+    let status_text = metadata["statusText"].as_str().unwrap_or_default();
     let completion = metadata["completion"].as_str().unwrap_or_default();
     let queue_pending = metadata["queuePending"].as_u64();
 
     match condition {
+        WaitCondition::Ready => {
+            let ready_signal = phase == "idle"
+                || phase == "done"
+                || attention_state == "done"
+                || status_text.eq_ignore_ascii_case("ready")
+                || !completion.is_empty();
+            attention_state != "error"
+                && phase != "error"
+                && (ready_signal
+                    || (!matches!(phase, "working" | "running" | "busy")
+                        && queue_pending == Some(0)))
+        }
         WaitCondition::Idle => phase == "idle",
         WaitCondition::Done => {
             attention_state == "done" || phase == "done" || !completion.is_empty()
@@ -1200,21 +1213,37 @@ impl HostRequestHandler {
     }
 
     fn handle_prompt(&self, id: &str, prompt: &message::Prompt) -> Option<Envelope> {
-        let state = self.lock_state();
-        let (inst, pane_id) = match find_pane(&state.workspaces, &prompt.target) {
-            Some(r) => r,
-            None => {
-                return Some(error_envelope(
-                    id,
-                    ErrorCode::TargetNotFound,
-                    &format!("pane '{}' not found", prompt.target),
-                ));
-            }
+        let mut state = self.lock_state();
+        let (workspace_name, pane_id) =
+            match resolve_pane_for_resize(&state.workspaces, &prompt.target) {
+                Some(r) => r,
+                None => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::TargetNotFound,
+                        &format!("pane '{}' not found", prompt.target),
+                    ));
+                }
+            };
+
+        let Some(inst) = state.workspaces.get_mut(&workspace_name) else {
+            return Some(error_envelope(
+                id,
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found", workspace_name),
+            ));
         };
 
         let session_id = match inst.pane_state(&pane_id) {
             Some(PaneState::Attached { session_id }) => session_id.clone(),
-            _ => {
+            Some(PaneState::Detached { error }) => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    &format!("pane is detached: {error}"),
+                ));
+            }
+            None => {
                 return Some(error_envelope(
                     id,
                     ErrorCode::SessionFailed,
@@ -1223,7 +1252,7 @@ impl HostRequestHandler {
             }
         };
 
-        let session = match inst.session(&session_id) {
+        let bracketed_paste = match inst.session(&session_id) {
             Some(s) => s,
             None => {
                 return Some(error_envelope(
@@ -1232,23 +1261,45 @@ impl HostRequestHandler {
                     "session not found",
                 ));
             }
-        };
+        }
+        .screen()
+        .bracketed_paste();
 
         let driver = inst
             .pane_driver(&pane_id)
             .cloned()
             .unwrap_or_else(|| resolve_pane_driver(None, None));
-        let plan = match build_prompt_input_plan(
-            &prompt.text,
-            &driver,
-            session.screen().bracketed_paste(),
-        ) {
+        let plan = match build_prompt_input_plan(&prompt.text, &driver, bracketed_paste) {
             Ok(plan) => plan,
             Err(e) => {
                 return Some(error_envelope(
                     id,
                     ErrorCode::InvalidArgument,
                     &e.to_string(),
+                ));
+            }
+        };
+
+        let metadata = match inst.mark_pane_work_started(&pane_id, Some("wtd".to_string())) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::InternalError,
+                    &format!("failed to mark pane busy: {}", e),
+                ));
+            }
+        };
+        let metadata_value = serde_json::to_value(metadata).unwrap_or_default();
+        let pane_id_string = format!("{}", pane_id.0);
+
+        let session = match inst.session(&session_id) {
+            Some(s) => s,
+            None => {
+                return Some(error_envelope(
+                    id,
+                    ErrorCode::SessionFailed,
+                    "session not found",
                 ));
             }
         };
@@ -1264,27 +1315,49 @@ impl HostRequestHandler {
             }
         }
 
-        if plan.submit_delay_ms > 0 {
+        let response = if plan.submit_delay_ms > 0 {
             match session
                 .schedule_write_input(plan.submit, Duration::from_millis(plan.submit_delay_ms))
             {
-                Ok(()) => Some(Envelope::new(id, &OkResponse {})),
-                Err(e) => Some(error_envelope(
-                    id,
-                    ErrorCode::SessionFailed,
-                    &format!("write failed: {}", e),
-                )),
+                Ok(()) => Envelope::new(id, &OkResponse {}),
+                Err(e) => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::SessionFailed,
+                        &format!("write failed: {}", e),
+                    ));
+                }
             }
         } else {
             match session.write_input(&plan.submit) {
-                Ok(()) => Some(Envelope::new(id, &OkResponse {})),
-                Err(e) => Some(error_envelope(
-                    id,
-                    ErrorCode::SessionFailed,
-                    &format!("write failed: {}", e),
-                )),
+                Ok(()) => Envelope::new(id, &OkResponse {}),
+                Err(e) => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::SessionFailed,
+                        &format!("write failed: {}", e),
+                    ));
+                }
             }
-        }
+        };
+
+        state
+            .pending_broadcasts
+            .push(BroadcastEvent::MetadataChange {
+                workspace: workspace_name.clone(),
+                pane_id: pane_id_string.clone(),
+                metadata: metadata_value,
+            });
+        state
+            .pending_broadcasts
+            .push(BroadcastEvent::AttentionChange {
+                workspace: workspace_name,
+                pane_id: Some(pane_id_string),
+                state: AttentionState::Active,
+                message: None,
+                source: Some("wtd".to_string()),
+            });
+        Some(response)
     }
 
     fn handle_keys(&self, id: &str, keys: &Keys) -> Option<Envelope> {
@@ -1875,14 +1948,61 @@ impl HostRequestHandler {
             notify.source.clone(),
         ) {
             Ok(record) => {
+                let metadata = match notify.state {
+                    AttentionState::Done => inst.set_pane_metadata(
+                        &pane_id,
+                        Some("done".to_string()),
+                        notify.message.clone(),
+                        Some(0),
+                        Some("done".to_string()),
+                        notify.source.clone(),
+                    ),
+                    AttentionState::Error => inst.set_pane_metadata(
+                        &pane_id,
+                        Some("error".to_string()),
+                        notify.message.clone(),
+                        Some(0),
+                        None,
+                        notify.source.clone(),
+                    ),
+                    AttentionState::NeedsAttention => inst.set_pane_metadata(
+                        &pane_id,
+                        Some("needs-attention".to_string()),
+                        notify.message.clone(),
+                        Some(0),
+                        None,
+                        notify.source.clone(),
+                    ),
+                    AttentionState::Active => {
+                        Ok(inst.pane_metadata(&pane_id).cloned().unwrap_or_default())
+                    }
+                };
+                let metadata_event = match metadata {
+                    Ok(record) => serde_json::to_value(record).unwrap_or_default(),
+                    Err(e) => {
+                        return Some(error_envelope(
+                            id,
+                            ErrorCode::InternalError,
+                            &format!("failed to update pane metadata: {}", e),
+                        ));
+                    }
+                };
+                let pane_id_string = format!("{}", pane_id.0);
                 state
                     .pending_broadcasts
                     .push(BroadcastEvent::AttentionChange {
-                        workspace: workspace_name,
-                        pane_id: Some(format!("{}", pane_id.0)),
+                        workspace: workspace_name.clone(),
+                        pane_id: Some(pane_id_string.clone()),
                         state: record.state,
                         message: record.message,
                         source: record.source,
+                    });
+                state
+                    .pending_broadcasts
+                    .push(BroadcastEvent::MetadataChange {
+                        workspace: workspace_name,
+                        pane_id: pane_id_string,
+                        metadata: metadata_event,
                     });
                 Some(Envelope::new(id, &OkResponse {}))
             }
@@ -1967,7 +2087,16 @@ impl HostRequestHandler {
             status.completion.clone(),
             status.source.clone(),
         ) {
-            Ok(_) => Some(Envelope::new(id, &OkResponse {})),
+            Ok(record) => {
+                state
+                    .pending_broadcasts
+                    .push(BroadcastEvent::MetadataChange {
+                        workspace: workspace_name,
+                        pane_id: format!("{}", pane_id.0),
+                        metadata: serde_json::to_value(record).unwrap_or_default(),
+                    });
+                Some(Envelope::new(id, &OkResponse {}))
+            }
             Err(e) => Some(error_envelope(
                 id,
                 ErrorCode::InternalError,
@@ -2911,7 +3040,10 @@ mod tests {
             let attention = inst.pane_attention(&pane_id).unwrap();
             assert_eq!(attention.state, AttentionState::NeedsAttention);
             assert_eq!(attention.message.as_deref(), Some("input requested"));
-            assert_eq!(state.pending_broadcasts.len(), 1);
+            let metadata = inst.pane_metadata(&pane_id).unwrap();
+            assert_eq!(metadata.phase.as_deref(), Some("needs-attention"));
+            assert_eq!(metadata.queue_pending, Some(0));
+            assert_eq!(state.pending_broadcasts.len(), 2);
         }
 
         let response = handler.handle_clear_attention(
@@ -2928,7 +3060,7 @@ mod tests {
         let attention = inst.pane_attention(&pane_id).unwrap();
         assert_eq!(attention.state, AttentionState::Active);
         assert!(attention.message.is_none());
-        assert_eq!(state.pending_broadcasts.len(), 2);
+        assert_eq!(state.pending_broadcasts.len(), 3);
     }
 
     #[test]
@@ -3012,6 +3144,47 @@ mod tests {
         assert_eq!(result.condition, WaitCondition::Done);
         assert_eq!(result.data["metadata"]["phase"], "done");
         assert_eq!(result.data["metadata"]["statusText"], "tests passed");
+    }
+
+    #[test]
+    fn wait_ready_matches_done_attention_after_prompt_started_work() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        {
+            let mut state = handler.state.lock().unwrap();
+            let mut inst =
+                WorkspaceInstance::new_for_test_multi("alpha", 1, &[("main", &["shell"])]);
+            let pane_id = inst.find_pane_by_name("shell").unwrap();
+            inst.mark_pane_work_started(&pane_id, Some("wtd".to_string()))
+                .unwrap();
+            state.workspaces.insert("alpha".to_string(), inst);
+        }
+        handler.handle_notify(
+            "notify-1",
+            &Notify {
+                target: "alpha/main/shell".to_string(),
+                state: AttentionState::Done,
+                message: Some("tests passed".to_string()),
+                source: Some("codex".to_string()),
+            },
+        );
+
+        let response = handler
+            .handle_wait_pane(
+                "wait-1",
+                &WaitPane {
+                    target: "alpha/main/shell".to_string(),
+                    condition: WaitCondition::Ready,
+                    timeout_ms: Some(1),
+                    poll_ms: Some(1),
+                    recent_lines: Some(5),
+                },
+            )
+            .unwrap();
+        let result: WaitPaneResult = response.extract_payload().unwrap();
+        assert!(result.matched);
+        assert_eq!(result.condition, WaitCondition::Ready);
+        assert_eq!(result.data["metadata"]["phase"], "done");
+        assert_eq!(result.data["metadata"]["queuePending"], 0);
     }
 
     #[test]

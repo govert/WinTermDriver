@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 use wtd_ipc::message::{
-    AttentionChanged, AttentionState, ProgressChanged, ProgressInfo, ProgressState, SessionOutput,
-    SessionStateChanged, TitleChanged, WorkspaceStateChanged,
+    AttentionChanged, AttentionState, PaneMetadataChanged, ProgressChanged, ProgressInfo,
+    ProgressState, SessionOutput, SessionStateChanged, TitleChanged, WorkspaceStateChanged,
 };
 use wtd_ipc::Envelope;
 
@@ -57,6 +57,12 @@ pub enum BroadcastEvent {
         state: AttentionState,
         message: Option<String>,
         source: Option<String>,
+    },
+    /// Pane metadata/status changed.
+    MetadataChange {
+        workspace: String,
+        pane_id: String,
+        metadata: serde_json::Value,
     },
     /// Workspace instance state transition.
     WorkspaceState {
@@ -167,6 +173,18 @@ pub async fn run(
                                 state: *state,
                                 message: message.clone(),
                                 source: source.clone(),
+                            },
+                        ),
+                        BroadcastEvent::MetadataChange {
+                            workspace,
+                            pane_id,
+                            metadata,
+                        } => Envelope::new(
+                            &id,
+                            &PaneMetadataChanged {
+                                workspace: workspace.clone(),
+                                pane_id: pane_id.clone(),
+                                metadata: metadata.clone(),
                             },
                         ),
                         BroadcastEvent::WorkspaceState {

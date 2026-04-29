@@ -367,13 +367,17 @@ the request timeout error.
 is:
 
 ```bash
-wtd wait dev/server --for done --timeout 60 --recent-lines 80
+wtd wait dev/server --timeout 60 --recent-lines 80
 ```
 
-Accepted conditions are `idle`, `done`, `needs-attention`, `error`,
-`queue-empty`, and `state-change`. `--timeout` is in seconds, `--poll-ms`
-controls host polling, and `--recent-lines` controls how much recent output is
-included in the returned snapshot.
+Accepted conditions are `ready`, `idle`, `done`, `needs-attention`, `error`,
+`queue-empty`, and `state-change`; the CLI defaults to `ready`. Ready means the
+pane is not in a working/running/busy/error phase, has no pending queue, and has
+published a ready-style state such as idle, done, or a completion marker.
+`--timeout` is in seconds, `--poll-ms` controls host polling, and
+`--recent-lines` controls how much recent output is included in the returned
+snapshot. The wait timeout is host-side; clients should keep their transport
+request timeout longer than the requested wait window.
 
 On success the command exits `0` and returns the matched condition plus current
 metadata. On timeout it exits `10` and still returns a state-rich snapshot:
@@ -381,7 +385,7 @@ metadata. On timeout it exits `10` and still returns a state-rich snapshot:
 ```json
 {
   "matched": false,
-  "condition": "done",
+  "condition": "ready",
   "target": "dev/server",
   "data": {
     "paneName": "server",

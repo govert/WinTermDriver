@@ -267,6 +267,7 @@ fn format_wait_pane(response: &Envelope) -> OutputResult {
 
 fn wait_condition_label(condition: WaitCondition) -> &'static str {
     match condition {
+        WaitCondition::Ready => "ready",
         WaitCondition::Idle => "idle",
         WaitCondition::Done => "done",
         WaitCondition::NeedsAttention => "needs-attention",

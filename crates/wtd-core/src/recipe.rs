@@ -119,7 +119,7 @@ fn default_palette() -> bool {
 }
 
 fn default_wait_condition() -> String {
-    "done".to_string()
+    "ready".to_string()
 }
 
 pub fn load_recipe_manifest(
@@ -315,7 +315,8 @@ fn validate_step(file: &str, recipe: &str, step: &RecipeStep) -> Result<(), Reci
             condition, timeout, ..
         } => {
             match condition.as_str() {
-                "idle" | "done" | "needs-attention" | "error" | "queue-empty" | "state-change" => {}
+                "ready" | "idle" | "done" | "needs-attention" | "error" | "queue-empty"
+                | "state-change" => {}
                 other => {
                     return validation_error(
                         file,
@@ -368,7 +369,7 @@ commands:
       - type: prompt
         text: cargo test
       - type: wait
-        condition: done
+        condition: ready
         timeout: 60
       - type: capture
         lines: 80

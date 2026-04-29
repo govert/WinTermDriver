@@ -56,6 +56,12 @@ pub enum HostEvent {
         message: Option<String>,
         source: Option<String>,
     },
+    /// A pane's structured metadata changed.
+    PaneMetadataChanged {
+        workspace: String,
+        pane_id: String,
+        metadata: Value,
+    },
     /// The layout tree for a tab changed.
     LayoutChanged {
         workspace: String,
@@ -506,6 +512,16 @@ fn envelope_to_event(attached_workspace: &str, envelope: &Envelope) -> Option<Ho
                 state: ac.state,
                 message: ac.message,
                 source: ac.source,
+            })
+        }
+        TypedMessage::PaneMetadataChanged(pm) => {
+            if pm.workspace != attached_workspace {
+                return None;
+            }
+            Some(HostEvent::PaneMetadataChanged {
+                workspace: pm.workspace,
+                pane_id: pm.pane_id,
+                metadata: pm.metadata,
             })
         }
         TypedMessage::LayoutChanged(lc) => {
