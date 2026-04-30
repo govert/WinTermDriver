@@ -18,10 +18,11 @@ use wtd_pty::CompactText;
 
 // ── Selection ────────────────────────────────────────────────────────────────
 
-/// A text selection range in screen coordinates (row, col).
+/// A text selection range in combined buffer coordinates (row, col).
 ///
+/// Rows are virtual rows in the combined `scrollback + visible screen` buffer.
 /// `start` is where the user began selecting, `end` is the current position.
-/// They may be in any order — rendering normalises them.
+/// They may be in any order; rendering normalises them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextSelection {
     pub start_row: usize,
@@ -71,10 +72,21 @@ const PANE_OVERLAY_TEXT: (u8, u8, u8) = (220, 220, 235);
 const SCROLLBAR_TRACK: (u8, u8, u8) = (46, 46, 54);
 const SCROLLBAR_THUMB: (u8, u8, u8) = (138, 138, 148);
 const SCROLLBAR_THUMB_HOVER: (u8, u8, u8) = (178, 178, 188);
+const SCROLLBAR_ARROW: (u8, u8, u8) = (206, 206, 216);
+const SCROLLBAR_ARROW_DISABLED: (u8, u8, u8) = (92, 92, 102);
 const SCROLLBAR_THIN_WIDTH: f32 = 2.0;
 const SCROLLBAR_THICK_WIDTH: f32 = 10.0;
 const SCROLLBAR_RIGHT_INSET: f32 = 2.0;
 const SCROLLBAR_MIN_THUMB: f32 = 28.0;
+const SCROLLBAR_ARROW_HEIGHT: f32 = 12.0;
+
+fn scrollbar_arrow_height(height: f32) -> f32 {
+    if height >= SCROLLBAR_MIN_THUMB + SCROLLBAR_ARROW_HEIGHT * 2.0 {
+        SCROLLBAR_ARROW_HEIGHT.min(height * 0.25)
+    } else {
+        0.0
+    }
+}
 
 // ── Default theme colors ─────────────────────────────────────────────────────
 
@@ -798,7 +810,7 @@ impl TerminalRenderer {
 
             // Selection highlight.
             if let Some(sel) = selection {
-                self.paint_selection(sel, x, y, visible_rows, visible_cols)?;
+                self.paint_selection(sel, x, y, visible_rows, visible_cols, base_row)?;
             }
 
             // Cursor.
@@ -836,12 +848,6 @@ impl TerminalRenderer {
 
         let total_rows = scrollback_rows + screen_rows;
         let max_scroll = scrollback_rows.max(1);
-        let thumb_height = (height * visible_rows as f32 / total_rows as f32)
-            .clamp(SCROLLBAR_MIN_THUMB.min(height), height);
-        let travel = (height - thumb_height).max(0.0);
-        let progress = (max_scroll.saturating_sub(scrollback_offset.min(max_scroll)) as f32)
-            / max_scroll as f32;
-        let thumb_top = y + travel * progress;
         let bar_width = if expanded {
             SCROLLBAR_THICK_WIDTH
         } else {
@@ -850,6 +856,22 @@ impl TerminalRenderer {
         .min(width.max(0.0));
         let bar_left = x + width - SCROLLBAR_RIGHT_INSET - bar_width;
         let radius = bar_width * 0.5;
+        let arrow_height = if expanded {
+            scrollbar_arrow_height(height)
+        } else {
+            0.0
+        };
+        let track_top = y + arrow_height;
+        let track_height = (height - arrow_height * 2.0).max(0.0);
+        if track_height <= 0.0 {
+            return Ok(());
+        }
+        let thumb_height = (track_height * visible_rows as f32 / total_rows as f32)
+            .clamp(SCROLLBAR_MIN_THUMB.min(track_height), track_height);
+        let travel = (track_height - thumb_height).max(0.0);
+        let progress = (max_scroll.saturating_sub(scrollback_offset.min(max_scroll)) as f32)
+            / max_scroll as f32;
+        let thumb_top = track_top + travel * progress;
 
         unsafe {
             if expanded {
@@ -869,6 +891,21 @@ impl TerminalRenderer {
                     radiusY: radius,
                 };
                 self.rt.FillRoundedRectangle(&track, &track_brush);
+
+                let top_arrow = D2D_RECT_F {
+                    left: bar_left,
+                    top: y,
+                    right: bar_left + bar_width,
+                    bottom: y + arrow_height,
+                };
+                let bottom_arrow = D2D_RECT_F {
+                    left: bar_left,
+                    top: y + height - arrow_height,
+                    right: bar_left + bar_width,
+                    bottom: y + height,
+                };
+                self.paint_scrollbar_arrow(top_arrow, true, scrollback_offset < max_scroll)?;
+                self.paint_scrollbar_arrow(bottom_arrow, false, scrollback_offset > 0)?;
             }
 
             let color = if expanded {
@@ -1111,18 +1148,25 @@ impl TerminalRenderer {
         y_origin: f32,
         visible_rows: usize,
         visible_cols: usize,
+        base_row: usize,
     ) -> Result<()> {
         let (sr, sc, er, ec) = sel.normalised();
+        let Some(visible_end) = base_row.checked_add(visible_rows.saturating_sub(1)) else {
+            return Ok(());
+        };
+        if visible_rows == 0 || er < base_row || sr > visible_end {
+            return Ok(());
+        }
+        let paint_start = sr.max(base_row);
+        let paint_end = er.min(visible_end);
         let (r, g, b) = SELECTION_COLOR;
         let brush = self.rt.CreateSolidColorBrush(&rgb_to_d2d(r, g, b), None)?;
         brush.SetOpacity(0.5);
 
-        for row in sr..=er {
-            if row >= visible_rows {
-                break;
-            }
-            let col_start = if row == sr { sc } else { 0 };
-            let col_end = if row == er {
+        for buffer_row in paint_start..=paint_end {
+            let viewport_row = buffer_row.saturating_sub(base_row);
+            let col_start = if buffer_row == sr { sc } else { 0 };
+            let col_end = if buffer_row == er {
                 (ec + 1).min(visible_cols)
             } else {
                 visible_cols
@@ -1132,12 +1176,85 @@ impl TerminalRenderer {
             }
             let rect = D2D_RECT_F {
                 left: x_origin + col_start as f32 * self.cell_width,
-                top: y_origin + row as f32 * self.cell_height,
+                top: y_origin + viewport_row as f32 * self.cell_height,
                 right: x_origin + col_end as f32 * self.cell_width,
-                bottom: y_origin + (row + 1) as f32 * self.cell_height,
+                bottom: y_origin + (viewport_row + 1) as f32 * self.cell_height,
             };
             self.rt.FillRectangle(&rect, &brush);
         }
+        Ok(())
+    }
+
+    unsafe fn paint_scrollbar_arrow(
+        &self,
+        rect: D2D_RECT_F,
+        up: bool,
+        enabled: bool,
+    ) -> Result<()> {
+        if rect.bottom <= rect.top || rect.right <= rect.left {
+            return Ok(());
+        }
+
+        let color = if enabled {
+            SCROLLBAR_ARROW
+        } else {
+            SCROLLBAR_ARROW_DISABLED
+        };
+        let brush = self
+            .rt
+            .CreateSolidColorBrush(&rgb_to_d2d(color.0, color.1, color.2), None)?;
+        brush.SetOpacity(if enabled { 0.9 } else { 0.55 });
+
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        let size = width.min(height) * 0.58;
+        if size <= 0.0 {
+            return Ok(());
+        }
+        let cx = (rect.left + rect.right) * 0.5;
+        let cy = (rect.top + rect.bottom) * 0.5;
+        let half_w = size * 0.5;
+        let half_h = size * 0.34;
+        let (p0, p1, p2) = if up {
+            (
+                D2D_POINT_2F {
+                    x: cx,
+                    y: cy - half_h,
+                },
+                D2D_POINT_2F {
+                    x: cx + half_w,
+                    y: cy + half_h,
+                },
+                D2D_POINT_2F {
+                    x: cx - half_w,
+                    y: cy + half_h,
+                },
+            )
+        } else {
+            (
+                D2D_POINT_2F {
+                    x: cx,
+                    y: cy + half_h,
+                },
+                D2D_POINT_2F {
+                    x: cx - half_w,
+                    y: cy - half_h,
+                },
+                D2D_POINT_2F {
+                    x: cx + half_w,
+                    y: cy - half_h,
+                },
+            )
+        };
+
+        let geometry = self.d2d_factory.CreatePathGeometry()?;
+        let sink = geometry.Open()?;
+        sink.BeginFigure(p0, D2D1_FIGURE_BEGIN_FILLED);
+        sink.AddLine(p1);
+        sink.AddLine(p2);
+        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink.Close()?;
+        self.rt.FillGeometry(&geometry, &brush, None);
         Ok(())
     }
 

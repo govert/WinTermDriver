@@ -5,8 +5,10 @@ to discover or customize launch profiles and shortcuts.
 
 ## Profile Flows
 
-- `new-tab`, `split-right`, and `split-down` open a profile selector in `wtd-ui`
-  when run without a `profile=` argument.
+- `new-tab` opens a profile selector in `wtd-ui` when run without a `profile=`
+  argument.
+- `split-right` and `split-down` use the default profile immediately when run
+  without `profile=`, so pane split shortcuts stay responsive.
 - `change-profile` relaunches the focused pane with a selected profile.
 - CLI automation can bypass the selector with explicit action arguments:
 

@@ -20,6 +20,7 @@
 use std::time::{Duration, Instant};
 
 use wtd_core::workspace::ActionReference;
+use wtd_pty::screen::KeyboardProtocolMode;
 
 use crate::input::{
     key_event_to_bytes, text_char_to_key_event, InputAction, InputClassifier, KeyEvent, KeyName,
@@ -101,10 +102,20 @@ impl PrefixStateMachine {
     /// | PrefixActive | Escape | Consumed | Idle |
     /// | PrefixActive | Unbound key | SendToSession(prefix+key) | Idle |
     pub fn process(&mut self, event: &KeyEvent) -> PrefixOutput {
+        self.process_with_protocol(event, KeyboardProtocolMode::CsiU)
+    }
+
+    /// Process a key event using the focused pane's keyboard protocol for raw
+    /// terminal input.
+    pub fn process_with_protocol(
+        &mut self,
+        event: &KeyEvent,
+        protocol: KeyboardProtocolMode,
+    ) -> PrefixOutput {
         if self.active {
-            self.process_active(event)
+            self.process_active(event, protocol)
         } else {
-            self.process_idle(event)
+            self.process_idle(event, protocol)
         }
     }
 
@@ -175,8 +186,10 @@ impl PrefixStateMachine {
         self.activated_at = None;
     }
 
-    fn process_idle(&mut self, event: &KeyEvent) -> PrefixOutput {
-        let action = self.classifier.classify(event, false);
+    fn process_idle(&mut self, event: &KeyEvent, protocol: KeyboardProtocolMode) -> PrefixOutput {
+        let action = self
+            .classifier
+            .classify_with_protocol(event, false, protocol);
         match action {
             InputAction::PrefixKey => {
                 self.activate();
@@ -191,7 +204,7 @@ impl PrefixStateMachine {
         }
     }
 
-    fn process_active(&mut self, event: &KeyEvent) -> PrefixOutput {
+    fn process_active(&mut self, event: &KeyEvent, protocol: KeyboardProtocolMode) -> PrefixOutput {
         // §21.3: Escape cancels prefix (plain Escape, no modifiers).
         if event.key == KeyName::Escape && event.modifiers == Modifiers::NONE {
             self.deactivate();
@@ -207,7 +220,9 @@ impl PrefixStateMachine {
             }
         }
 
-        let action = self.classifier.classify(event, true);
+        let action = self
+            .classifier
+            .classify_with_protocol(event, true, protocol);
         match action {
             InputAction::ChordBinding(action_ref) => {
                 self.deactivate();

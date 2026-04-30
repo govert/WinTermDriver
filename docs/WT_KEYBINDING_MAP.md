@@ -95,7 +95,7 @@ Status codes: `=` exact match, `~` partial/semantic match, `→` WT key translat
 
 | WT Command | WT Default Keys | WTD Action | WTD Default Key | Status | Notes |
 |---|---|---|---|---|---|
-| `duplicatePaneRight` (`splitPane {split: right}`) | `alt+shift+plus` | `split-right` | `Alt+Shift+D` | `→` | Key differs: WT uses Alt+Shift+Plus, WTD uses Alt+Shift+D |
+| `duplicatePaneRight` (`splitPane {split: right}`) | `alt+shift+plus` | `split-right` | `Alt+Shift+Plus` | `=` | Same key |
 | `duplicatePaneDown` (`splitPane {split: down}`) | `alt+shift+-` | `split-down` | `Alt+Shift+Minus` | `=` | Same key (minus) |
 | `splitPane (auto)` | (none) | (none) | (none) | `✗` | WTD has no auto-split direction |
 | `closePane` | `ctrl+shift+w` | `close-pane` | `Ctrl+Shift+W` | `=` | Same binding |
@@ -274,7 +274,7 @@ This is the recommended binding set for a `windows-terminal` preset (bead winter
 | `Ctrl+Shift+Tab` | `prev-tab` | `ctrl+shift+tab` | Exact match |
 | `Ctrl+Shift+P` | `toggle-command-palette` | `ctrl+shift+p` | WT uses P; WTD default uses Space |
 | `F11` | `toggle-fullscreen` | `f11` | Exact match |
-| `Alt+Shift+Plus` | `split-right` | `alt+shift+plus` | WT uses Plus; WTD default uses D |
+| `Alt+Shift+Plus` | `split-right` | `alt+shift+plus` | Exact match |
 | `Alt+Shift+Minus` | `split-down` | `alt+shift+-` | Exact match |
 | `Alt+Down` | `focus-pane-down` | `alt+down` | WT uses single-stroke; WTD default uses chord |
 | `Alt+Up` | `focus-pane-up` | `alt+up` | WT uses single-stroke; WTD default uses chord |

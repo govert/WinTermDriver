@@ -9,6 +9,7 @@
 use std::fmt;
 
 use wtd_core::workspace::{ActionReference, BindingsDefinition};
+use wtd_pty::screen::KeyboardProtocolMode;
 
 // ── Modifiers ────────────────────────────────────────────────────────────────
 
@@ -492,6 +493,22 @@ impl InputClassifier {
         InputAction::RawInput(key_event_to_bytes(event))
     }
 
+    /// Classify a keyboard event while encoding raw input for the target
+    /// terminal keyboard protocol.
+    pub fn classify_with_protocol(
+        &self,
+        event: &KeyEvent,
+        prefix_active: bool,
+        protocol: KeyboardProtocolMode,
+    ) -> InputAction {
+        match self.classify(event, prefix_active) {
+            InputAction::RawInput(_) => {
+                InputAction::RawInput(key_event_to_bytes_with_protocol(event, protocol))
+            }
+            other => other,
+        }
+    }
+
     /// Look up a chord binding for the given event (without full classification).
     pub fn find_chord(&self, event: &KeyEvent) -> Option<&ActionReference> {
         self.chords
@@ -522,6 +539,14 @@ impl InputClassifier {
 /// - Alt+printable → ESC + key bytes (meta prefix)
 /// - Alt+special → modified VT sequence without an extra ESC prefix
 pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
+    key_event_to_bytes_with_protocol(event, KeyboardProtocolMode::CsiU)
+}
+
+/// Convert a key event using the focused pane's negotiated keyboard protocol.
+pub fn key_event_to_bytes_with_protocol(
+    event: &KeyEvent,
+    protocol: KeyboardProtocolMode,
+) -> Vec<u8> {
     let mods = event.modifiers;
 
     // Ctrl+letter → control codes
@@ -541,7 +566,7 @@ pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
     }
 
     // Special keys with optional modifier encoding
-    let special_bytes = special_key_bytes(&event.key, mods);
+    let special_bytes = special_key_bytes(&event.key, mods, protocol);
     if let Some(bytes) = special_bytes {
         return bytes;
     }
@@ -565,8 +590,11 @@ pub fn key_event_to_bytes(event: &KeyEvent) -> Vec<u8> {
     Vec::new()
 }
 
-/// Generate VT bytes for special (non-printable) keys.
-fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
+fn special_key_bytes(
+    key: &KeyName,
+    mods: Modifiers,
+    protocol: KeyboardProtocolMode,
+) -> Option<Vec<u8>> {
     // Modifier parameter for xterm-style sequences: CSI 1;{mod} X
     // mod = 1 + (shift?1:0) + (alt?2:0) + (ctrl?4:0)
     let mod_param = 1
@@ -578,7 +606,12 @@ fn special_key_bytes(key: &KeyName, mods: Modifiers) -> Option<Vec<u8>> {
     match key {
         KeyName::Enter => {
             if has_mods {
-                Some(csi_u(13, mod_param))
+                match protocol {
+                    KeyboardProtocolMode::Legacy => Some(vec![0x0D]),
+                    KeyboardProtocolMode::CsiU | KeyboardProtocolMode::Kitty => {
+                        Some(csi_u(13, mod_param))
+                    }
+                }
             } else {
                 Some(vec![0x0D])
             }
@@ -1340,6 +1373,17 @@ mod tests {
     fn raw_bytes_ctrl_enter_uses_csi_u() {
         let event = key(KeyName::Enter, Modifiers::CTRL, None);
         assert_eq!(key_event_to_bytes(&event), b"\x1B[13;5u");
+    }
+
+    #[test]
+    fn raw_bytes_modified_enter_uses_plain_enter_in_legacy_protocol() {
+        for modifiers in [Modifiers::SHIFT, Modifiers::CTRL, Modifiers::ALT] {
+            let event = key(KeyName::Enter, modifiers, None);
+            assert_eq!(
+                key_event_to_bytes_with_protocol(&event, KeyboardProtocolMode::Legacy),
+                vec![0x0D]
+            );
+        }
     }
 
     #[test]

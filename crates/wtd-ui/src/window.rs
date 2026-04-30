@@ -7,6 +7,7 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::input::{current_modifiers, vk_to_key_name, KeyEvent, Modifiers};
@@ -603,6 +604,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
+            let _ = SetCapture(hwnd);
             let (x, y) = extract_mouse_pos(lparam);
             lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftDown,
@@ -613,6 +615,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_LBUTTONDBLCLK => {
+            let _ = SetCapture(hwnd);
             let (x, y) = extract_mouse_pos(lparam);
             lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftDoubleDown,
@@ -623,6 +626,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_LBUTTONUP => {
+            let _ = ReleaseCapture();
             let (x, y) = extract_mouse_pos(lparam);
             lock_mouse_queue().push(MouseEvent {
                 kind: MouseEventKind::LeftUp,

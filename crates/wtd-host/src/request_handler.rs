@@ -18,7 +18,7 @@ use wtd_core::workspace::{
     PaneDriverProfile, PaneLeaf, PaneNode, SessionLaunchDefinition, TabDefinition,
     WorkspaceDefinition,
 };
-use wtd_core::{find_workspace, list_workspaces, load_workspace_definition};
+use wtd_core::{find_workspace, list_workspaces, load_workspace_definition, DiscoveryError};
 
 use wtd_ipc::message;
 use wtd_ipc::message::*;
@@ -647,28 +647,37 @@ struct LoadedWorkspaceDefinition {
     path: PathBuf,
 }
 
+enum LoadWorkspaceError {
+    NotFound,
+    Envelope(Envelope),
+}
+
 /// Load a workspace definition from disk by name (with optional explicit file).
 fn load_workspace_from_disk(
     name: &str,
     file: Option<&str>,
     cwd: &std::path::Path,
-) -> Result<LoadedWorkspaceDefinition, Envelope> {
+) -> Result<LoadedWorkspaceDefinition, LoadWorkspaceError> {
     let explicit = file.map(|f| std::path::PathBuf::from(f));
 
     let discovered = find_workspace(name, explicit.as_deref(), cwd).map_err(|e| {
-        error_envelope(
-            "",
-            ErrorCode::WorkspaceNotFound,
-            &format!("workspace '{}' not found: {}", name, e),
-        )
+        if matches!(e, DiscoveryError::NotFound { .. }) && explicit.is_none() {
+            LoadWorkspaceError::NotFound
+        } else {
+            LoadWorkspaceError::Envelope(error_envelope(
+                "",
+                ErrorCode::WorkspaceNotFound,
+                &format!("workspace '{}' not found: {}", name, e),
+            ))
+        }
     })?;
 
     let content = std::fs::read_to_string(&discovered.path).map_err(|e| {
-        error_envelope(
+        LoadWorkspaceError::Envelope(error_envelope(
             "",
             ErrorCode::WorkspaceNotFound,
             &format!("failed to read {}: {}", discovered.path.display(), e),
-        )
+        ))
     })?;
 
     let file_name = discovered
@@ -678,11 +687,11 @@ fn load_workspace_from_disk(
         .unwrap_or_else(|| "workspace.yaml".to_string());
 
     let definition = load_workspace_definition(&file_name, &content).map_err(|e| {
-        error_envelope(
+        LoadWorkspaceError::Envelope(error_envelope(
             "",
             ErrorCode::DefinitionError,
             &format!("failed to parse workspace: {}", e),
-        )
+        ))
     })?;
 
     Ok(LoadedWorkspaceDefinition {
@@ -837,15 +846,21 @@ impl HostRequestHandler {
         // Load or synthesize workspace definition.
         let loaded_path;
         let def = if open.file.is_some() || (open.name.is_some() && open.profile.is_none()) {
-            // File-based path: look up workspace definition on disk.
+            // File-based path: look up workspace definition on disk. If a named
+            // workspace has no definition, create an ad-hoc workspace with that
+            // name so `wtd start scratch` works without setup.
             match load_workspace_from_disk(&ws_name, open.file.as_deref(), &request_cwd(envelope)) {
                 Ok(loaded) => {
                     loaded_path = Some(loaded.path);
                     loaded.definition
                 }
-                Err(mut e) => {
-                    e.id = id.to_string();
-                    return Some(e);
+                Err(LoadWorkspaceError::NotFound) => {
+                    loaded_path = None;
+                    synthesize_default_workspace(&ws_name, open.profile.as_deref(), &state.settings)
+                }
+                Err(LoadWorkspaceError::Envelope(mut envelope)) => {
+                    envelope.id = id.to_string();
+                    return Some(envelope);
                 }
             }
         } else {
@@ -969,9 +984,16 @@ impl HostRequestHandler {
         let loaded =
             match load_workspace_from_disk(&recreate.workspace, None, &request_cwd(envelope)) {
                 Ok(loaded) => loaded,
-                Err(mut e) => {
-                    e.id = id.to_string();
-                    return Some(e);
+                Err(LoadWorkspaceError::NotFound) => {
+                    return Some(error_envelope(
+                        id,
+                        ErrorCode::WorkspaceNotFound,
+                        &format!("workspace definition '{}' not found", recreate.workspace),
+                    ));
+                }
+                Err(LoadWorkspaceError::Envelope(mut envelope)) => {
+                    envelope.id = id.to_string();
+                    return Some(envelope);
                 }
             };
 
@@ -2814,9 +2836,10 @@ mod tests {
     };
     use wtd_ipc::message::{
         AttentionState, Capture, CaptureResult, ClearAttention, Inspect, InspectResult, Mouse,
-        MouseButton, MouseKind, Notify, Scrollback, ScrollbackResult, SetPaneStatus, WaitCondition,
-        WaitPane, WaitPaneResult,
+        MouseButton, MouseKind, Notify, OpenWorkspace, OpenWorkspaceResult, Scrollback,
+        ScrollbackResult, SetPaneStatus, WaitCondition, WaitPane, WaitPaneResult,
     };
+    use wtd_ipc::Envelope;
     use wtd_pty::PtySize;
 
     fn encode_b64(input: &[u8]) -> String {
@@ -2860,6 +2883,41 @@ mod tests {
                 driver: resolve_pane_driver(None, None),
             },
         )
+    }
+
+    #[test]
+    fn open_named_missing_workspace_synthesizes_adhoc_definition() {
+        let handler = HostRequestHandler::new(GlobalSettings::default());
+        let request = Envelope::new(
+            "open-1",
+            &OpenWorkspace {
+                name: Some("scratch-new".to_string()),
+                file: None,
+                recreate: false,
+                profile: None,
+            },
+        );
+
+        let response = handler
+            .handle_open_workspace(
+                &request,
+                &OpenWorkspace {
+                    name: Some("scratch-new".to_string()),
+                    file: None,
+                    recreate: false,
+                    profile: None,
+                },
+            )
+            .unwrap();
+        let _: OpenWorkspaceResult = response.extract_payload().unwrap();
+
+        let mut state = handler.state.lock().unwrap();
+        let mut inst = state
+            .workspaces
+            .remove("scratch-new")
+            .expect("ad-hoc workspace should be opened");
+        assert_eq!(inst.save().name, "scratch-new");
+        inst.close();
     }
 
     #[test]

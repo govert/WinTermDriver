@@ -17,17 +17,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN,
 };
 use wtd_core::ids::PaneId;
-use wtd_core::layout::LayoutTree;
+use wtd_core::layout::{Direction, LayoutTree, Rect};
 use wtd_core::logging::init_ui_logging;
 use wtd_core::workspace::PaneNode;
 use wtd_core::LogLevel;
 use wtd_ipc::message::{AttentionState, ProgressInfo, ProgressState};
+use wtd_pty::screen::KeyboardProtocolMode;
 use wtd_pty::MouseMode;
 use wtd_pty::ScreenBuffer;
 use wtd_ui::command_palette::{CommandPalette, PaletteResult};
 use wtd_ui::host_bridge::{HostBridge, HostCommand, HostEvent};
 use wtd_ui::input::{
-    key_event_to_bytes, InputAction, InputClassifier, KeyEvent, KeyName, Modifiers,
+    key_event_to_bytes_with_protocol, InputAction, InputClassifier, KeyEvent, KeyName, Modifiers,
 };
 use wtd_ui::mouse_handler::{MouseHandler, MouseOutput};
 use wtd_ui::paint_scheduler::PaintScheduler;
@@ -844,6 +845,14 @@ fn text_input_bytes(text: &str) -> Vec<u8> {
     text.as_bytes().to_vec()
 }
 
+fn focused_keyboard_protocol(tab: &SnapshotTab) -> KeyboardProtocolMode {
+    let focused = tab.layout_tree.focus();
+    tab.screens
+        .get(&focused)
+        .map(|screen| screen.keyboard_protocol())
+        .unwrap_or(KeyboardProtocolMode::Legacy)
+}
+
 const PASS_THROUGH_NEXT_KEY_LABEL: &str = "SEND KEY";
 
 #[derive(Debug, Default)]
@@ -864,12 +873,21 @@ impl PassThroughNextKeyState {
         PASS_THROUGH_NEXT_KEY_LABEL
     }
 
+    #[cfg(test)]
     fn process_key(&mut self, event: &KeyEvent) -> Option<Vec<u8>> {
+        self.process_key_with_protocol(event, KeyboardProtocolMode::CsiU)
+    }
+
+    fn process_key_with_protocol(
+        &mut self,
+        event: &KeyEvent,
+        protocol: KeyboardProtocolMode,
+    ) -> Option<Vec<u8>> {
         if !self.armed {
             return None;
         }
 
-        let bytes = key_event_to_bytes(event);
+        let bytes = key_event_to_bytes_with_protocol(event, protocol);
         if !bytes.is_empty() {
             self.armed = false;
         }
@@ -1104,10 +1122,72 @@ fn should_prompt_for_profile(
     bridge_present
         && connected
         && args.is_none()
+        && matches!(action_name, "new-tab" | "change-profile")
+}
+
+fn should_suppress_text_after_consumed_key(event: &KeyEvent) -> bool {
+    event.modifiers.alt()
         && matches!(
-            action_name,
-            "new-tab" | "split-right" | "split-down" | "change-profile"
+            event.key,
+            KeyName::Char(_)
+                | KeyName::Digit(_)
+                | KeyName::Space
+                | KeyName::Plus
+                | KeyName::Minus
+                | KeyName::Percent
+                | KeyName::DoubleQuote
+                | KeyName::Comma
+                | KeyName::Period
+                | KeyName::Slash
+                | KeyName::Backslash
+                | KeyName::LeftBracket
+                | KeyName::RightBracket
+                | KeyName::Semicolon
+                | KeyName::Apostrophe
+                | KeyName::Backtick
         )
+}
+
+fn apply_optimistic_focus_action(
+    tabs: &mut [SnapshotTab],
+    active_tab_index: usize,
+    action_name: &str,
+) -> bool {
+    let Some(tab) = tabs.get_mut(active_tab_index) else {
+        return false;
+    };
+
+    match action_name {
+        "focus-next-pane" => {
+            tab.layout_tree.focus_next();
+            true
+        }
+        "focus-prev-pane" => {
+            tab.layout_tree.focus_prev();
+            true
+        }
+        "focus-pane-up" => {
+            tab.layout_tree
+                .focus_direction(Direction::Up, Rect::new(0, 0, 120, 40));
+            true
+        }
+        "focus-pane-down" => {
+            tab.layout_tree
+                .focus_direction(Direction::Down, Rect::new(0, 0, 120, 40));
+            true
+        }
+        "focus-pane-left" => {
+            tab.layout_tree
+                .focus_direction(Direction::Left, Rect::new(0, 0, 120, 40));
+            true
+        }
+        "focus-pane-right" => {
+            tab.layout_tree
+                .focus_direction(Direction::Right, Rect::new(0, 0, 120, 40));
+            true
+        }
+        _ => false,
+    }
 }
 
 fn show_profile_selector_for_action(
@@ -1280,12 +1360,25 @@ const SCROLLBAR_HOVER_WIDTH: f32 = 14.0;
 const SCROLLBAR_THICK_WIDTH: f32 = 10.0;
 const SCROLLBAR_RIGHT_INSET: f32 = 2.0;
 const SCROLLBAR_MIN_THUMB: f32 = 28.0;
+const SCROLLBAR_ARROW_HEIGHT: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ScrollbarMetrics {
+    bar: PixelRect,
     track: PixelRect,
     thumb: PixelRect,
+    top_arrow: Option<PixelRect>,
+    bottom_arrow: Option<PixelRect>,
     max_scroll: i32,
+    page_step: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollbarPart {
+    TopArrow,
+    BottomArrow,
+    Thumb,
+    Track,
 }
 
 #[derive(Debug, Clone)]
@@ -1318,12 +1411,34 @@ fn scrollbar_metrics(
         return None;
     }
 
-    let track = PixelRect::new(
+    let bar = PixelRect::new(
         content_rect.x + content_rect.width - SCROLLBAR_RIGHT_INSET - SCROLLBAR_THICK_WIDTH,
         content_rect.y,
         SCROLLBAR_THICK_WIDTH.min(content_rect.width.max(0.0)),
         content_rect.height,
     );
+
+    let arrow_height = scrollbar_arrow_height(bar.height);
+    let top_arrow =
+        (arrow_height > 0.0).then(|| PixelRect::new(bar.x, bar.y, bar.width, arrow_height));
+    let bottom_arrow = (arrow_height > 0.0).then(|| {
+        PixelRect::new(
+            bar.x,
+            bar.y + bar.height - arrow_height,
+            bar.width,
+            arrow_height,
+        )
+    });
+    let track = PixelRect::new(
+        bar.x,
+        bar.y + arrow_height,
+        bar.width,
+        (bar.height - arrow_height * 2.0).max(0.0),
+    );
+    if track.height <= 0.0 {
+        return None;
+    }
+
     let thumb_height = (track.height * visible_rows as f32 / total_rows as f32)
         .clamp(SCROLLBAR_MIN_THUMB.min(track.height), track.height);
     let travel = (track.height - thumb_height).max(0.0);
@@ -1332,10 +1447,22 @@ fn scrollbar_metrics(
     let thumb_top = track.y + travel * progress;
 
     Some(ScrollbarMetrics {
+        bar,
         track,
         thumb: PixelRect::new(track.x, thumb_top, track.width, thumb_height),
+        top_arrow,
+        bottom_arrow,
         max_scroll,
+        page_step: visible_rows.max(1) as i32,
     })
+}
+
+fn scrollbar_arrow_height(height: f32) -> f32 {
+    if height >= SCROLLBAR_MIN_THUMB + SCROLLBAR_ARROW_HEIGHT * 2.0 {
+        SCROLLBAR_ARROW_HEIGHT.min(height * 0.25)
+    } else {
+        0.0
+    }
 }
 
 fn scrollbar_offset_for_thumb_top(metrics: ScrollbarMetrics, thumb_top: f32) -> i32 {
@@ -1349,13 +1476,34 @@ fn scrollbar_offset_for_thumb_top(metrics: ScrollbarMetrics, thumb_top: f32) -> 
 }
 
 fn scrollbar_hit_rect(metrics: ScrollbarMetrics) -> PixelRect {
-    let width = SCROLLBAR_HOVER_WIDTH.min(metrics.track.width.max(SCROLLBAR_HOVER_WIDTH));
+    let width = SCROLLBAR_HOVER_WIDTH.min(metrics.bar.width.max(SCROLLBAR_HOVER_WIDTH));
     PixelRect::new(
-        metrics.track.x + metrics.track.width - width,
-        metrics.track.y,
+        metrics.bar.x + metrics.bar.width - width,
+        metrics.bar.y,
         width,
-        metrics.track.height,
+        metrics.bar.height,
     )
+}
+
+fn scrollbar_part_at_point(metrics: ScrollbarMetrics, x: f32, y: f32) -> Option<ScrollbarPart> {
+    if !rect_contains(scrollbar_hit_rect(metrics), x, y) {
+        return None;
+    }
+    if let Some(top_arrow) = metrics.top_arrow {
+        if y >= top_arrow.y && y < top_arrow.y + top_arrow.height {
+            return Some(ScrollbarPart::TopArrow);
+        }
+    }
+    if let Some(bottom_arrow) = metrics.bottom_arrow {
+        if y >= bottom_arrow.y && y < bottom_arrow.y + bottom_arrow.height {
+            return Some(ScrollbarPart::BottomArrow);
+        }
+    }
+    if rect_contains(metrics.thumb, x, y) {
+        Some(ScrollbarPart::Thumb)
+    } else {
+        Some(ScrollbarPart::Track)
+    }
 }
 
 fn rect_contains(rect: PixelRect, x: f32, y: f32) -> bool {
@@ -1620,13 +1768,12 @@ fn apply_find_match(
     let base_row = find_match.row.min(max_scrollback);
     let offset = max_scrollback.saturating_sub(base_row) as i32;
     mouse_handler.set_scroll_offset(pane_id, offset, max_scrollback as i32);
-    let viewport_row = find_match.row.saturating_sub(base_row);
     mouse_handler.set_selection(
         pane_id,
         Some(TextSelection {
-            start_row: viewport_row,
+            start_row: find_match.row,
             start_col: find_match.col,
-            end_row: viewport_row,
+            end_row: find_match.row,
             end_col: find_match
                 .col
                 .saturating_add(find_match.len.saturating_sub(1)),
@@ -1694,15 +1841,24 @@ fn navigate_find(
     true
 }
 
-fn selection_screen_bounds(screen: &ScreenBuffer) -> (usize, usize) {
+fn visible_base_row(
+    screen: &ScreenBuffer,
+    mouse_handler: &MouseHandler,
+    pane_id: &PaneId,
+) -> usize {
+    let scrollback_offset = mouse_handler.scroll_offset(pane_id).max(0) as usize;
+    screen.scrollback_len().saturating_sub(scrollback_offset)
+}
+
+fn selection_buffer_bounds(screen: &ScreenBuffer) -> (usize, usize) {
     (
-        screen.rows().saturating_sub(1),
+        screen.total_rows().saturating_sub(1),
         screen.cols().saturating_sub(1),
     )
 }
 
 fn clamp_selection_position(row: usize, col: usize, screen: &ScreenBuffer) -> (usize, usize) {
-    let (max_row, max_col) = selection_screen_bounds(screen);
+    let (max_row, max_col) = selection_buffer_bounds(screen);
     (row.min(max_row), col.min(max_col))
 }
 
@@ -1716,7 +1872,8 @@ fn activate_keyboard_mark_mode(
         return true;
     };
     let cursor = screen.cursor();
-    let (row, col) = clamp_selection_position(cursor.row, cursor.col, screen);
+    let base_row = visible_base_row(screen, mouse_handler, &focused);
+    let (row, col) = clamp_selection_position(base_row + cursor.row, cursor.col, screen);
     if mouse_handler.selection(&focused).is_none() {
         mouse_handler.set_selection(
             &focused,
@@ -1741,11 +1898,14 @@ fn select_all_focused_pane(
     let Some(screen) = tab.screens.get(&focused) else {
         return true;
     };
-    let (max_row, max_col) = selection_screen_bounds(screen);
+    let base_row = visible_base_row(screen, mouse_handler, &focused);
+    let max_row =
+        (base_row + screen.rows().saturating_sub(1)).min(screen.total_rows().saturating_sub(1));
+    let max_col = screen.cols().saturating_sub(1);
     mouse_handler.set_selection(
         &focused,
         Some(TextSelection {
-            start_row: 0,
+            start_row: base_row,
             start_col: 0,
             end_row: max_row,
             end_col: max_col,
@@ -1792,7 +1952,9 @@ fn move_keyboard_selection(
         | KeyName::PageDown => {
             let selection = mouse_handler.selection(&focused).unwrap_or_else(|| {
                 let cursor = screen.cursor();
-                let (row, col) = clamp_selection_position(cursor.row, cursor.col, screen);
+                let base_row = visible_base_row(screen, mouse_handler, &focused);
+                let (row, col) =
+                    clamp_selection_position(base_row + cursor.row, cursor.col, screen);
                 TextSelection {
                     start_row: row,
                     start_col: col,
@@ -1805,7 +1967,7 @@ fn move_keyboard_selection(
             } else {
                 (selection.end_row, selection.end_col)
             };
-            let (max_row, max_col) = selection_screen_bounds(screen);
+            let (max_row, max_col) = selection_buffer_bounds(screen);
             match event.key {
                 KeyName::Left => col = col.saturating_sub(1),
                 KeyName::Right => col = (col + 1).min(max_col),
@@ -2198,12 +2360,7 @@ fn dispatch_action(
             let focused = active_tab.layout_tree.focus();
             if let Some(sel) = mouse_handler.selection(&focused) {
                 if let Some(screen) = active_tab.screens.get(&focused) {
-                    let scrollback_offset = mouse_handler.scroll_offset(&focused).max(0) as usize;
-                    let text = wtd_ui::clipboard::extract_selection_text_at_offset(
-                        screen,
-                        &sel,
-                        scrollback_offset,
-                    );
+                    let text = wtd_ui::clipboard::extract_selection_text(screen, &sel);
                     if !text.is_empty() {
                         let _ = wtd_ui::clipboard::copy_to_clipboard(&text);
                     }
@@ -2360,6 +2517,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut find_state = FindState::default();
     let mut mouse_modes: HashMap<PaneId, MouseMode> = HashMap::new();
     let mut sgr_mouse_modes: HashMap<PaneId, bool> = HashMap::new();
+    let mut suppress_next_text_input = false;
     if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
         refresh_mouse_modes(&mut mouse_modes, &mut sgr_mouse_modes, &active_tab.screens);
     }
@@ -2969,7 +3127,13 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         }
                     }
 
-                    if let Some(bytes) = pass_through_next_key.process_key(&event) {
+                    let keyboard_protocol = active_tab_ref(&tabs, active_tab_index)
+                        .map(focused_keyboard_protocol)
+                        .unwrap_or(KeyboardProtocolMode::Legacy);
+
+                    if let Some(bytes) =
+                        pass_through_next_key.process_key_with_protocol(&event, keyboard_protocol)
+                    {
                         if let Some(ref bridge) = bridge {
                             if connected && !bytes.is_empty() {
                                 if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
@@ -2994,9 +3158,23 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     }
 
                     // Normal mode — run through prefix state machine (§21.3).
-                    let output = prefix_sm.process(&event);
+                    let output = prefix_sm.process_with_protocol(&event, keyboard_protocol);
                     match output {
                         PrefixOutput::DispatchAction(action_ref) => {
+                            if apply_optimistic_focus_action(
+                                &mut tabs,
+                                active_tab_index,
+                                action_name(&action_ref),
+                            ) {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    let focused = active_tab.layout_tree.focus();
+                                    if let Some(pane_session) =
+                                        active_tab.pane_sessions.get(&focused)
+                                    {
+                                        status_bar.set_pane_path(pane_session.pane_path.clone());
+                                    }
+                                }
+                            }
                             dispatch_action(
                                 &action_ref,
                                 hwnd,
@@ -3015,6 +3193,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mut find_state,
                                 confirm_close,
                             );
+                            if should_suppress_text_after_consumed_key(&event) {
+                                suppress_next_text_input = true;
+                            }
                             force_immediate_paint = true;
                             needs_paint = true;
                         }
@@ -3050,6 +3231,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 }
                 InputEvent::Text(text) => {
                     if text.is_empty() {
+                        continue;
+                    }
+                    if suppress_next_text_input {
+                        suppress_next_text_input = false;
                         continue;
                     }
 
@@ -3451,40 +3636,44 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
                                 let _ = active_tab.layout_tree.set_focus(pane_id.clone());
                             }
-                            let mut drag_metrics = metrics;
-                            let grab_y = if rect_contains(metrics.thumb, event.x, event.y) {
-                                event.y
-                            } else {
-                                let thumb_top = event.y - metrics.thumb.height * 0.5;
-                                let offset = scrollbar_offset_for_thumb_top(metrics, thumb_top);
-                                mouse_handler.set_scroll_offset(
-                                    &pane_id,
-                                    offset,
-                                    metrics.max_scroll,
-                                );
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    if let Some((_, refreshed)) = pane_scrollbar_metrics_at_point(
-                                        active_tab,
-                                        &pane_layout,
-                                        &mouse_handler,
-                                        cell_w,
-                                        cell_h,
-                                        pane_viewport_insets,
-                                        event.x,
-                                        event.y,
-                                    ) {
-                                        drag_metrics = refreshed;
-                                    }
-                                }
-                                event.y
-                            };
                             scrollbar_interaction.hovered_pane = Some(pane_id.clone());
-                            scrollbar_interaction.drag = Some(ScrollbarDrag {
-                                pane_id,
-                                grab_y,
-                                thumb_top_at_start: drag_metrics.thumb.y,
-                                metrics_at_start: drag_metrics,
-                            });
+                            match scrollbar_part_at_point(metrics, event.x, event.y) {
+                                Some(ScrollbarPart::TopArrow) => {
+                                    let offset = mouse_handler.scroll_offset(&pane_id) + 1;
+                                    mouse_handler.set_scroll_offset(
+                                        &pane_id,
+                                        offset,
+                                        metrics.max_scroll,
+                                    );
+                                }
+                                Some(ScrollbarPart::BottomArrow) => {
+                                    let offset = mouse_handler.scroll_offset(&pane_id) - 1;
+                                    mouse_handler.set_scroll_offset(
+                                        &pane_id,
+                                        offset,
+                                        metrics.max_scroll,
+                                    );
+                                }
+                                Some(ScrollbarPart::Track) => {
+                                    let direction = if event.y < metrics.thumb.y { 1 } else { -1 };
+                                    let offset = mouse_handler.scroll_offset(&pane_id)
+                                        + direction * metrics.page_step;
+                                    mouse_handler.set_scroll_offset(
+                                        &pane_id,
+                                        offset,
+                                        metrics.max_scroll,
+                                    );
+                                }
+                                Some(ScrollbarPart::Thumb) => {
+                                    scrollbar_interaction.drag = Some(ScrollbarDrag {
+                                        pane_id,
+                                        grab_y: event.y,
+                                        thumb_top_at_start: metrics.thumb.y,
+                                        metrics_at_start: metrics,
+                                    });
+                                }
+                                None => {}
+                            }
                             force_immediate_paint = true;
                             needs_paint = true;
                             continue;
@@ -3507,6 +3696,15 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         .collect()
                 })
                 .unwrap_or_default();
+            let scrollback_lengths: HashMap<PaneId, usize> =
+                active_tab_ref(&tabs, active_tab_index)
+                    .map(|tab| {
+                        tab.screens
+                            .iter()
+                            .map(|(pane_id, screen)| (pane_id.clone(), screen.scrollback_len()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
             let ts_height = tab_strip.height();
             let sb_height = status_bar.height();
             let (content_cols, content_rows) = content_dims(
@@ -3528,6 +3726,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 &mouse_modes,
                 &sgr_mouse_modes,
                 &alternate_screens,
+                &scrollback_lengths,
                 cell_w,
                 cell_h,
                 pane_viewport_insets.horizontal_cells,
@@ -3580,13 +3779,8 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     MouseOutput::SelectionFinalized(pane_id, selection) => {
                         if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
                             if let Some(screen) = active_tab.screens.get(&pane_id) {
-                                let scrollback_offset =
-                                    mouse_handler.scroll_offset(&pane_id).max(0) as usize;
-                                let text = wtd_ui::clipboard::extract_selection_text_at_offset(
-                                    screen,
-                                    &selection,
-                                    scrollback_offset,
-                                );
+                                let text =
+                                    wtd_ui::clipboard::extract_selection_text(screen, &selection);
                                 if !text.is_empty() {
                                     let _ = wtd_ui::clipboard::copy_to_clipboard(&text);
                                 }
@@ -4005,6 +4199,27 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
             }
         }
 
+        if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+            let scrollback_lengths: HashMap<PaneId, usize> = active_tab
+                .screens
+                .iter()
+                .map(|(pane_id, screen)| (pane_id.clone(), screen.scrollback_len()))
+                .collect();
+            let autoscroll_outputs = mouse_handler.tick_selection_autoscroll(
+                &pane_layout,
+                &scrollback_lengths,
+                cell_w,
+                cell_h,
+                pane_viewport_insets.horizontal_cells,
+                pane_viewport_insets.vertical_cells,
+                Instant::now(),
+            );
+            if !autoscroll_outputs.is_empty() {
+                force_immediate_paint = true;
+                needs_paint = true;
+            }
+        }
+
         if window::take_needs_paint() {
             force_immediate_paint = true;
             needs_paint = true;
@@ -4174,7 +4389,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
         // Sleep briefly to avoid busy-looping, but wake promptly when a deferred
         // alternate-screen repaint becomes due.
-        let sleep_for = paint_scheduler.sleep_interval(Duration::from_millis(16), Instant::now());
+        let sleep_for = paint_scheduler.sleep_interval(Duration::from_millis(4), Instant::now());
         std::thread::sleep(sleep_for);
 
         if !is_window_valid(hwnd) {
@@ -4610,6 +4825,9 @@ mod tests {
         let (tab, pane_id) = scrollback_test_tab(5);
         let mut mouse_handler = MouseHandler::new();
         let mut keyboard_selection = KeyboardSelectionState::default();
+        let base_row = tab.screens[&pane_id].scrollback_len();
+        let cursor_row = tab.screens[&pane_id].cursor().row;
+        let selection_row = base_row + cursor_row;
 
         assert!(activate_keyboard_mark_mode(
             &tab,
@@ -4620,9 +4838,9 @@ mod tests {
         assert_eq!(
             mouse_handler.selection(&pane_id),
             Some(TextSelection {
-                start_row: 4,
+                start_row: selection_row,
                 start_col: 0,
-                end_row: 4,
+                end_row: selection_row,
                 end_col: 0,
             })
         );
@@ -4641,9 +4859,9 @@ mod tests {
         assert_eq!(
             mouse_handler.selection(&pane_id),
             Some(TextSelection {
-                start_row: 4,
+                start_row: selection_row,
                 start_col: 0,
-                end_row: 4,
+                end_row: selection_row,
                 end_col: 1,
             })
         );
@@ -4663,9 +4881,9 @@ mod tests {
         assert_eq!(
             mouse_handler.selection(&pane_id),
             Some(TextSelection {
-                start_row: 3,
+                start_row: selection_row.saturating_sub(1),
                 start_col: 0,
-                end_row: 4,
+                end_row: selection_row,
                 end_col: 1,
             })
         );
@@ -4774,9 +4992,9 @@ mod tests {
         assert_eq!(
             mouse_handler.selection(&pane_id),
             Some(TextSelection {
-                start_row: 0,
+                start_row: first.row,
                 start_col: first.col,
-                end_row: 0,
+                end_row: first.row,
                 end_col: first.col + first.len - 1,
             })
         );
@@ -5043,6 +5261,24 @@ mod tests {
     }
 
     #[test]
+    fn pass_through_next_key_uses_focused_keyboard_protocol() {
+        let mut state = PassThroughNextKeyState::default();
+        state.arm();
+
+        let event = KeyEvent {
+            key: wtd_ui::input::KeyName::Enter,
+            modifiers: wtd_ui::input::Modifiers::SHIFT,
+            character: None,
+        };
+
+        assert_eq!(
+            state.process_key_with_protocol(&event, KeyboardProtocolMode::Legacy),
+            Some(vec![0x0D])
+        );
+        assert!(!state.is_armed());
+    }
+
+    #[test]
     fn plain_shell_output_is_not_coalesced() {
         assert!(!should_coalesce_primary_screen_output(
             b"PS C:\\Users\\me> dir\r\n"
@@ -5052,14 +5288,38 @@ mod tests {
     #[test]
     fn profile_actions_prompt_when_connected_without_args() {
         assert!(should_prompt_for_profile("new-tab", &None, true, true));
-        assert!(should_prompt_for_profile("split-right", &None, true, true));
-        assert!(should_prompt_for_profile("split-down", &None, true, true));
+        assert!(!should_prompt_for_profile("split-right", &None, true, true));
+        assert!(!should_prompt_for_profile("split-down", &None, true, true));
         assert!(should_prompt_for_profile(
             "change-profile",
             &None,
             true,
             true
         ));
+    }
+
+    #[test]
+    fn consumed_alt_printable_shortcut_suppresses_following_text() {
+        let alt_plus = KeyEvent {
+            key: wtd_ui::input::KeyName::Plus,
+            modifiers: wtd_ui::input::Modifiers::ALT | wtd_ui::input::Modifiers::SHIFT,
+            character: None,
+        };
+        assert!(should_suppress_text_after_consumed_key(&alt_plus));
+
+        let plain_plus = KeyEvent {
+            key: wtd_ui::input::KeyName::Plus,
+            modifiers: wtd_ui::input::Modifiers::SHIFT,
+            character: None,
+        };
+        assert!(!should_suppress_text_after_consumed_key(&plain_plus));
+
+        let alt_left = KeyEvent {
+            key: wtd_ui::input::KeyName::Left,
+            modifiers: wtd_ui::input::Modifiers::ALT,
+            character: None,
+        };
+        assert!(!should_suppress_text_after_consumed_key(&alt_left));
     }
 
     #[test]
@@ -5093,8 +5353,13 @@ mod tests {
         let metrics = scrollbar_metrics(content, 980, 20, 20, 0).expect("scrollbar");
 
         assert_eq!(metrics.max_scroll, 980);
+        assert_eq!(metrics.bar.y, 20.0);
+        assert_eq!(metrics.track.y, 20.0 + SCROLLBAR_ARROW_HEIGHT);
         assert_eq!(metrics.thumb.height, SCROLLBAR_MIN_THUMB);
-        assert_eq!(metrics.thumb.y, 20.0 + 100.0 - SCROLLBAR_MIN_THUMB);
+        assert_eq!(
+            metrics.thumb.y,
+            metrics.track.y + metrics.track.height - SCROLLBAR_MIN_THUMB
+        );
         assert_eq!(
             scrollbar_offset_for_thumb_top(metrics, metrics.track.y),
             metrics.max_scroll
@@ -5109,6 +5374,33 @@ mod tests {
     fn scrollbar_hidden_when_buffer_fits_viewport() {
         let content = PixelRect::new(0.0, 0.0, 100.0, 80.0);
         assert!(scrollbar_metrics(content, 0, 24, 12, 0).is_none());
+    }
+
+    #[test]
+    fn scrollbar_hit_testing_distinguishes_arrows_thumb_and_track() {
+        let content = PixelRect::new(10.0, 20.0, 200.0, 120.0);
+        let metrics = scrollbar_metrics(content, 120, 20, 20, 60).expect("scrollbar");
+
+        assert_eq!(
+            scrollbar_part_at_point(metrics, metrics.bar.x + 1.0, metrics.bar.y + 1.0),
+            Some(ScrollbarPart::TopArrow)
+        );
+        assert_eq!(
+            scrollbar_part_at_point(
+                metrics,
+                metrics.bar.x + 1.0,
+                metrics.bar.y + metrics.bar.height - 1.0
+            ),
+            Some(ScrollbarPart::BottomArrow)
+        );
+        assert_eq!(
+            scrollbar_part_at_point(metrics, metrics.thumb.x + 1.0, metrics.thumb.y + 1.0),
+            Some(ScrollbarPart::Thumb)
+        );
+        assert_eq!(
+            scrollbar_part_at_point(metrics, metrics.track.x + 1.0, metrics.track.y + 1.0),
+            Some(ScrollbarPart::Track)
+        );
     }
 
     #[test]

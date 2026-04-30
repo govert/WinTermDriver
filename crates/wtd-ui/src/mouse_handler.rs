@@ -5,6 +5,7 @@
 //! actions that the main loop dispatches.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use wtd_core::ids::PaneId;
 use wtd_pty::MouseMode;
@@ -22,6 +23,8 @@ const SCROLL_LINES_PER_NOTCH: i32 = 3;
 
 /// Win32 WHEEL_DELTA constant.
 const WHEEL_DELTA: i32 = 120;
+const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(35);
+const SELECTION_AUTOSCROLL_MAX_LINES: i32 = 8;
 
 // ── MouseOutput ─────────────────────────────────────────────────────────────
 
@@ -63,7 +66,7 @@ struct PaneMouseState {
 /// Active selection drag.
 #[derive(Debug, Clone)]
 struct SelectionDrag {
-    /// Screen coordinates where selection started.
+    /// Combined buffer coordinates where selection started.
     start_row: usize,
     start_col: usize,
     /// Current end of selection (updated as mouse moves).
@@ -82,6 +85,12 @@ impl SelectionDrag {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SelectionPointer {
+    x: f32,
+    y: f32,
+}
+
 // ── MouseHandler ────────────────────────────────────────────────────────────
 
 /// Central mouse input handler coordinating focus, selection, scroll, paste,
@@ -96,6 +105,10 @@ pub struct MouseHandler {
     left_down: bool,
     /// Whether we're in a splitter drag (managed by PaneLayout).
     splitter_dragging: bool,
+    /// Most recent pointer position for an active text-selection drag.
+    selection_pointer: Option<SelectionPointer>,
+    /// Last time auto-scroll advanced during text-selection drag.
+    last_selection_autoscroll: Option<Instant>,
 }
 
 impl MouseHandler {
@@ -106,6 +119,8 @@ impl MouseHandler {
             vt_mouse_pane: None,
             left_down: false,
             splitter_dragging: false,
+            selection_pointer: None,
+            last_selection_autoscroll: None,
         }
     }
 
@@ -139,6 +154,8 @@ impl MouseHandler {
         });
         if self.selecting_pane.as_ref() == Some(pane_id) {
             self.selecting_pane = None;
+            self.selection_pointer = None;
+            self.last_selection_autoscroll = None;
         }
     }
 
@@ -168,6 +185,8 @@ impl MouseHandler {
         self.pane_states.remove(pane_id);
         if self.selecting_pane.as_ref() == Some(pane_id) {
             self.selecting_pane = None;
+            self.selection_pointer = None;
+            self.last_selection_autoscroll = None;
         }
         if self.vt_mouse_pane.as_ref() == Some(pane_id) {
             self.vt_mouse_pane = None;
@@ -181,6 +200,8 @@ impl MouseHandler {
         }
         if self.selecting_pane.as_ref() == Some(pane_id) {
             self.selecting_pane = None;
+            self.selection_pointer = None;
+            self.last_selection_autoscroll = None;
         }
         if self.vt_mouse_pane.as_ref() == Some(pane_id) {
             self.vt_mouse_pane = None;
@@ -200,6 +221,7 @@ impl MouseHandler {
     /// - `mouse_modes`: map of pane ID → mouse mode (from ScreenBuffer)
     /// - `sgr_mouse_modes`: map of pane ID → whether SGR mouse format is enabled
     /// - `alternate_screens`: map of pane ID → whether the pane is on the alternate screen
+    /// - `scrollback_lengths`: map of pane ID → current retained scrollback rows
     /// - `cell_width`/`cell_height`: cell dimensions in pixels
     pub fn handle_event(
         &mut self,
@@ -213,6 +235,7 @@ impl MouseHandler {
         mouse_modes: &HashMap<PaneId, MouseMode>,
         sgr_mouse_modes: &HashMap<PaneId, bool>,
         alternate_screens: &HashMap<PaneId, bool>,
+        scrollback_lengths: &HashMap<PaneId, usize>,
         cell_width: f32,
         cell_height: f32,
         pane_margin_x_cells: f32,
@@ -299,6 +322,11 @@ impl MouseHandler {
                                         cell_width,
                                         cell_height,
                                     );
+                                    let buffer_row = self.viewport_to_buffer_row(
+                                        &pane_id,
+                                        row,
+                                        scrollback_lengths,
+                                    );
                                     let state = self
                                         .pane_states
                                         .entry(pane_id.clone())
@@ -307,12 +335,17 @@ impl MouseHandler {
                                             selection: None,
                                         });
                                     state.selection = Some(SelectionDrag {
-                                        start_row: row,
+                                        start_row: buffer_row,
                                         start_col: col,
-                                        end_row: row,
+                                        end_row: buffer_row,
                                         end_col: col,
                                     });
                                     self.selecting_pane = Some(pane_id.clone());
+                                    self.selection_pointer = Some(SelectionPointer {
+                                        x: event.x,
+                                        y: event.y,
+                                    });
+                                    self.last_selection_autoscroll = None;
                                     // Initial click clears any visible selection
                                     outputs.push(MouseOutput::SelectionChanged(pane_id, None));
                                 }
@@ -347,6 +380,8 @@ impl MouseHandler {
 
                 // End selection drag — finalize
                 if let Some(pane_id) = self.selecting_pane.take() {
+                    self.selection_pointer = None;
+                    self.last_selection_autoscroll = None;
                     let sel_result = self
                         .pane_states
                         .get(&pane_id)
@@ -443,9 +478,15 @@ impl MouseHandler {
                                 cell_height,
                             );
                             let pane_id = pane_id.clone();
+                            self.selection_pointer = Some(SelectionPointer {
+                                x: event.x,
+                                y: event.y,
+                            });
+                            let buffer_row =
+                                self.viewport_to_buffer_row(&pane_id, row, scrollback_lengths);
                             if let Some(state) = self.pane_states.get_mut(&pane_id) {
                                 if let Some(drag) = &mut state.selection {
-                                    drag.end_row = row;
+                                    drag.end_row = buffer_row;
                                     drag.end_col = col;
                                     let sel = drag.to_text_selection();
                                     outputs.push(MouseOutput::SelectionChanged(pane_id, Some(sel)));
@@ -766,6 +807,111 @@ impl MouseHandler {
             state.scroll_offset = state.scroll_offset.clamp(0, max_scrollback);
         }
     }
+
+    /// Continue scrolling a captured text-selection drag when the pointer is
+    /// above or below the pane viewport.
+    pub fn tick_selection_autoscroll(
+        &mut self,
+        pane_layout: &PaneLayout,
+        scrollback_lengths: &HashMap<PaneId, usize>,
+        cell_width: f32,
+        cell_height: f32,
+        pane_margin_x_cells: f32,
+        pane_margin_y_cells: f32,
+        now: Instant,
+    ) -> Vec<MouseOutput> {
+        if !self.left_down {
+            return Vec::new();
+        }
+        let Some(pane_id) = self.selecting_pane.clone() else {
+            return Vec::new();
+        };
+        let Some(pointer) = self.selection_pointer else {
+            return Vec::new();
+        };
+        let Some(rect) = pane_layout.pane_pixel_rect(&pane_id) else {
+            return Vec::new();
+        };
+        let content_rect = inset_pane_rect(
+            rect,
+            cell_width,
+            cell_height,
+            pane_margin_x_cells,
+            pane_margin_y_cells,
+        );
+        let lines = selection_autoscroll_lines(pointer.y, content_rect, cell_height);
+        if lines == 0 {
+            self.last_selection_autoscroll = None;
+            return Vec::new();
+        }
+        if self
+            .last_selection_autoscroll
+            .is_some_and(|last| now.saturating_duration_since(last) < SELECTION_AUTOSCROLL_INTERVAL)
+        {
+            return Vec::new();
+        }
+        self.last_selection_autoscroll = Some(now);
+
+        let max_scroll = scrollback_lengths.get(&pane_id).copied().unwrap_or(0) as i32;
+        let state = self
+            .pane_states
+            .entry(pane_id.clone())
+            .or_insert_with(|| PaneMouseState {
+                scroll_offset: 0,
+                selection: None,
+            });
+        let old_offset = state.scroll_offset;
+        state.scroll_offset = (state.scroll_offset + lines).clamp(0, max_scroll.max(0));
+
+        let mut outputs = Vec::new();
+        if state.scroll_offset != old_offset {
+            outputs.push(MouseOutput::ScrollPane(
+                pane_id.clone(),
+                state.scroll_offset,
+            ));
+        }
+        if let Some(selection) = self.update_selection_endpoint_from_pointer(
+            &pane_id,
+            pointer,
+            content_rect,
+            scrollback_lengths,
+            cell_width,
+            cell_height,
+        ) {
+            outputs.push(MouseOutput::SelectionChanged(pane_id, Some(selection)));
+        }
+        outputs
+    }
+
+    fn viewport_to_buffer_row(
+        &self,
+        pane_id: &PaneId,
+        viewport_row: usize,
+        scrollback_lengths: &HashMap<PaneId, usize>,
+    ) -> usize {
+        let scrollback_len = scrollback_lengths.get(pane_id).copied().unwrap_or(0);
+        let scroll_offset = self.scroll_offset(pane_id).max(0) as usize;
+        scrollback_len.saturating_sub(scroll_offset) + viewport_row
+    }
+
+    fn update_selection_endpoint_from_pointer(
+        &mut self,
+        pane_id: &PaneId,
+        pointer: SelectionPointer,
+        content_rect: PixelRect,
+        scrollback_lengths: &HashMap<PaneId, usize>,
+        cell_width: f32,
+        cell_height: f32,
+    ) -> Option<TextSelection> {
+        let (col, viewport_row) =
+            pixel_to_cell(pointer.x, pointer.y, content_rect, cell_width, cell_height);
+        let buffer_row = self.viewport_to_buffer_row(pane_id, viewport_row, scrollback_lengths);
+        let state = self.pane_states.get_mut(pane_id)?;
+        let drag = state.selection.as_mut()?;
+        drag.end_row = buffer_row;
+        drag.end_col = col;
+        Some(drag.to_text_selection())
+    }
 }
 
 impl Default for MouseHandler {
@@ -892,6 +1038,21 @@ fn pixel_to_cell(
     let col = ((local_x / cell_width) as usize).min(max_col);
     let row = ((local_y / cell_height) as usize).min(max_row);
     (col, row)
+}
+
+fn selection_autoscroll_lines(pointer_y: f32, rect: PixelRect, cell_height: f32) -> i32 {
+    if cell_height <= f32::EPSILON || rect.height <= 0.0 {
+        return 0;
+    }
+    if pointer_y < rect.y {
+        let distance = rect.y - pointer_y;
+        ((distance / cell_height).floor() as i32 + 1).min(SELECTION_AUTOSCROLL_MAX_LINES)
+    } else if pointer_y >= rect.y + rect.height {
+        let distance = pointer_y - (rect.y + rect.height);
+        -((distance / cell_height).floor() as i32 + 1).min(SELECTION_AUTOSCROLL_MAX_LINES)
+    } else {
+        0
+    }
 }
 
 /// Check if a pixel point is inside a PixelRect.
@@ -1169,6 +1330,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1197,6 +1359,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1224,6 +1387,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1239,6 +1403,149 @@ mod tests {
             MouseOutput::SelectionChanged(id, Some(sel))
                 if id == &pane && Some(sel.clone()) == finalized_selection
         )));
+    }
+
+    #[test]
+    fn drag_selection_rows_are_buffer_space_for_scrolled_viewport() {
+        let dw = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap() };
+        let mut tab_strip = TabStrip::new(&dw).unwrap();
+        let mut pane_layout = PaneLayout::new(8.0, 16.0);
+        let tree = LayoutTree::new();
+        let pane = tree.focus();
+        pane_layout.update(&tree, 0.0, 32.0, 80, 24);
+
+        let mut handler = MouseHandler::new();
+        handler.set_scroll_offset(&pane, 5, 20);
+        let mouse_modes = HashMap::new();
+        let sgr_mouse_modes = HashMap::new();
+        let alternate_screens = HashMap::new();
+        let scrollback_lengths = HashMap::from([(pane.clone(), 20usize)]);
+
+        handler.handle_event(
+            &MouseEvent {
+                kind: MouseEventKind::LeftDown,
+                x: 16.0,
+                y: 48.0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut tab_strip,
+            &mut pane_layout,
+            32.0,
+            24.0,
+            440.0,
+            &pane,
+            &mouse_modes,
+            &sgr_mouse_modes,
+            &alternate_screens,
+            &scrollback_lengths,
+            8.0,
+            16.0,
+            0.5,
+            0.5,
+        );
+
+        assert_eq!(
+            handler.selection(&pane),
+            Some(TextSelection {
+                start_row: 15,
+                start_col: 1,
+                end_row: 15,
+                end_col: 1,
+            })
+        );
+
+        handler.scroll_by(&pane, 3, 20);
+        assert_eq!(
+            handler.selection(&pane),
+            Some(TextSelection {
+                start_row: 15,
+                start_col: 1,
+                end_row: 15,
+                end_col: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn captured_drag_autoscrolls_and_extends_selection() {
+        let dw = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap() };
+        let mut tab_strip = TabStrip::new(&dw).unwrap();
+        let mut pane_layout = PaneLayout::new(8.0, 16.0);
+        let tree = LayoutTree::new();
+        let pane = tree.focus();
+        pane_layout.update(&tree, 0.0, 32.0, 80, 24);
+
+        let mut handler = MouseHandler::new();
+        handler.set_scroll_offset(&pane, 3, 20);
+        let mouse_modes = HashMap::new();
+        let sgr_mouse_modes = HashMap::new();
+        let alternate_screens = HashMap::new();
+        let scrollback_lengths = HashMap::from([(pane.clone(), 20usize)]);
+
+        handler.handle_event(
+            &MouseEvent {
+                kind: MouseEventKind::LeftDown,
+                x: 16.0,
+                y: 80.0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut tab_strip,
+            &mut pane_layout,
+            32.0,
+            24.0,
+            440.0,
+            &pane,
+            &mouse_modes,
+            &sgr_mouse_modes,
+            &alternate_screens,
+            &scrollback_lengths,
+            8.0,
+            16.0,
+            0.5,
+            0.5,
+        );
+
+        handler.handle_event(
+            &MouseEvent {
+                kind: MouseEventKind::Move,
+                x: 16.0,
+                y: 8.0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut tab_strip,
+            &mut pane_layout,
+            32.0,
+            24.0,
+            440.0,
+            &pane,
+            &mouse_modes,
+            &sgr_mouse_modes,
+            &alternate_screens,
+            &scrollback_lengths,
+            8.0,
+            16.0,
+            0.5,
+            0.5,
+        );
+
+        let outputs = handler.tick_selection_autoscroll(
+            &pane_layout,
+            &scrollback_lengths,
+            8.0,
+            16.0,
+            0.5,
+            0.5,
+            Instant::now(),
+        );
+
+        assert!(handler.scroll_offset(&pane) > 3);
+        assert!(outputs
+            .iter()
+            .any(|output| matches!(output, MouseOutput::ScrollPane(id, _) if id == &pane)));
+        assert_eq!(
+            handler.selection(&pane).map(|selection| selection.end_row),
+            Some(14)
+        );
     }
 
     #[test]
@@ -1353,6 +1660,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1393,6 +1701,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1440,6 +1749,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1487,6 +1797,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1533,6 +1844,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,
@@ -1558,6 +1870,7 @@ mod tests {
             &mouse_modes,
             &sgr_mouse_modes,
             &alternate_screens,
+            &HashMap::new(),
             8.0,
             16.0,
             0.5,

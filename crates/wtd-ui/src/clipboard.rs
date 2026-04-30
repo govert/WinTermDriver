@@ -11,7 +11,7 @@ use crate::renderer::TextSelection;
 
 // ── Text extraction ─────────────────────────────────────────────────────────
 
-/// Extract plain text from a selection range in the screen buffer.
+/// Extract plain text from a selection range in the combined screen buffer.
 ///
 /// Characters are taken directly from parsed cells, so VT formatting is
 /// inherently stripped.  Wide-character continuation cells are skipped.
@@ -20,17 +20,18 @@ pub fn extract_selection_text(screen: &ScreenBuffer, selection: &TextSelection) 
     extract_selection_text_at_offset(screen, selection, 0)
 }
 
-/// Extract plain text from a selection range in a viewport scrolled back from
-/// the live screen by `scrollback_offset` rows.
+/// Extract plain text from a selection range in combined buffer coordinates.
+///
+/// The `scrollback_offset` argument is retained for call-site compatibility;
+/// selection rows are already absolute virtual rows and are not rebased.
 pub fn extract_selection_text_at_offset(
     screen: &ScreenBuffer,
     selection: &TextSelection,
-    scrollback_offset: usize,
+    _scrollback_offset: usize,
 ) -> String {
     let (sr, sc, er, ec) = selection.normalised();
-    let rows = screen.rows();
+    let rows = screen.total_rows();
     let cols = screen.cols();
-    let base_row = screen.scrollback_len().saturating_sub(scrollback_offset);
     let mut result = String::new();
 
     for row in sr..=er {
@@ -50,7 +51,7 @@ pub fn extract_selection_text_at_offset(
             if col >= cols {
                 break;
             }
-            if let Some(cell) = screen.cell_at_virtual(base_row + row, col) {
+            if let Some(cell) = screen.cell_at_virtual(row, col) {
                 if !cell.attrs.is_wide_continuation() {
                     line.push_str(cell.text.as_str());
                 }
@@ -73,12 +74,11 @@ pub fn extract_selection_text_at_offset(
 pub fn extract_block_selection_text_at_offset(
     screen: &ScreenBuffer,
     selection: &TextSelection,
-    scrollback_offset: usize,
+    _scrollback_offset: usize,
 ) -> String {
     let (sr, sc, er, ec) = selection.normalised();
-    let rows = screen.rows();
+    let rows = screen.total_rows();
     let cols = screen.cols();
-    let base_row = screen.scrollback_len().saturating_sub(scrollback_offset);
     let col_start = sc.min(ec).min(cols.saturating_sub(1));
     let col_end = sc.max(ec).min(cols.saturating_sub(1));
     let mut result = String::new();
@@ -89,7 +89,7 @@ pub fn extract_block_selection_text_at_offset(
         }
         let mut line = String::new();
         for col in col_start..=col_end {
-            if let Some(cell) = screen.cell_at_virtual(base_row + row, col) {
+            if let Some(cell) = screen.cell_at_virtual(row, col) {
                 if !cell.attrs.is_wide_continuation() {
                     line.push_str(cell.text.as_str());
                 }
@@ -144,16 +144,16 @@ pub fn expand_selection_to_word_at_offset(
     }
 
     Some(TextSelection {
-        start_row: row,
+        start_row: base_row,
         start_col,
-        end_row: row,
+        end_row: base_row,
         end_col,
     })
 }
 
-/// Expand a row position to the complete visual line.
+/// Expand a virtual row position to the complete visual line.
 pub fn expand_selection_to_line(screen: &ScreenBuffer, row: usize) -> Option<TextSelection> {
-    if row >= screen.rows() || screen.cols() == 0 {
+    if row >= screen.total_rows() || screen.cols() == 0 {
         return None;
     }
     Some(TextSelection {
@@ -594,19 +594,16 @@ mod tests {
     }
 
     #[test]
-    fn extract_selection_from_scrollback_offset() {
+    fn extract_selection_uses_buffer_rows_across_scrollback() {
         let mut screen = ScreenBuffer::new(5, 2, 10);
         screen.advance(b"11111\r\n22222\r\n33333\r\n");
         let sel = TextSelection {
-            start_row: 0,
+            start_row: 1,
             start_col: 0,
-            end_row: 1,
+            end_row: 2,
             end_col: 4,
         };
-        assert_eq!(
-            extract_selection_text_at_offset(&screen, &sel, 1),
-            "22222\n33333"
-        );
+        assert_eq!(extract_selection_text(&screen, &sel), "22222\n33333");
     }
 
     #[test]

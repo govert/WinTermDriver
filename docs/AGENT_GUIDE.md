@@ -197,7 +197,10 @@ If you are driving a coding agent, prefer `prompt` and `capture`. Treat `send` a
 
 Agent panes launched directly as `pi`, `codex`, `claude`, `gemini`, or `copilot` are auto-detected, so the common case is just `prompt` and `capture`.
 
-For launch profiles, `wtd-ui` now keeps the path simple: creating a new tab or split opens a profile selector, and the command palette exposes `change-profile` to relaunch the focused pane with a different launch profile.
+For launch profiles, `wtd-ui` keeps the high-frequency path fast: split shortcuts
+use the default profile immediately, `new-tab` opens a profile selector, and the
+command palette exposes `change-profile` to relaunch the focused pane with a
+different launch profile.
 
 For one-shot shortcut bypass, use the `pass-through-next-key` action. In the default `windows-terminal` preset it is bound to `Alt+Shift+K`, which arms the focused pane so the next keypress goes to the app instead of being handled as a WTD shortcut.
 

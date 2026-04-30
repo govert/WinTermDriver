@@ -20,8 +20,9 @@ impl PaintScheduler {
     /// Default quiet-window used for visible alternate-screen redraw bursts.
     pub const DEFAULT_ALT_SCREEN_COALESCE: Duration = Duration::from_millis(10);
     /// Default quiet-window used for clear-heavy inline TUI redraw bursts on
-    /// the primary screen.
-    pub const DEFAULT_PRIMARY_SCREEN_TUI_COALESCE: Duration = Duration::from_millis(60);
+    /// the primary screen. Keep this short so interactive terminal UIs do not
+    /// feel delayed while still avoiding paint-per-escape redraw storms.
+    pub const DEFAULT_PRIMARY_SCREEN_TUI_COALESCE: Duration = Duration::from_millis(12);
 
     pub fn new() -> Self {
         Self::with_coalesce_windows(
@@ -134,15 +135,15 @@ mod tests {
     fn primary_screen_tui_burst_waits_for_quiet_window() {
         let mut scheduler = PaintScheduler::with_coalesce_windows(
             Duration::from_millis(10),
-            Duration::from_millis(60),
+            Duration::from_millis(12),
         );
         let start = Instant::now();
 
         scheduler.request_primary_screen_tui_burst(start);
 
         assert!(!scheduler.should_paint_now(start));
-        assert!(!scheduler.should_paint_now(start + Duration::from_millis(59)));
-        assert!(scheduler.should_paint_now(start + Duration::from_millis(60)));
+        assert!(!scheduler.should_paint_now(start + Duration::from_millis(11)));
+        assert!(scheduler.should_paint_now(start + Duration::from_millis(12)));
     }
 
     #[test]

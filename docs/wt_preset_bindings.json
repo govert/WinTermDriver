@@ -226,7 +226,7 @@
     "numpad": "WT defines numpad keys (numpad_plus, numpad0, etc). WTD KeyName enum has no numpad variants.",
     "scan_codes": "WT supports scan code specs like sc(41). WTD has no scan code support.",
     "alt_enter": "WT binds alt+enter to toggleFullscreen. WTD only uses F11 for this action.",
-    "alt_shift_plus": "WT uses alt+shift+plus for split-right. WTD default uses Alt+Shift+D. The preset changes WTD to match WT.",
+    "alt_shift_plus": "WT uses alt+shift+plus for split-right; the Windows Terminal preset maps WTD to the same key.",
     "ctrl_alt_left": "WT binds ctrl+alt+left to moveFocus(prevInOrder). This conflicts with Win10/11 virtual desktop switching."
   }
 }
