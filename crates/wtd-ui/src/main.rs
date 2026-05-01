@@ -4077,6 +4077,27 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                                 "goto-tab",
                                                 serde_json::json!({"index": target_tab}),
                                             );
+                                            // Optimistically switch the local view immediately.
+                                            // The host refresh queued by `send_workspace_action`
+                                            // will reconcile if the action fails or resolves to a
+                                            // different active tab, but waiting for that round-trip
+                                            // makes tab clicks appear to re-select the old tab.
+                                            tab_strip.set_active(target_tab);
+                                            active_tab_index = target_tab;
+                                            refresh_active_tab_ui(
+                                                &mut tabs,
+                                                active_tab_index,
+                                                &mut pane_layout,
+                                                &tab_strip,
+                                                &mut status_bar,
+                                                &mut mouse_modes,
+                                                &mut sgr_mouse_modes,
+                                                window_width,
+                                                window_height,
+                                                cell_w,
+                                                cell_h,
+                                                pane_viewport_insets,
+                                            );
                                         } else {
                                             tab_strip.set_active(target_tab);
                                             active_tab_index = target_tab;
