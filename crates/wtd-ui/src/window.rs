@@ -325,6 +325,10 @@ pub fn set_window_title(hwnd: HWND, title: &str) {
 /// Begin a standard window drag from client-area chrome.
 pub fn begin_window_drag(hwnd: HWND) {
     unsafe {
+        // `wndproc` captures the mouse for client-area button handling. A
+        // synthesized non-client caption drag is ignored while that capture is
+        // still active, so release it before delegating the move loop to the OS.
+        let _ = ReleaseCapture();
         let _ = SendMessageW(
             hwnd,
             WM_NCLBUTTONDOWN,
