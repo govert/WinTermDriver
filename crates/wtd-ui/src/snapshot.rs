@@ -109,6 +109,14 @@ pub fn rebuild_from_snapshot(state: &Value, cols: u16, rows: u16) -> Option<Snap
                 let _ = layout_tree.set_focus(pane_id.clone());
             }
         }
+        if let Some(zoomed_name) = tab.get("zoomedPane").and_then(|value| value.as_str()) {
+            if let Some((_, pane_id)) = pane_mappings.iter().find(|(name, _)| name == zoomed_name) {
+                let focused = layout_tree.focus();
+                let _ = layout_tree.set_focus(pane_id.clone());
+                layout_tree.toggle_zoom();
+                let _ = layout_tree.set_focus(focused);
+            }
+        }
 
         let host_panes: Vec<u64> = tab["panes"]
             .as_array()?
@@ -590,6 +598,55 @@ mod tests {
 
         assert_eq!(session.pane_path, "focus-restore-test/main/bottom");
         assert_eq!(session.session_id, "101");
+    }
+
+    #[test]
+    fn rebuild_snapshot_restores_zoomed_pane() {
+        let state = json!({
+            "name": "zoom-restore-test",
+            "tabs": [{
+                "name": "main",
+                "focus": "top",
+                "zoomedPane": "bottom",
+                "layout": {
+                    "type": "split",
+                    "orientation": "vertical",
+                    "ratio": 0.5,
+                    "children": [
+                        { "type": "pane", "name": "top" },
+                        { "type": "pane", "name": "bottom" }
+                    ]
+                },
+                "panes": [10, 11]
+            }],
+            "paneStates": {
+                "10": { "type": "attached", "sessionId": 100 },
+                "11": { "type": "attached", "sessionId": 101 }
+            }
+        });
+
+        let rebuilt = rebuild_from_snapshot(&state, 80, 24).expect("snapshot must rebuild");
+        let tab = &rebuilt.tabs[0];
+        let focused = tab.layout_tree.focus();
+        let zoomed = tab
+            .layout_tree
+            .zoomed_pane()
+            .expect("pane should be zoomed");
+
+        assert_eq!(
+            tab.pane_sessions[&focused].pane_path,
+            "zoom-restore-test/main/top"
+        );
+        assert_eq!(
+            tab.pane_sessions[&zoomed].pane_path,
+            "zoom-restore-test/main/bottom"
+        );
+        assert_eq!(
+            tab.layout_tree
+                .compute_rects(wtd_core::layout::Rect::new(0, 0, 80, 24))
+                .len(),
+            1
+        );
     }
 
     #[test]

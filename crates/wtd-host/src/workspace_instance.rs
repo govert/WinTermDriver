@@ -242,6 +242,10 @@ impl WorkspaceInstance {
                         .panes
                         .get(&t.layout.focus())
                         .map(|rec| rec.name.clone()),
+                    zoomed_pane: t
+                        .layout
+                        .zoomed_pane()
+                        .and_then(|pane_id| self.panes.get(&pane_id).map(|rec| rec.name.clone())),
                     layout: t.layout.to_pane_node(|pane_id| {
                         if let Some(rec) = self.panes.get(pane_id) {
                             PaneLeaf {
@@ -1550,6 +1554,9 @@ pub struct TabSnapshot {
     pub panes: Vec<PaneId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
+    /// Focused pane expanded to fill the tab area, if pane zoom is active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoomed_pane: Option<String>,
     /// Full layout tree as a serializable PaneNode (same schema as workspace YAML).
     pub layout: PaneNode,
 }
@@ -2265,6 +2272,31 @@ mod tests {
             let snap = inst.attach_snapshot();
             assert_eq!(snap.tabs.len(), 1);
             assert_eq!(snap.tabs[0].focus.as_deref(), Some("bottom"));
+        }
+    }
+
+    #[test]
+    fn attach_snapshot_includes_zoomed_pane_name() {
+        let def = split_workspace_def();
+        let gs = default_global_settings();
+        let env = default_host_env();
+
+        let inst =
+            WorkspaceInstance::open(WorkspaceInstanceId(9), &def, &gs, &env, find_exe_windows);
+
+        if let Ok(mut inst) = inst {
+            let bottom = inst
+                .find_pane_by_name("bottom")
+                .expect("bottom pane should exist");
+            inst.tabs_mut()[0]
+                .layout_mut()
+                .set_focus(bottom)
+                .expect("focus should set");
+            inst.tabs_mut()[0].layout_mut().toggle_zoom();
+
+            let snap = inst.attach_snapshot();
+            assert_eq!(snap.tabs.len(), 1);
+            assert_eq!(snap.tabs[0].zoomed_pane.as_deref(), Some("bottom"));
         }
     }
 
