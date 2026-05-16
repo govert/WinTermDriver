@@ -481,7 +481,7 @@ impl TabStrip {
                 } else {
                     0.0
                 };
-                self.measure_text(&Self::tab_label(t)) + indicator_width
+                self.measure_tab_label(t) + indicator_width
             })
             .collect();
 
@@ -489,7 +489,10 @@ impl TabStrip {
         let tab_widths: Vec<f32> = text_widths
             .iter()
             .map(|tw| {
-                (tw + 2.0 * TAB_PADDING_H + TAB_CLOSE_SIZE + TAB_CLOSE_MARGIN)
+                (tw + 2.0 * TAB_PADDING_H
+                    + TAB_CLOSE_SIZE
+                    + TAB_CLOSE_MARGIN
+                    + TAB_TEXT_TO_CLOSE_GAP)
                     .clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH)
             })
             .collect();
@@ -824,12 +827,12 @@ impl TabStrip {
         }
     }
 
-    fn measure_text(&self, text: &str) -> f32 {
+    fn measure_text_with_format(&self, text: &str, format: &IDWriteTextFormat) -> f32 {
         let utf16: Vec<u16> = text.encode_utf16().collect();
         unsafe {
             if let Ok(layout) =
                 self.dw_factory
-                    .CreateTextLayout(&utf16, &self.tf_tab, 1000.0, TAB_STRIP_HEIGHT)
+                    .CreateTextLayout(&utf16, format, 1000.0, TAB_STRIP_HEIGHT)
             {
                 let mut metrics = DWRITE_TEXT_METRICS::default();
                 if layout.GetMetrics(&mut metrics).is_ok() {
@@ -838,6 +841,16 @@ impl TabStrip {
             }
         }
         60.0 // fallback
+    }
+
+    fn measure_text(&self, text: &str) -> f32 {
+        self.measure_text_with_format(text, &self.tf_tab)
+    }
+
+    fn measure_tab_label(&self, tab: &Tab) -> f32 {
+        let label = Self::tab_label(tab);
+        self.measure_text_with_format(&label, &self.tf_tab)
+            .max(self.measure_text_with_format(&label, &self.tf_tab_bold))
     }
 
     fn drop_index_at(&self, x: f32) -> usize {

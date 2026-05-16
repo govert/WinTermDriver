@@ -685,7 +685,7 @@ impl TerminalRenderer {
         let overlay_margin = (self.cell_width * 0.15).max(1.0);
         let horizontal_padding = (self.cell_width * 0.45).max(6.0);
         let vertical_padding = (self.cell_height * 0.15).max(2.0);
-        let max_label_width = (width * 0.35).clamp(84.0, 180.0);
+        let max_label_width = (width - overlay_margin * 2.0).clamp(84.0, 360.0);
         let label_utf16: Vec<u16> = label.encode_utf16().collect();
 
         unsafe {

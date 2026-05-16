@@ -1236,6 +1236,18 @@ fn apply_optimistic_focus_action(
     }
 }
 
+fn is_optimistic_focus_action(action_name: &str) -> bool {
+    matches!(
+        action_name,
+        "focus-next-pane"
+            | "focus-prev-pane"
+            | "focus-pane-up"
+            | "focus-pane-down"
+            | "focus-pane-left"
+            | "focus-pane-right"
+    )
+}
+
 fn show_profile_selector_for_action(
     command_palette: &mut CommandPalette,
     action_name: &str,
@@ -2583,6 +2595,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
     let mut startup_refresh_pending = bridge.is_some();
     let mut paint_scheduler = PaintScheduler::new();
     let mut startup_present_deadline = None;
+    let mut pending_resize_sync_deadline: Option<Instant> = None;
     let mut delayed_show_deadline = bridge
         .as_ref()
         .map(|_| Instant::now() + Duration::from_millis(400));
@@ -3020,9 +3033,10 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         // ── Handle resize ────────────────────────────────────────
         if let Some((w, h)) = window::take_resize() {
             if !window::is_minimized(hwnd) && w > 0 && h > 0 {
-                window_width = w as f32;
-                window_height = h as f32;
-                if let Err(error) = renderer.resize(w, h) {
+                let (client_w, client_h) = window::client_size(hwnd).unwrap_or((w, h));
+                window_width = client_w as f32;
+                window_height = client_h as f32;
+                if let Err(error) = renderer.resize(client_w, client_h) {
                     tracing::warn!(%error, "renderer resize failed; rebuilding render resources");
                     let (new_cell_w, new_cell_h) = rebuild_renderer_resources(
                         hwnd,
@@ -3076,6 +3090,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     cell_h,
                     pane_viewport_insets,
                 );
+                pending_resize_sync_deadline = Some(Instant::now() + Duration::from_millis(80));
                 if awaiting_startup_frame {
                     startup_refresh_pending = true;
                     if let Some(ref bridge) = bridge {
@@ -3089,6 +3104,79 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                 // Notify host of pane resize (send for each pane).
                 force_immediate_paint = true;
                 needs_paint = true;
+            }
+        }
+
+        if pending_resize_sync_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            pending_resize_sync_deadline = None;
+            if !window::is_minimized(hwnd) {
+                if let Some((client_w, client_h)) = window::client_size(hwnd) {
+                    let size_changed =
+                        window_width != client_w as f32 || window_height != client_h as f32;
+                    window_width = client_w as f32;
+                    window_height = client_h as f32;
+                    if size_changed {
+                        if let Err(error) = renderer.resize(client_w, client_h) {
+                            tracing::warn!(
+                                %error,
+                                "renderer resize during deferred window sync failed; rebuilding render resources"
+                            );
+                            let (new_cell_w, new_cell_h) = rebuild_renderer_resources(
+                                hwnd,
+                                &config,
+                                &bindings,
+                                &mut renderer,
+                                &mut tab_strip,
+                                &mut status_bar,
+                                &mut command_palette,
+                                window_width,
+                            )?;
+                            cell_w = new_cell_w;
+                            cell_h = new_cell_h;
+                            pane_layout = PaneLayout::new(cell_w, cell_h);
+                        }
+                    }
+                    tab_strip.set_window_maximized(window::is_maximized(hwnd));
+                    tab_strip.layout(window_width);
+                    status_bar.layout(window_width);
+
+                    let (content_cols, content_rows) = content_dims(
+                        window_width,
+                        window_height,
+                        &tab_strip,
+                        &status_bar,
+                        cell_w,
+                        cell_h,
+                    );
+                    pane_layout.update(
+                        &tabs[active_tab_index].layout_tree,
+                        0.0,
+                        tab_strip.height(),
+                        content_cols,
+                        content_rows,
+                    );
+                    if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
+                        let pane_sizes = pane_sizes_for_layout(
+                            &pane_layout,
+                            &active_tab.layout_tree,
+                            cell_w,
+                            cell_h,
+                            pane_viewport_insets,
+                        );
+                        sync_screen_buffers_to_sizes(active_tab, &pane_sizes);
+                    }
+                    send_active_pane_sizes(
+                        bridge.as_ref(),
+                        connected,
+                        &pane_layout,
+                        &tabs[active_tab_index],
+                        cell_w,
+                        cell_h,
+                        pane_viewport_insets,
+                    );
+                    force_immediate_paint = true;
+                    needs_paint = true;
+                }
             }
         }
 
@@ -3208,20 +3296,9 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                     let output = prefix_sm.process_with_protocol(&event, keyboard_protocol);
                     match output {
                         PrefixOutput::DispatchAction(action_ref) => {
-                            if apply_optimistic_focus_action(
-                                &mut tabs,
-                                active_tab_index,
-                                action_name(&action_ref),
-                            ) {
-                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
-                                    let focused = active_tab.layout_tree.focus();
-                                    if let Some(pane_session) =
-                                        active_tab.pane_sessions.get(&focused)
-                                    {
-                                        status_bar.set_pane_path(pane_session.pane_path.clone());
-                                    }
-                                }
-                            }
+                            let dispatched_action_name = action_name(&action_ref).to_string();
+                            let optimistic_focus =
+                                is_optimistic_focus_action(&dispatched_action_name);
                             dispatch_action(
                                 &action_ref,
                                 hwnd,
@@ -3240,6 +3317,29 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 &mut find_state,
                                 confirm_close,
                             );
+                            if optimistic_focus
+                                && apply_optimistic_focus_action(
+                                    &mut tabs,
+                                    active_tab_index,
+                                    &dispatched_action_name,
+                                )
+                            {
+                                if let Some(active_tab) = active_tab_ref(&tabs, active_tab_index) {
+                                    let focused = active_tab.layout_tree.focus();
+                                    if let Some(pane_session) =
+                                        active_tab.pane_sessions.get(&focused)
+                                    {
+                                        status_bar.set_pane_path(pane_session.pane_path.clone());
+                                    }
+                                }
+                                sync_tab_contexts(&mut tab_strip, &tabs, window_width);
+                                refresh_window_title(
+                                    hwnd,
+                                    workspace_name.as_deref().unwrap_or("WinTermDriver"),
+                                    &tab_strip,
+                                    active_tab_ref(&tabs, active_tab_index),
+                                );
+                            }
                             if should_suppress_text_after_consumed_key(&event) {
                                 suppress_next_text_input = true;
                             }
