@@ -7,4 +7,6 @@ target/
 # Local agent / workspace state
 .claude/
 .wtd/
+.wtd-build-state
+.wtd-build-state.lock
 .tmp/

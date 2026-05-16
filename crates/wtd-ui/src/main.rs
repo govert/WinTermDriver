@@ -52,7 +52,7 @@ fn status_version_label() -> String {
     };
     format!(
         "wtd {} {}{}",
-        env!("CARGO_PKG_VERSION"),
+        env!("WTD_VERSION"),
         option_env!("WTD_GIT_SHA").unwrap_or("unknown"),
         dirty
     )

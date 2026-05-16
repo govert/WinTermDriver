@@ -30,7 +30,7 @@ pub type ClientId = u64;
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Host version reported in the handshake.
-const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
+const HOST_VERSION: &str = env!("WTD_VERSION");
 
 // ── Errors ─────────────────────────────────────────────────────────────
 

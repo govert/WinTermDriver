@@ -14,7 +14,7 @@ use clap_complete::Shell;
 #[derive(Debug, Parser)]
 #[command(
     name = "wtd",
-    version,
+    version = env!("WTD_VERSION"),
     about,
     after_long_help = "Agent quick path:\n  `wtd ask <target> \"<text>\" --timeout <seconds>`\n\nManual equivalent:\n  1. `wtd prompt <target> \"<text>\"`\n  2. `wtd wait <target> --timeout <seconds>`   # waits for ready by default\n  3. `wtd capture <target>`\n\nUse `wtd send`, `wtd keys`, and `wtd input` only for low-level terminal control."
 )]

@@ -1614,7 +1614,7 @@ fn apply_runtime_terminal_env(
     env.insert("TERM_PROGRAM".to_string(), "Windows_Terminal".to_string());
     env.insert(
         "TERM_PROGRAM_VERSION".to_string(),
-        env!("CARGO_PKG_VERSION").to_string(),
+        env!("WTD_VERSION").to_string(),
     );
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert(

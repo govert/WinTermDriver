@@ -68,7 +68,7 @@ mod win {
                 "ui-hs-1",
                 &Handshake {
                     client_type: ClientType::Ui,
-                    client_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    client_version: env!("WTD_VERSION").to_owned(),
                     protocol_version: PROTOCOL_VERSION,
                 },
             );
