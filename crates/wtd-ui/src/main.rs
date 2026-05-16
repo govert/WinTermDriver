@@ -288,6 +288,7 @@ fn rebuild_renderer_resources(
     for (index, tab) in tabs.iter().enumerate() {
         rebuilt_tab_strip.add_tab(tab.name.clone());
         rebuilt_tab_strip.set_progress(index, tab.progress.clone());
+        rebuilt_tab_strip.set_title_suffix(index, tab.title_suffix.clone());
     }
     if !tabs.is_empty() {
         rebuilt_tab_strip.set_active(active_index.min(tabs.len().saturating_sub(1)));
@@ -696,6 +697,32 @@ fn pane_title_label(title: Option<&str>, pane_name: &str) -> Option<String> {
     }
 }
 
+fn pane_title_without_indicator(title: Option<&str>) -> Option<String> {
+    let title = title?.trim();
+    let title = title
+        .strip_prefix(":.")
+        .or_else(|| title.strip_prefix('\u{1f514}'))
+        .unwrap_or(title)
+        .trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
+fn tab_title_suffix(tab: &SnapshotTab) -> Option<String> {
+    let focused = tab.layout_tree.focus();
+    let pane_session = tab.pane_sessions.get(&focused)?;
+    let title = pane_title_without_indicator(pane_session.title.as_deref());
+    match (pane_work_indicator(pane_session), title) {
+        (Some(indicator), Some(title)) => Some(format!("{indicator} {title}")),
+        (Some(indicator), None) => Some(indicator.to_string()),
+        (None, Some(title)) => Some(title),
+        (None, None) => None,
+    }
+}
+
 fn pane_overlay_label(pane_session: &PaneSession) -> String {
     let pane_name = pane_short_name(&pane_session.pane_path);
     let title = pane_title_label(pane_session.title.as_deref(), pane_name);
@@ -823,10 +850,12 @@ fn tab_progress(tab: &SnapshotTab) -> Option<ProgressInfo> {
         .and_then(|pane_session| pane_session.progress.clone())
 }
 
-fn sync_tab_progresses(tab_strip: &mut TabStrip, tabs: &[SnapshotTab]) {
+fn sync_tab_contexts(tab_strip: &mut TabStrip, tabs: &[SnapshotTab], window_width: f32) {
     for (index, tab) in tabs.iter().enumerate() {
         tab_strip.set_progress(index, tab_progress(tab));
+        tab_strip.set_title_suffix(index, tab_title_suffix(tab));
     }
+    tab_strip.layout(window_width);
 }
 
 fn action_name(action: &wtd_core::workspace::ActionReference) -> &str {
@@ -2634,8 +2663,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 tab_strip.add_tab(name);
                             }
                             tab_strip.set_active(active_tab_index);
-                            sync_tab_progresses(&mut tab_strip, &tabs);
-                            tab_strip.layout(window_width);
+                            sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                             refresh_window_title(
                                 hwnd,
                                 &workspace_name,
@@ -2780,6 +2808,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 }
                             }
                         }
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         refresh_window_title(
                             hwnd,
                             workspace_name.as_deref().unwrap_or("WinTermDriver"),
@@ -2803,7 +2832,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                     pane_session.progress = progress;
                                 }
                             }
-                            sync_tab_progresses(&mut tab_strip, &tabs);
+                            sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         }
                         force_immediate_paint = true;
                         needs_paint = true;
@@ -2844,6 +2873,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         if notification_center_open {
                             status_bar.set_pane_path(notification_center_label(&tabs));
                         }
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
@@ -2869,7 +2899,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 status_bar.set_attention(attention_state, attention_message);
                             }
                         }
-                        sync_tab_progresses(&mut tab_strip, &tabs);
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         force_immediate_paint = true;
                         needs_paint = true;
                     }
@@ -2923,7 +2953,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             }
                         }
 
-                        sync_tab_progresses(&mut tab_strip, &tabs);
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
 
                         if connected {
                             bridge.refresh_workspace();
@@ -3653,6 +3683,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                             if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
                                 let _ = active_tab.layout_tree.set_focus(pane_id.clone());
                             }
+                            sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                             scrollbar_interaction.hovered_pane = Some(pane_id.clone());
                             match scrollbar_part_at_point(metrics, event.x, event.y) {
                                 Some(ScrollbarPart::TopArrow) => {
@@ -3782,7 +3813,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                                 status_bar.set_pane_path(format!("{}", pane_id.0));
                             }
                         }
-                        sync_tab_progresses(&mut tab_strip, &tabs);
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         refresh_window_title(
                             hwnd,
                             workspace_name.as_deref().unwrap_or("WinTermDriver"),
@@ -3844,7 +3875,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
                         if let Some(active_tab) = active_tab_mut(&mut tabs, active_tab_index) {
                             let _ = active_tab.layout_tree.set_focus(pane_id);
                         }
-                        sync_tab_progresses(&mut tab_strip, &tabs);
+                        sync_tab_contexts(&mut tab_strip, &tabs, window_width);
                         refresh_window_title(
                             hwnd,
                             workspace_name.as_deref().unwrap_or("WinTermDriver"),
@@ -4357,7 +4388,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
         }
 
         if window_shown && startup_paint_ready && paint_scheduler.should_paint_now(Instant::now()) {
-            sync_tab_progresses(&mut tab_strip, &tabs);
+            sync_tab_contexts(&mut tab_strip, &tabs, window_width);
             let active_tab = if tabs.is_empty() {
                 continue;
             } else {
@@ -5132,6 +5163,26 @@ mod tests {
         pane.title = Some(":. reviewing changes".to_string());
 
         assert_eq!(pane_overlay_label(pane), ":. agent · reviewing changes");
+    }
+
+    #[test]
+    fn tab_title_suffix_uses_focused_pane_indicator_and_title() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.title = Some(":. MyPaneWorking".to_string());
+
+        assert_eq!(tab_title_suffix(&tab).as_deref(), Some(":. MyPaneWorking"));
+    }
+
+    #[test]
+    fn tab_title_suffix_falls_back_to_activity_indicator() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.phase = Some("working".to_string());
+
+        assert_eq!(tab_title_suffix(&tab).as_deref(), Some(":."));
     }
 
     #[test]

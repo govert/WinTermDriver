@@ -23,14 +23,14 @@ const TAB_GAP: f32 = 1.0;
 const ADD_BUTTON_WIDTH: f32 = 32.0;
 const SCROLL_ARROW_WIDTH: f32 = 20.0;
 const MIN_TAB_WIDTH: f32 = 80.0;
-const MAX_TAB_WIDTH: f32 = 200.0;
+const MAX_TAB_WIDTH: f32 = 420.0;
 const DRAG_THRESHOLD: f32 = 5.0;
 const TAB_PROGRESS_SIZE: f32 = 11.0;
 const TAB_PROGRESS_GAP: f32 = 8.0;
 const TAB_INNER_TOP: f32 = 2.0;
 const WORKSPACE_BADGE_PADDING_H: f32 = 12.0;
 const WORKSPACE_BADGE_MIN_WIDTH: f32 = 88.0;
-const WORKSPACE_BADGE_MAX_WIDTH: f32 = 220.0;
+const WORKSPACE_BADGE_MAX_WIDTH: f32 = 480.0;
 const WORKSPACE_GAP: f32 = 10.0;
 const WINDOW_BUTTON_WIDTH: f32 = 44.0;
 const WINDOW_BUTTON_COUNT: usize = 3;
@@ -61,6 +61,7 @@ const WINDOW_BUTTON_TEXT: (u8, u8, u8) = (178, 178, 188);
 pub struct Tab {
     pub id: u64,
     pub name: String,
+    pub title_suffix: Option<String>,
     pub progress: Option<ProgressInfo>,
 }
 
@@ -179,6 +180,7 @@ impl TabStrip {
         };
         unsafe {
             tf_tab.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            tf_tab.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
         }
 
         let tf_tab_bold = unsafe {
@@ -194,6 +196,7 @@ impl TabStrip {
         };
         unsafe {
             tf_tab_bold.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            tf_tab_bold.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
         }
 
         let tf_close = unsafe {
@@ -281,9 +284,19 @@ impl TabStrip {
         self.tabs.push(Tab {
             id,
             name,
+            title_suffix: None,
             progress: None,
         });
         id
+    }
+
+    /// Set the active-pane title suffix shown after a tab's own name.
+    pub fn set_title_suffix(&mut self, index: usize, title_suffix: Option<String>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.title_suffix = title_suffix
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+        }
     }
 
     /// Set the progress indicator for a tab by index.
@@ -402,11 +415,16 @@ impl TabStrip {
         self.available_width = available_width;
         self.zones.clear();
 
+        let buttons_left = (available_width - WINDOW_BUTTON_TOTAL_WIDTH).max(0.0);
         let workspace_width = if self.workspace_name.is_empty() {
             0.0
         } else {
+            let workspace_budget =
+                (buttons_left - ADD_BUTTON_WIDTH - WORKSPACE_GAP - MIN_TAB_WIDTH)
+                    .max(WORKSPACE_BADGE_MIN_WIDTH)
+                    .min(WORKSPACE_BADGE_MAX_WIDTH);
             (self.measure_text(&self.workspace_name) + WORKSPACE_BADGE_PADDING_H * 2.0)
-                .clamp(WORKSPACE_BADGE_MIN_WIDTH, WORKSPACE_BADGE_MAX_WIDTH)
+                .clamp(WORKSPACE_BADGE_MIN_WIDTH, workspace_budget)
         };
         self.workspace_zone = HitRect {
             x: 0.0,
@@ -414,7 +432,6 @@ impl TabStrip {
             width: workspace_width,
             height: TAB_STRIP_HEIGHT,
         };
-        let buttons_left = (available_width - WINDOW_BUTTON_TOTAL_WIDTH).max(0.0);
         self.minimize_zone = HitRect {
             x: buttons_left,
             y: 0.0,
@@ -464,7 +481,7 @@ impl TabStrip {
                 } else {
                     0.0
                 };
-                self.measure_text(&t.name) + indicator_width
+                self.measure_text(&Self::tab_label(t)) + indicator_width
             })
             .collect();
 
@@ -798,6 +815,15 @@ impl TabStrip {
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
+    fn tab_label(tab: &Tab) -> String {
+        match tab.title_suffix.as_deref() {
+            Some(suffix) if !suffix.trim().is_empty() => {
+                format!("{} {}", tab.name, suffix.trim())
+            }
+            _ => tab.name.clone(),
+        }
+    }
+
     fn measure_text(&self, text: &str) -> f32 {
         let utf16: Vec<u16> = text.encode_utf16().collect();
         unsafe {
@@ -933,7 +959,8 @@ impl TabStrip {
             )?;
         }
 
-        let utf16: Vec<u16> = tab.name.encode_utf16().collect();
+        let label = Self::tab_label(tab);
+        let utf16: Vec<u16> = label.encode_utf16().collect();
         let text_rect = D2D_RECT_F {
             left: zone.rect.x + TAB_PADDING_H + offset_x + progress_offset,
             top: TAB_INNER_TOP,
@@ -1467,6 +1494,17 @@ mod tests {
     }
 
     #[test]
+    fn set_title_suffix_updates_tab_state() {
+        let mut strip = make_strip();
+        strip.add_tab("main".into());
+        strip.set_title_suffix(0, Some(":. pane working".into()));
+        assert_eq!(
+            strip.tabs()[0].title_suffix.as_deref(),
+            Some(":. pane working")
+        );
+    }
+
+    #[test]
     fn layout_no_overflow() {
         let mut strip = make_strip();
         strip.add_tab("tab1".into());
@@ -1479,6 +1517,31 @@ mod tests {
         assert!(strip.zones[0].rect.x >= 0.0);
         // Second tab should be after first + gap
         assert!(strip.zones[1].rect.x > strip.zones[0].rect.x);
+    }
+
+    #[test]
+    fn workspace_badge_grows_beyond_old_cap_when_room_allows() {
+        let mut strip = make_strip();
+        strip.set_workspace_name("Workspace with a much longer project title".into());
+        strip.add_tab("main".into());
+        strip.layout(1000.0);
+
+        assert!(strip.workspace_zone.width > 220.0);
+        assert!(strip.workspace_zone.width <= WORKSPACE_BADGE_MAX_WIDTH);
+    }
+
+    #[test]
+    fn tab_width_grows_for_active_pane_suffix() {
+        let mut strip = make_strip();
+        strip.add_tab("main".into());
+        strip.set_title_suffix(
+            0,
+            Some(":. pane title with enough detail to need more room".into()),
+        );
+        strip.layout(1200.0);
+
+        assert!(strip.zones[0].rect.width > 200.0);
+        assert!(strip.zones[0].rect.width <= MAX_TAB_WIDTH);
     }
 
     #[test]

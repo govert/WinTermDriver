@@ -116,14 +116,8 @@ fn resize_frame_thickness() -> (i32, i32) {
     }
 }
 
-fn apply_maximized_client_insets(rect: &mut RECT, frame_x: i32, frame_y: i32) {
-    if rect.right - rect.left > frame_x * 2 {
-        rect.left += frame_x;
-        rect.right -= frame_x;
-    }
-    if rect.bottom - rect.top > frame_y {
-        rect.bottom -= frame_y;
-    }
+fn custom_chrome_nccalcsize_client_rect(rect: RECT) -> RECT {
+    rect
 }
 
 fn apply_maximized_bounds(minmax: &mut MINMAXINFO, monitor_rect: RECT, work_rect: RECT) {
@@ -531,10 +525,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_NCCALCSIZE => {
             if wparam.0 != 0 {
                 if let Some(params) = (lparam.0 as *mut NCCALCSIZE_PARAMS).as_mut() {
-                    if IsZoomed(hwnd).as_bool() {
-                        let (frame_x, frame_y) = resize_frame_thickness();
-                        apply_maximized_client_insets(&mut params.rgrc[0], frame_x, frame_y);
-                    }
+                    params.rgrc[0] = custom_chrome_nccalcsize_client_rect(params.rgrc[0]);
                 }
             }
             LRESULT(0)
@@ -845,20 +836,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_maximized_client_insets_preserves_resize_margins() {
-        let mut rect = RECT {
+    fn custom_chrome_nccalcsize_keeps_client_at_work_area_edges() {
+        let rect = RECT {
             left: 0,
             top: 0,
             right: 1920,
             bottom: 1080,
         };
 
-        apply_maximized_client_insets(&mut rect, 12, 10);
+        let adjusted = custom_chrome_nccalcsize_client_rect(rect);
 
-        assert_eq!(rect.left, 12);
-        assert_eq!(rect.right, 1908);
-        assert_eq!(rect.top, 0);
-        assert_eq!(rect.bottom, 1070);
+        assert_eq!(adjusted.left, 0);
+        assert_eq!(adjusted.right, 1920);
+        assert_eq!(adjusted.top, 0);
+        assert_eq!(adjusted.bottom, 1080);
     }
 
     #[test]
