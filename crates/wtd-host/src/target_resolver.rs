@@ -382,6 +382,18 @@ mod tests {
     }
 
     #[test]
+    fn three_segment_dotted_pane_name() {
+        let inst = single_tab_instance("RoslynSkills", 1, &["RoslynSkills", "FrankenTui.NET"]);
+        let instances = vec![&inst];
+
+        let path = TargetPath::parse("RoslynSkills/main/FrankenTui.NET").unwrap();
+        let resolved = resolve_target(&path, &instances).unwrap();
+
+        assert_eq!(resolved.instance_id, WorkspaceInstanceId(1));
+        assert_eq!(resolved.canonical_path, "RoslynSkills/main/FrankenTui.NET");
+    }
+
+    #[test]
     fn three_segment_tab_not_found() {
         let inst = single_tab_instance("dev", 1, &["api"]);
         let instances = vec![&inst];

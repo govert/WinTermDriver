@@ -37,7 +37,7 @@ impl TargetPath {
     ///
     /// Validates each segment against §19.1 naming rules:
     /// - Non-empty
-    /// - Characters in `[a-zA-Z0-9_-]`
+    /// - Characters in `[a-zA-Z0-9_.-]`
     /// - Maximum 64 characters
     pub fn parse(path: &str) -> Result<Self, TargetPathError> {
         if path.is_empty() {
@@ -110,7 +110,7 @@ pub enum TargetPathError {
     TooManySegments(usize),
     #[error("empty segment at position {0}")]
     EmptySegment(usize),
-    #[error("segment \"{0}\" contains invalid characters (allowed: a-zA-Z0-9_-)")]
+    #[error("segment \"{0}\" contains invalid characters (allowed: a-zA-Z0-9_.-)")]
     InvalidCharacters(String),
     #[error("segment \"{0}\" exceeds maximum length of 64 characters")]
     TooLong(String),
@@ -126,7 +126,7 @@ fn validate_segment(seg: &str, index: usize) -> Result<(), TargetPathError> {
     }
     if !seg
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
     {
         return Err(TargetPathError::InvalidCharacters(seg.to_string()));
     }
@@ -217,6 +217,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn segment_with_dot() {
+        let tp = TargetPath::parse("RoslynSkills/main/FrankenTui.NET").unwrap();
+        assert_eq!(
+            tp,
+            TargetPath::WorkspaceTabPane {
+                workspace: "RoslynSkills".into(),
+                tab: "main".into(),
+                pane: "FrankenTui.NET".into(),
+            }
+        );
+    }
+
     // ── Validation errors ───────────────────────────────────────────
 
     #[test]
@@ -255,8 +268,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_characters_dot() {
-        let err = TargetPath::parse("dev/server.1").unwrap_err();
+    fn invalid_characters_colon() {
+        let err = TargetPath::parse("dev/server:1").unwrap_err();
         assert!(matches!(err, TargetPathError::InvalidCharacters(_)));
     }
 

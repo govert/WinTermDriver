@@ -295,11 +295,11 @@ fn validate_ident(name: &str, path: &str, errors: &mut Vec<ValidationError>) {
         && name.len() <= 64
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.');
     if !valid {
         errors.push(ValidationError {
             path: path.to_string(),
-            message: format!("'{name}' must match [a-zA-Z0-9_-]{{1,64}}"),
+            message: format!("'{name}' must match [a-zA-Z0-9_.-]{{1,64}}"),
         });
     }
 }
