@@ -55,7 +55,7 @@ person and a program.
 
 Workspaces can open with one pane, a small project layout, or a larger
 dashboard. Panes keep stable names, and the top-right pane label shows the pane
-role plus useful activity indicators from agent/window-title state.
+role, distinct agent/window-title text, and useful activity indicators.
 
 The status bar reports workspace save state, focused-pane status, prefix mode,
 attention counts, and hover details where they help.

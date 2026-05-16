@@ -377,3 +377,94 @@ async fn session_output_is_valid_base64() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+/// Real ConPTY OSC title output is detected and pushed as TitleChanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn ui_client_receives_title_changed_from_osc_output() {
+    let pipe_name = unique_pipe_name();
+    let handler = Arc::new(HostRequestHandler::new(GlobalSettings::default()));
+
+    let (server_task, broadcaster, shutdown_tx) =
+        start_host_with_broadcaster(&pipe_name, handler).await;
+
+    let (tmp_dir, yaml_path) = create_temp_workspace("title-test", "echo TITLE_READY");
+
+    let mut cli = connect_client(&pipe_name).await;
+    do_handshake_typed(&mut cli, ClientType::Cli).await;
+
+    write_frame(
+        &mut cli,
+        &Envelope::new(
+            "open-1",
+            &OpenWorkspace {
+                name: Some("title-test".to_string()),
+                file: Some(yaml_path.to_string_lossy().to_string()),
+                recreate: false,
+                profile: None,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let open_resp = read_frame(&mut cli).await.unwrap();
+    assert_eq!(open_resp.msg_type, OpenWorkspaceResult::TYPE_NAME);
+
+    let mut ui = connect_client(&pipe_name).await;
+    do_handshake_typed(&mut ui, ClientType::Ui).await;
+    let (mut ui_read, mut _ui_write) = tokio::io::split(ui);
+
+    let expected_title = format!("WTD_TITLE_PROBE_{}", std::process::id());
+    let command = format!(
+        "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']2;{}' + [char]7)\"",
+        expected_title
+    );
+    write_frame(
+        &mut cli,
+        &Envelope::new(
+            "send-title",
+            &wtd_ipc::message::Send {
+                target: "shell".to_string(),
+                text: command,
+                newline: true,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let send_resp = read_frame(&mut cli).await.unwrap();
+    assert_eq!(send_resp.msg_type, OkResponse::TYPE_NAME);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut saw_title = false;
+    let mut seen_titles = Vec::new();
+
+    loop {
+        if tokio::time::Instant::now() > deadline {
+            break;
+        }
+        match tokio::time::timeout(Duration::from_millis(300), read_frame(&mut ui_read)).await {
+            Ok(Ok(envelope)) if envelope.msg_type == TitleChanged::TYPE_NAME => {
+                let title: TitleChanged = envelope.extract_payload().unwrap();
+                seen_titles.push(title.title.clone());
+                if title.title == expected_title {
+                    saw_title = true;
+                    break;
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => break,
+            Err(_) => continue,
+        }
+    }
+
+    assert!(
+        saw_title,
+        "UI client should receive TitleChanged for {expected_title}; saw {seen_titles:?}"
+    );
+
+    let _ = shutdown_tx.send(true);
+    broadcaster.abort();
+    server_task.abort();
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

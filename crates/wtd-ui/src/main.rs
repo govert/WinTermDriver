@@ -682,11 +682,28 @@ fn pane_work_indicator(pane_session: &PaneSession) -> Option<&'static str> {
     })
 }
 
+fn pane_title_label(title: Option<&str>, pane_name: &str) -> Option<String> {
+    let title = title?.trim();
+    let title = title
+        .strip_prefix(":.")
+        .or_else(|| title.strip_prefix('\u{1f514}'))
+        .unwrap_or(title)
+        .trim();
+    if title.is_empty() || title.eq_ignore_ascii_case(pane_name) {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
 fn pane_overlay_label(pane_session: &PaneSession) -> String {
     let pane_name = pane_short_name(&pane_session.pane_path);
-    match pane_work_indicator(pane_session) {
-        Some(indicator) => format!("{indicator} {pane_name}"),
-        None => pane_name.to_string(),
+    let title = pane_title_label(pane_session.title.as_deref(), pane_name);
+    match (pane_work_indicator(pane_session), title) {
+        (Some(indicator), Some(title)) => format!("{indicator} {pane_name} · {title}"),
+        (Some(indicator), None) => format!("{indicator} {pane_name}"),
+        (None, Some(title)) => format!("{pane_name} · {title}"),
+        (None, None) => pane_name.to_string(),
     }
 }
 
@@ -5093,6 +5110,28 @@ mod tests {
         pane.title = Some(":. MyPane".to_string());
 
         assert_eq!(pane_overlay_label(pane), ":. MyPane");
+    }
+
+    #[test]
+    fn pane_overlay_label_includes_distinct_session_title() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.pane_path = "dev/main/agent".to_string();
+        pane.title = Some("codex: running tests".to_string());
+
+        assert_eq!(pane_overlay_label(pane), "agent · codex: running tests");
+    }
+
+    #[test]
+    fn pane_overlay_label_combines_title_indicator_and_distinct_title() {
+        let mut tab = attention_test_tab();
+        let focused = tab.layout_tree.focus();
+        let pane = tab.pane_sessions.get_mut(&focused).expect("focused pane");
+        pane.pane_path = "dev/main/agent".to_string();
+        pane.title = Some(":. reviewing changes".to_string());
+
+        assert_eq!(pane_overlay_label(pane), ":. agent · reviewing changes");
     }
 
     #[test]
