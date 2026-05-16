@@ -370,7 +370,20 @@ async fn handle_message(
         }
     }
 
-    handler.handle_request(client_id, envelope, &msg)
+    let handler = handler.clone();
+    let request_id = envelope.id.clone();
+    let envelope = envelope.clone();
+    let msg = msg.clone();
+    match tokio::task::spawn_blocking(move || handler.handle_request(client_id, &envelope, &msg))
+        .await
+    {
+        Ok(response) => response,
+        Err(e) => Some(make_error_envelope(
+            &request_id,
+            ErrorCode::InternalError,
+            &format!("request handler task failed: {e}"),
+        )),
+    }
 }
 
 async fn handle_handshake(

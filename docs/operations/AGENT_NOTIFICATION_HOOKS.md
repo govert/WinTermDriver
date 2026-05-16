@@ -59,6 +59,10 @@ On timeout, it exits with the timeout code but still includes the attention
 state, metadata, and recent output needed to decide whether to retry or involve
 a user.
 
+`wtd wait` is safe to invoke from a pane hosted by the same WTD instance. While
+one client is waiting, the host continues accepting and answering other CLI/UI
+clients and continues delivering session output updates.
+
 ## Pi
 
 Pi is the preferred first-class integration target because Pi extensions can
