@@ -135,6 +135,7 @@ pub struct StatusBar {
     attention_count: usize,
     prefix_active: bool,
     prefix_label: String,
+    version_label: String,
     available_width: f32,
     // DirectWrite resources
     tf_regular: IDWriteTextFormat,
@@ -191,6 +192,7 @@ impl StatusBar {
             attention_count: 0,
             prefix_active: false,
             prefix_label: "PREFIX".to_string(),
+            version_label: String::new(),
             available_width: 0.0,
             tf_regular,
             tf_bold,
@@ -280,6 +282,16 @@ impl StatusBar {
     /// Set the label shown in the prefix indicator (e.g. "PREFIX" or "Ctrl+B").
     pub fn set_prefix_label(&mut self, label: String) {
         self.prefix_label = label;
+    }
+
+    /// Set the build/version label shown in the footer.
+    pub fn set_version_label(&mut self, label: String) {
+        self.version_label = label;
+    }
+
+    /// Get the build/version label shown in the footer.
+    pub fn version_label(&self) -> &str {
+        &self.version_label
     }
 
     /// Paint the status bar onto the given render target at the specified y position.
@@ -385,17 +397,24 @@ impl StatusBar {
         } else {
             None
         };
-        let Some(attention) =
+        let state = if let Some(attention) =
             attention_label(self.attention_state, self.attention_message.as_deref())
-        else {
-            return match count {
+        {
+            match count {
+                Some(count) if count != attention => format!("{count} · {attention} · {session}"),
+                _ => format!("{attention} · {session}"),
+            }
+        } else {
+            match count {
                 Some(count) => format!("{count} · {session}"),
                 None => session,
-            };
+            }
         };
-        match count {
-            Some(count) if count != attention => format!("{count} · {attention} · {session}"),
-            _ => format!("{attention} · {session}"),
+
+        if self.version_label.is_empty() {
+            state
+        } else {
+            format!("{} · {state}", self.version_label)
         }
     }
 
@@ -642,6 +661,14 @@ mod tests {
         let mut bar = make_bar();
         bar.set_prefix_label("Ctrl+B".to_string());
         assert_eq!(bar.prefix_label, "Ctrl+B");
+    }
+
+    #[test]
+    fn set_version_label_prefixes_combined_state() {
+        let mut bar = make_bar();
+        bar.set_version_label("wtd 0.1.0 abc1234".to_string());
+        assert_eq!(bar.version_label(), "wtd 0.1.0 abc1234");
+        assert_eq!(bar.combined_state_label(), "wtd 0.1.0 abc1234 · running");
     }
 
     #[test]

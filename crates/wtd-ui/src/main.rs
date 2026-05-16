@@ -44,6 +44,20 @@ const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 32.0;
 const FONT_SIZE_STEP: f32 = 1.0;
 
+fn status_version_label() -> String {
+    let dirty = if option_env!("WTD_GIT_DIRTY") == Some("true") {
+        "+"
+    } else {
+        ""
+    };
+    format!(
+        "wtd {} {}{}",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("WTD_GIT_SHA").unwrap_or("unknown"),
+        dirty
+    )
+}
+
 fn main() {
     // §31.1: UI logs to file and stderr. Keep the guard alive until process exit.
     let _log_guard = init_ui_logging(&LogLevel::default(), &wtd_data_dir());
@@ -302,9 +316,11 @@ fn rebuild_renderer_resources(
     let attention_state = status_bar.attention_state();
     let workspace_name = status_bar.workspace_name().to_string();
     let workspace_save_state = status_bar.workspace_save_state().clone();
+    let version_label = status_bar.version_label().to_string();
     let mut rebuilt_status_bar = StatusBar::new(renderer.dw_factory())?;
     rebuilt_status_bar.set_workspace_name(workspace_name);
     rebuilt_status_bar.set_workspace_save_state(workspace_save_state);
+    rebuilt_status_bar.set_version_label(version_label);
     rebuilt_status_bar.set_pane_path(pane_path);
     rebuilt_status_bar.set_session_status(session_status);
     rebuilt_status_bar.set_attention(attention_state, None);
@@ -2526,6 +2542,7 @@ fn run(workspace_name: Option<String>) -> anyhow::Result<()> {
 
     // Create the status bar.
     let mut status_bar = StatusBar::new(renderer.dw_factory())?;
+    status_bar.set_version_label(status_version_label());
     if let Some(ref name) = workspace_name {
         status_bar.set_workspace_name(name.clone());
     } else {
